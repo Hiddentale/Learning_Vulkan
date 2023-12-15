@@ -33,7 +33,7 @@ fn main() -> Result<()> {
     let event_loop = EventLoop::new()?;
     let window = WindowBuilder::new().with_title("Vulkan Tutorial (Rust)")
         .with_inner_size(LogicalSize::new(1024, 768))
-        .build(&event_loop)?; //The question mark gives us the value contained in the Result<()>
+        .build(&event_loop)?;
 
     let mut application = unsafe { VulkanApplication::create(&window) };
     let mut destroy_application = false;
@@ -48,6 +48,7 @@ fn main() -> Result<()> {
             _ => ()
         }
     }).expect("TODO: panic message");
+    Ok(())
 }
 
 /// Our Vulkan app.
