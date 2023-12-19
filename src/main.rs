@@ -72,7 +72,8 @@ fn main() -> Result<()> {
 struct VulkanApplication {
     entry: Entry,
     instance: Instance,
-    data: AppData
+    data: AppData,
+    device: Device
 }
 
 impl VulkanApplication {
@@ -82,8 +83,10 @@ impl VulkanApplication {
         let entry = Entry::new(loader).map_err(|b| anyhow!("{}", b))?;
         let mut data = AppData::default();
         let instance = create_instance(window, &entry, &mut data)?;
+        println!("{:?}", data);
         pick_physical_device(&instance, &mut data)?;
-        Ok(Self {entry, instance, data})
+        let device = create_logical_device(&entry,&instance, &mut data)?;
+        Ok(Self {entry, instance, data, device})
     }
 
     /// Renders a frame for our Vulkan app.
@@ -93,6 +96,7 @@ impl VulkanApplication {
 
     /// Destroys our Vulkan app.
     unsafe fn destroy(&mut self) {
+        self.device.destroy_device(None);
         if VALIDATION_ENABLED {
             self.instance.destroy_debug_utils_messenger_ext(self.data.messenger, None);
         }
@@ -104,6 +108,7 @@ impl VulkanApplication {
 struct AppData {
     messenger: vk::DebugUtilsMessengerEXT,
     physical_device: vk::PhysicalDevice,
+    graphics_queue: vk::Queue
 }
 
 unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut AppData) -> Result<Instance> {
@@ -117,11 +122,7 @@ unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut AppData) ->
 
     // adding layers
 
-    let available_layers = entry
-        .enumerate_instance_layer_properties()?
-        .iter()
-        .map(|l| l.layer_name)
-        .collect::<HashSet<_>>();
+    let available_layers = entry.enumerate_instance_layer_properties()?.iter().map(|l| l.layer_name).collect::<HashSet<_>>();
 
     if VALIDATION_ENABLED && !available_layers.contains(&VALIDATION_LAYER) {
         return Err(anyhow!("Validation layer requested but not supported."));
@@ -134,10 +135,7 @@ unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut AppData) ->
     };
 
     // Adding extensions
-    let mut extensions = vk_window::get_required_instance_extensions(window)
-        .iter()
-        .map(|e| e.as_ptr())
-        .collect::<Vec<_>>();
+    let mut extensions = vk_window::get_required_instance_extensions(window).iter().map(|e| e.as_ptr()).collect::<Vec<_>>();
 
 // Required by Vulkan SDK on macOS since 1.3.216.
     //__________________________________________________________________________________________________________________________//
@@ -157,16 +155,10 @@ unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut AppData) ->
     }
     //__________________________________________________________________________________________________________________________//
 
-    let mut info = vk::InstanceCreateInfo::builder()
-        .application_info(&application_info)
-        .enabled_layer_names(&layers)
-        .enabled_extension_names(&extensions)
-        .flags(flags);
+    let mut info = vk::InstanceCreateInfo::builder().application_info(&application_info).enabled_layer_names(&layers).enabled_extension_names(&extensions).flags(flags);
 
-    let mut debug_info = vk::DebugUtilsMessengerCreateInfoEXT::builder()
-        .message_severity(vk::DebugUtilsMessageSeverityFlagsEXT::all())
-        .message_type(vk::DebugUtilsMessageTypeFlagsEXT::all())
-        .user_callback(Some(debug_callback));
+    let mut debug_info = vk::DebugUtilsMessengerCreateInfoEXT::builder().message_severity(vk::DebugUtilsMessageSeverityFlagsEXT::all())
+        .message_type(vk::DebugUtilsMessageTypeFlagsEXT::all()).user_callback(Some(debug_callback));
 
     if VALIDATION_ENABLED {
 
@@ -183,12 +175,8 @@ unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut AppData) ->
     Ok(instance)
 }
 
-extern "system" fn debug_callback(
-    severity: vk::DebugUtilsMessageSeverityFlagsEXT,
-    type_: vk::DebugUtilsMessageTypeFlagsEXT,
-    data: *const vk::DebugUtilsMessengerCallbackDataEXT,
-    _: *mut c_void,
-) -> vk::Bool32 {
+extern "system" fn debug_callback(severity: vk::DebugUtilsMessageSeverityFlagsEXT, type_: vk::DebugUtilsMessageTypeFlagsEXT,
+                                  data: *const vk::DebugUtilsMessengerCallbackDataEXT, _: *mut c_void, ) -> vk::Bool32 {
     let data = unsafe { *data };
     let message = unsafe { CStr::from_ptr(data.message) }.to_string_lossy();
 
@@ -225,6 +213,31 @@ unsafe fn pick_physical_device(instance: &Instance, data: &mut AppData) -> Resul
 unsafe fn check_physical_device(instance: &Instance, data: &AppData, physical_device: vk::PhysicalDevice) -> Result<()> {
     QueueFamilyIndices::get(instance, data, physical_device)?;
     Ok(())
+}
+unsafe fn create_logical_device(entry: &Entry, instance: &Instance, data: &mut AppData, ) -> Result<Device> {
+    println!("{:?}", data.physical_device);
+    let indices = QueueFamilyIndices::get(instance, data, data.physical_device)?;
+    let queue_priorities = &[1.0];
+    let queue_info = vk::DeviceQueueCreateInfo::builder().queue_family_index(indices.graphics).queue_priorities(queue_priorities);
+    let layers = if VALIDATION_ENABLED {
+        vec![VALIDATION_LAYER.as_ptr()]
+    } else {
+        vec![]
+    };
+    let mut extensions = vec![];
+
+// Required by Vulkan SDK on macOS since 1.3.216.
+    if cfg!(target_os = "macos") && entry.version()? >= PORTABILITY_MACOS_VERSION {
+        extensions.push(vk::KHR_PORTABILITY_SUBSET_EXTENSION.name.as_ptr());
+    }
+
+    let features = vk::PhysicalDeviceFeatures::builder();
+    let queue_infos = &[queue_info];
+    let info = vk::DeviceCreateInfo::builder().queue_create_infos(queue_infos).enabled_layer_names(&layers).enabled_extension_names(&extensions).enabled_features(&features);
+    let device = instance.create_device(data.physical_device, &info, None)?;
+    data.graphics_queue = device.get_device_queue(indices.graphics, 0);
+
+    Ok(device)
 }
 #[derive(Copy, Clone, Debug)]
 struct QueueFamilyIndices {
