@@ -5,8 +5,8 @@ clippy::too_many_arguments,
 clippy::unnecessary_wraps
 )]
 
-mod add_layers;
 
+mod add_layers;
 use anyhow::{anyhow, Result};
 use log::*;
 
@@ -32,6 +32,7 @@ use std::os::raw::c_void;
 use thiserror::Error;
 
 use vulkanalia::vk::ExtDebugUtilsExtension;
+use vulkanalia::bytecode::Bytecode;
 
 const PORTABILITY_MACOS_VERSION: Version = Version::new(1, 3, 216);
 const VALIDATION_ENABLED: bool =
@@ -77,6 +78,16 @@ fn main() -> Result<()> {
 unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()> {
     let vertex_shader = include_bytes!("../shaders/vert.spv");
     let fragment_shader = include_bytes!("../shaders/frag.spv");
+
+    let vertex_shader_module = create_shader_module(device, &vertex_shader[..])?;
+    let fragment_shader_module = create_shader_module(device, &fragment_shader[..])?;
+
+    let vertex_stage = vk::PipelineShaderStageCreateInfo::builder().stage(vk::ShaderStageFlags::VERTEX).module(vertex_shader_module).name(b"main\0");
+    let fragment_stage = vk::PipelineShaderStageCreateInfo::builder().stage(vk::ShaderStageFlags::FRAGMENT).module(fragment_shader_module).name(b"main\0");
+    // ...
+
+    device.destroy_shader_module(vertex_shader_module, None);
+    device.destroy_shader_module(fragment_shader_module, None);
     Ok(())
 }
 
@@ -434,4 +445,10 @@ impl SwapchainSupport {
             present_modes: instance.get_physical_device_surface_present_modes_khr(physical_device, data.surface)?,
         })
     }
+}
+
+unsafe fn create_shader_module(device: &Device, bytecode: &[u8]) -> Result<vk::ShaderModule> {
+    let bytecode = Bytecode::new(bytecode).unwrap();
+    let info = vk::ShaderModuleCreateInfo::builder().code_size(bytecode.code_size()).code(bytecode.code());
+    Ok(device.create_shader_module(&info, None)?)
 }
