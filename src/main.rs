@@ -84,7 +84,7 @@ unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()> {
 
     let vertex_stage = vk::PipelineShaderStageCreateInfo::builder().stage(vk::ShaderStageFlags::VERTEX).module(vertex_shader_module).name(b"main\0");
     let fragment_stage = vk::PipelineShaderStageCreateInfo::builder().stage(vk::ShaderStageFlags::FRAGMENT).module(fragment_shader_module).name(b"main\0");
-    // ....
+    // ...
 
     device.destroy_shader_module(vertex_shader_module, None);
     device.destroy_shader_module(fragment_shader_module, None);
