@@ -139,7 +139,6 @@ impl VulkanApplication {
         create_framebuffers(&device, &mut data)?;
         create_command_pool(&instance, &device, &mut data)?;
         create_command_buffers(&device, &mut data)?;
-        create_command_buffers(&device, &mut data)?;
         create_sync_objects(&device, &mut data)?;
         Ok(Self {entry, instance, data, device})
     }
@@ -149,11 +148,16 @@ impl VulkanApplication {
         let image_index = self.device.acquire_next_image_khr(self.data.swapchain, u64::MAX, self.data.image_available_semaphore, vk::Fence::null())?.0 as usize;
         let wait_semaphores = &[self.data.image_available_semaphore];
         let wait_stages = &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
-        let command_buffers = &[self.data.command_buffers[image_index as usize]];
+        // Which are initialized here
+        let command_buffers = &[self.data.command_buffers[image_index]];
+        println!("{:?}", image_index); // Image index does give
         let signal_semaphores = &[self.data.render_finished_semaphore];
-        let submit_info = vk::SubmitInfo::builder().wait_semaphores(wait_semaphores).wait_dst_stage_mask(wait_stages).command_buffers(command_buffers).signal_semaphores(signal_semaphores);
+        // The problem is currently here, apparantly the commandbuffers are empty.
+        let info_to_submit_to_queue = vk::SubmitInfo::builder().wait_semaphores(wait_semaphores).wait_dst_stage_mask(wait_stages).command_buffers(command_buffers).signal_semaphores(signal_semaphores);
 
-        self.device.queue_submit(self.data.graphics_queue, &[submit_info], vk::Fence::null())?;
+        println!("is it here?");
+        self.device.queue_submit(self.data.graphics_queue, &[info_to_submit_to_queue], vk::Fence::null())?;
+        println!("might be");
         let swapchains = &[self.data.swapchain];
         let image_indices = &[image_index as u32];
         let present_info = vk::PresentInfoKHR::builder()
@@ -206,6 +210,7 @@ unsafe fn create_command_pool(instance: &Instance, device: &Device, data: &mut A
 
 unsafe fn create_command_buffers(device: &Device, data: &mut AppData) -> Result<()> {
     let allocate_info = vk::CommandBufferAllocateInfo::builder().command_pool(data.command_pool).level(vk::CommandBufferLevel::PRIMARY).command_buffer_count(data.framebuffers.len() as u32);
+    data.command_buffers = device.allocate_command_buffers(&allocate_info)?;
     for (i, command_buffer) in data.command_buffers.iter().enumerate() {
         let info = vk::CommandBufferBeginInfo::builder();
 
@@ -222,7 +227,6 @@ unsafe fn create_command_buffers(device: &Device, data: &mut AppData) -> Result<
         device.cmd_end_render_pass(*command_buffer);
         device.end_command_buffer(*command_buffer)?;
     }
-    data.command_buffers = device.allocate_command_buffers(&allocate_info)?;
     Ok(())
 }
 
