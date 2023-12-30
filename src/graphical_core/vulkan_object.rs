@@ -2,7 +2,8 @@ use anyhow::anyhow;
 use vulkanalia::{Device, Entry, Instance, vk};
 use vulkanalia::loader::{LibloadingLoader, LIBRARY};
 use winit::window::Window;
-use crate::{create_command_buffers, create_command_pool, create_framebuffers, create_instance, create_logical_device, create_pipeline, create_render_pass, create_swapchain, create_swapchain_image_views, create_sync_objects, pick_physical_device, VALIDATION_ENABLED};
+use crate::graphical_core::extra::{create_command_buffers, create_command_pool, create_frame_buffers, create_instance, create_logical_device, create_sync_objects};
+use crate::VALIDATION_ENABLED;
 use vulkanalia::{
     vk::{KhrSurfaceExtension, KhrSwapchainExtension},
     window as vk_window,
@@ -41,28 +42,25 @@ pub struct VulkanApplication {
 }
 
 impl VulkanApplication {
-    /// Creates our Vulkan app.
-    pub unsafe fn create(window: &Window) -> anyhow::Result<Self> {
+    pub unsafe fn create_vulkan_application(window: &Window) -> anyhow::Result<Self> {
         let loader = LibloadingLoader::new(LIBRARY)?;
         let entry = Entry::new(loader).map_err(|b| anyhow!("{}", b))?;
         let mut data = ApplicationData::default();
         let instance = create_instance(window, &entry, &mut data)?;
         data.surface = vk_window::create_surface(&instance, &window, &window)?;
-        pick_physical_device(&instance, &mut data)?;
+        crate::graphical_core::gpu::pick_physical_device(&instance, &mut data)?;
         let device = create_logical_device(&entry,&instance, &mut data)?;
-        create_swapchain(window, &instance, &device, &mut data)?;
-        create_swapchain_image_views(&device, &mut data)?;
-        create_render_pass(&instance, &device, &mut data)?;
-        create_pipeline(&device, &mut data)?;
-        create_framebuffers(&device, &mut data)?;
+        crate::graphical_core::swap_chain::create_swapchain(window, &instance, &device, &mut data)?;
+        crate::graphical_core::swap_chain::create_swapchain_image_views(&device, &mut data)?;
+        crate::graphical_core::render_pass::create_render_pass(&instance, &device, &mut data)?;
+        crate::graphical_core::pipeline::create_pipeline(&device, &mut data)?;
+        create_frame_buffers(&device, &mut data)?;
         create_command_pool(&instance, &device, &mut data)?;
         create_command_buffers(&device, &mut data)?;
         create_sync_objects(&device, &mut data)?;
         Ok(Self {entry, instance, data, device})
     }
-
-    /// Renders a frame for our Vulkan app.
-    pub unsafe fn render(&mut self, window: &Window) -> anyhow::Result<()> {
+    pub unsafe fn render_frame(&mut self, window: &Window) -> anyhow::Result<()> {
         let image_index = self.device.acquire_next_image_khr(self.data.swapchain, u64::MAX, self.data.image_available_semaphore, vk::Fence::null())?.0 as usize;
         let wait_semaphores = &[self.data.image_available_semaphore];
         let wait_stages = &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
@@ -80,17 +78,15 @@ impl VulkanApplication {
 
         Ok(())
     }
-
-    /// Destroys our Vulkan app.
-    pub unsafe fn destroy(&mut self) {
+    pub unsafe fn destroy_vulkan_application(&mut self) {
         self.device.destroy_semaphore(self.data.render_finished_semaphore, None);
         self.device.destroy_semaphore(self.data.image_available_semaphore, None);
         self.device.destroy_command_pool(self.data.command_pool, None);
-        self.data.framebuffers.iter().for_each(|f| self.device.destroy_framebuffer(*f, None));
+        self.data.framebuffers.iter().for_each(|framebuffer| self.device.destroy_framebuffer(*framebuffer, None));
         self.device.destroy_pipeline(self.data.pipeline, None);
         self.device.destroy_pipeline_layout(self.data.pipeline_layout, None);
         self.device.destroy_render_pass(self.data.render_pass, None);
-        self.data.swapchain_image_views.iter().for_each(|v| self.device.destroy_image_view(*v, None));
+        self.data.swapchain_image_views.iter().for_each(|image_view| self.device.destroy_image_view(*image_view, None));
         self.device.destroy_swapchain_khr(self.data.swapchain, None);
         self.device.destroy_device(None);
         if VALIDATION_ENABLED {
