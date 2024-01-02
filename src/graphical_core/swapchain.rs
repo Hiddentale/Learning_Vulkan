@@ -2,11 +2,9 @@ use vulkanalia::{Device, Instance, vk};
 use vulkanalia::vk::{DeviceV1_0, Handle, HasBuilder, KhrSurfaceExtension, KhrSwapchainExtension};
 use winit::window::Window;
 use crate::graphical_core::queue_families::QueueFamilyIndices;
-use crate::graphical_core::vulkan_object::ApplicationData;
+use crate::graphical_core::vulkan_object::VulkanApplicationData;
 
-pub unsafe fn create_swapchain(window: &Window, instance: &Instance, device: &Device, data: &mut ApplicationData) -> anyhow::Result<()> {
-    // Image
-
+pub unsafe fn create_swapchain(window: &Window, instance: &Instance, device: &Device, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
     let indices = QueueFamilyIndices::get(instance, data, data.physical_device)?;
     let support = SwapchainSupport::get(instance, data, data.physical_device)?;
 
@@ -15,7 +13,7 @@ pub unsafe fn create_swapchain(window: &Window, instance: &Instance, device: &De
     let extent = get_swapchain_extent(window, support.capabilities);
 
     data.swapchain_format = surface_format.format;
-    data.swapchain_extent = extent;
+    data.swapchain_accepted_images_width_and_height = extent;
 
     let mut image_count = support.capabilities.min_image_count + 1; //We add one more image to the image count to make sure we never have to wait for an image.
     if support.capabilities.max_image_count != 0 && image_count > support.capabilities.max_image_count {
@@ -84,7 +82,7 @@ fn get_swapchain_extent(window: &Window, capabilities: vk::SurfaceCapabilitiesKH
             .build()
     }
 }
-pub unsafe fn create_swapchain_image_views(device: &Device, data: &mut ApplicationData) -> anyhow::Result<()> {
+pub unsafe fn create_swapchain_image_views(device: &Device, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
     data.swapchain_image_views = data.swapchain_images.iter().map(|i|{
         let components = vk::ComponentMapping::builder()
             .r(vk::ComponentSwizzle::IDENTITY)
@@ -115,7 +113,7 @@ pub struct SwapchainSupport {
     pub present_modes: Vec<vk::PresentModeKHR>,
 }
 impl SwapchainSupport {
-    pub unsafe fn get(instance: &Instance, data: &ApplicationData, physical_device: vk::PhysicalDevice) -> anyhow::Result<Self> {
+    pub unsafe fn get(instance: &Instance, data: &VulkanApplicationData, physical_device: vk::PhysicalDevice) -> anyhow::Result<Self> {
         Ok(Self {
             capabilities: instance.get_physical_device_surface_capabilities_khr(physical_device, data.surface)?,
             formats: instance.get_physical_device_surface_formats_khr(physical_device, data.surface)?,

@@ -10,26 +10,26 @@ use vulkanalia::vk::{DeviceV1_0, EntryV1_0, ExtDebugUtilsExtension, HasBuilder};
 use vulkanalia::window as vk_window;
 use winit::window::Window;
 use crate::{DEVICE_EXTENSIONS, graphical_core, PORTABILITY_MACOS_VERSION, VALIDATION_ENABLED, VALIDATION_LAYER};
-use crate::graphical_core::vulkan_object::ApplicationData;
+use crate::graphical_core::vulkan_object::VulkanApplicationData;
 
-pub unsafe fn create_frame_buffers(device: &Device, data: &mut ApplicationData) -> anyhow::Result<()> {
+pub unsafe fn create_frame_buffers(device: &Device, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
     data.framebuffers = data.swapchain_image_views.iter().map(|i| {
         let attachments = &[*i];
-        let create_info = vk::FramebufferCreateInfo::builder().render_pass(data.render_pass).attachments(attachments).width(data.swapchain_extent.width).height(data.swapchain_extent.height).layers(1);
+        let create_info = vk::FramebufferCreateInfo::builder().render_pass(data.render_pass).attachments(attachments).width(data.swapchain_accepted_images_width_and_height.width).height(data.swapchain_accepted_images_width_and_height.height).layers(1);
 
         device.create_framebuffer(&create_info, None)
     }).collect::<anyhow::Result<Vec<_>, _>>()?;
 
     Ok(())
 }
-pub unsafe fn create_command_pool(instance: &Instance, device: &Device, data: &mut ApplicationData) -> anyhow::Result<()> {
+pub unsafe fn create_command_pool(instance: &Instance, device: &Device, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
     let indices = graphical_core::queue_families::QueueFamilyIndices::get(instance, data, data.physical_device)?;
     let info = vk::CommandPoolCreateInfo::builder().flags(vk::CommandPoolCreateFlags::empty()).queue_family_index(indices.graphics);
 
     data.command_pool = device.create_command_pool(&info, None)?;
     Ok(())
 }
-pub unsafe fn create_command_buffers(device: &Device, data: &mut ApplicationData) -> anyhow::Result<()> {
+pub unsafe fn create_command_buffers(device: &Device, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
     let allocate_info = vk::CommandBufferAllocateInfo::builder().command_pool(data.command_pool).level(vk::CommandBufferLevel::PRIMARY).command_buffer_count(data.framebuffers.len() as u32);
     data.command_buffers = device.allocate_command_buffers(&allocate_info)?;
     for (i, command_buffer) in data.command_buffers.iter().enumerate() {
@@ -37,7 +37,7 @@ pub unsafe fn create_command_buffers(device: &Device, data: &mut ApplicationData
 
         device.begin_command_buffer(*command_buffer, &info)?;
 
-        let render_area = vk::Rect2D::builder().offset(vk::Offset2D::default()).extent(data.swapchain_extent); //Size of the area that will be rendered to.
+        let render_area = vk::Rect2D::builder().offset(vk::Offset2D::default()).extent(data.swapchain_accepted_images_width_and_height); //Size of the area that will be rendered to.
         let color_clear_value = vk::ClearValue {color: vk::ClearColorValue {float32: [0.0, 0.0, 0.0, 1.0]}}; //Black screen that replaces the screen between each shown frame.
         let clear_values = &[color_clear_value];
         let info = vk::RenderPassBeginInfo::builder().render_pass(data.render_pass).framebuffer(data.framebuffers[i]).render_area(render_area).clear_values(clear_values); //Attach previous constructions to a render pass object.
@@ -50,14 +50,14 @@ pub unsafe fn create_command_buffers(device: &Device, data: &mut ApplicationData
     }
     Ok(())
 }
-pub unsafe fn create_sync_objects(device: &Device, data: &mut ApplicationData) -> anyhow::Result<()> {
+pub unsafe fn create_sync_objects(device: &Device, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
     let semaphore_info = vk::SemaphoreCreateInfo::builder();
 
     data.image_available_semaphore = device.create_semaphore(&semaphore_info, None)?;
     data.render_finished_semaphore = device.create_semaphore(&semaphore_info, None)?;
     Ok(())
 }
-pub unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut ApplicationData) -> anyhow::Result<Instance> {
+pub unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut VulkanApplicationData) -> anyhow::Result<Instance> {
 
     let application_info = vk::ApplicationInfo::builder()
         .application_name(b"Vulkan Tutorial\0")
@@ -113,7 +113,7 @@ pub unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut Applica
     // Messenger
 
     if VALIDATION_ENABLED {
-        data.messenger = instance.create_debug_utils_messenger_ext(&debug_info, None)?;
+        data.debug_messenger = instance.create_debug_utils_messenger_ext(&debug_info, None)?;
     }
 
     Ok(instance)
@@ -138,7 +138,7 @@ pub extern "system" fn debug_callback(severity: vk::DebugUtilsMessageSeverityFla
 #[derive(Debug, Error)]
 #[error("Missing {0}.")]
 pub struct SuitabilityError(pub &'static str);
-pub unsafe fn create_logical_device(entry: &Entry, instance: &Instance, data: &mut ApplicationData) -> anyhow::Result<Device> {
+pub unsafe fn create_logical_device(entry: &Entry, instance: &Instance, data: &mut VulkanApplicationData) -> anyhow::Result<Device> {
     let indices = graphical_core::queue_families::QueueFamilyIndices::get(instance, data, data.physical_device)?;
     let mut unique_indices = HashSet::new();
 
@@ -165,7 +165,7 @@ pub unsafe fn create_logical_device(entry: &Entry, instance: &Instance, data: &m
     let device = instance.create_device(data.physical_device, &info, None)?;
 
     data.graphics_queue = device.get_device_queue(indices.graphics, 0);
-    data.present_queue = device.get_device_queue(indices.present, 0);
+    data.presentation_queue = device.get_device_queue(indices.present, 0);
 
     Ok(device)
 }

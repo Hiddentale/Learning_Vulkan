@@ -1,9 +1,9 @@
 use vulkanalia::{Device, vk};
 use vulkanalia::vk::{DeviceV1_0, Handle, HasBuilder};
 use crate::graphical_core::extra::create_shader_module;
-use crate::graphical_core::vulkan_object::ApplicationData;
+use crate::graphical_core::vulkan_object::VulkanApplicationData;
 
-pub unsafe fn create_pipeline(device: &Device, data: &mut ApplicationData) -> anyhow::Result<()> {
+pub unsafe fn create_pipeline(device: &Device, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
     let vertex_shader = include_bytes!("../shaders/vert.spv");
     let fragment_shader = include_bytes!("../shaders/frag.spv");
 
@@ -14,8 +14,8 @@ pub unsafe fn create_pipeline(device: &Device, data: &mut ApplicationData) -> an
     let fragment_stage = vk::PipelineShaderStageCreateInfo::builder().stage(vk::ShaderStageFlags::FRAGMENT).module(fragment_shader_module).name(b"main\0");
     let vertex_input_state = vk::PipelineVertexInputStateCreateInfo::builder();
     let input_assembly_state = vk::PipelineInputAssemblyStateCreateInfo::builder().topology(vk::PrimitiveTopology::TRIANGLE_LIST).primitive_restart_enable(false);
-    let viewport = vk::Viewport::builder().x(0.0).y(0.0).width(data.swapchain_extent.width as f32).height(data.swapchain_extent.height as f32).min_depth(0.0).max_depth(1.0);
-    let scissor = vk::Rect2D::builder().offset(vk::Offset2D { x: 0, y: 0 }).extent(data.swapchain_extent);
+    let viewport = vk::Viewport::builder().x(0.0).y(0.0).width(data.swapchain_accepted_images_width_and_height.width as f32).height(data.swapchain_accepted_images_width_and_height.height as f32).min_depth(0.0).max_depth(1.0);
+    let scissor = vk::Rect2D::builder().offset(vk::Offset2D { x: 0, y: 0 }).extent(data.swapchain_accepted_images_width_and_height);
     let viewports = &[viewport];
     let scissors = &[scissor];
     let viewport_state = vk::PipelineViewportStateCreateInfo::builder().viewports(viewports).scissors(scissors);

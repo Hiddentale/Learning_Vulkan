@@ -33,17 +33,17 @@ fn main() -> Result<()>
     initialize_error_handler();
 
     let event_handler = EventLoop::new()?;
-    let window = WindowBuilder::new().with_title("Vulkan Tutorial (Rust)").with_inner_size(LogicalSize::new(1024, 768)).build(&event_handler)?;
+    let user_window = WindowBuilder::new().with_title("Vulkan Tutorial (Rust)").with_inner_size(LogicalSize::new(1024, 768)).build(&event_handler)?;
 
-    let mut application = unsafe {VulkanApplication::create_vulkan_application(&window)}?;
+    let mut application = unsafe {VulkanApplication::create_vulkan_application(&user_window)}?;
     let mut destroy_application = false;
 
     event_handler.run(move |event, current_window| {
         match event
         {
             Event::WindowEvent {event: WindowEvent::CloseRequested, .. } => {exit_program(&mut destroy_application, current_window, &mut application);},
-            Event::AboutToWait => {window.request_redraw()},
-            Event::WindowEvent {event: WindowEvent::RedrawRequested, .. } => {if !destroy_application {unsafe {application.render_frame(&window)}.unwrap()}},
+            Event::AboutToWait => { user_window.request_redraw()},
+            Event::WindowEvent {event: WindowEvent::RedrawRequested, .. } => {if !destroy_application {unsafe {application.render_frame(&user_window)}.unwrap()}},
             _ => ()
         }
     }).expect("Main function crashed!");

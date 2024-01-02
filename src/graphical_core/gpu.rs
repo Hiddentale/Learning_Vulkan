@@ -5,13 +5,13 @@ use thiserror::Error;
 use vulkanalia::{Instance, vk};
 use vulkanalia::vk::InstanceV1_0;
 use crate::DEVICE_EXTENSIONS;
-use crate::graphical_core::vulkan_object::ApplicationData;
+use crate::graphical_core::vulkan_object::VulkanApplicationData;
 
 #[derive(Debug, Error)]
 #[error("Missing {0}.")]
 pub struct SuitabilityError(pub &'static str);
 
-pub unsafe fn pick_physical_device(instance: &Instance, data: &mut ApplicationData) -> anyhow::Result<()> {
+pub unsafe fn pick_physical_device(instance: &Instance, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
     for physical_device in instance.enumerate_physical_devices()? {
         let properties = instance.get_physical_device_properties(physical_device);
         if let Err(error) = check_physical_device(instance, data, physical_device) {
@@ -24,10 +24,10 @@ pub unsafe fn pick_physical_device(instance: &Instance, data: &mut ApplicationDa
     }
     Err(anyhow!("Failed to find suitable physical device."))
 }
-pub unsafe fn check_physical_device(instance: &Instance, data: &ApplicationData, physical_device: vk::PhysicalDevice) -> anyhow::Result<()> {
+pub unsafe fn check_physical_device(instance: &Instance, data: &VulkanApplicationData, physical_device: vk::PhysicalDevice) -> anyhow::Result<()> {
     crate::graphical_core::queue_families::QueueFamilyIndices::get(instance, data, physical_device)?;
     check_physical_device_extensions(instance, physical_device)?;
-    let support = crate::graphical_core::swap_chain::SwapchainSupport::get(instance, data, physical_device)?;
+    let support = crate::graphical_core::swapchain::SwapchainSupport::get(instance, data, physical_device)?;
     if support.formats.is_empty() || support.present_modes.is_empty() {
         return Err(anyhow!(SuitabilityError("Insufficient swapchain support.")));
     }
