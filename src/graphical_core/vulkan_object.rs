@@ -5,6 +5,7 @@ use vulkanalia::{
     vk::{KhrSurfaceExtension, KhrSwapchainExtension, ExtDebugUtilsExtension},
     window as vulkan_window,
     prelude::v1_0::*,
+    Device::queue_present_kr as present_image_to_swapchain
 };
 use crate::graphical_core::{
     gpu::pick_physical_device,
@@ -63,19 +64,21 @@ impl VulkanApplication {
         Ok(Self{vulkan_entry_point: vulkan_api_entry_point, vulkan_instance, data: vulkan_application_data, vulkan_device: vulkan_logical_device})
     }
     pub unsafe fn render_frame(&mut self, window: &Window) -> anyhow::Result<()> {
+        //specify which semaphores to wait on before execution begins and in which stage(s) of the pipeline to wait.
         let image_index = self.vulkan_device.acquire_next_image_khr(self.data.swapchain, u64::MAX, self.data.image_available_semaphore, vk::Fence::null())?.0 as usize;
-        let wait_semaphores = &[self.data.image_available_semaphore];
-        let wait_stages = &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
-        let command_buffers = &[self.data.command_buffers[image_index]];
-        let signal_semaphores = &[self.data.render_finished_semaphore];
-        let info_to_submit_to_queue = vk::SubmitInfo::builder().wait_semaphores(wait_semaphores).wait_dst_stage_mask(wait_stages).command_buffers(command_buffers).signal_semaphores(signal_semaphores);
+        let semaphore_to_wait_on_before_execution = &[self.data.image_available_semaphore];
+        let stage_of_pipeline_to_wait_on_before_execution = &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
+        let command_buffer_to_use_at_execution = &[self.data.command_buffers[image_index]];
+        let semaphores_to_signal_after_command_buffer_finished_executing = &[self.data.render_finished_semaphore];
+        let info_to_submit_to_queue = vk::SubmitInfo::builder().wait_semaphores(semaphore_to_wait_on_before_execution).wait_dst_stage_mask(stage_of_pipeline_to_wait_on_before_execution)
+            .command_buffers(command_buffer_to_use_at_execution).signal_semaphores(semaphores_to_signal_after_command_buffer_finished_executing);
         self.vulkan_device.queue_submit(self.data.graphics_queue, &[info_to_submit_to_queue], vk::Fence::null())?;
-        let swapchains = &[self.data.swapchain];
-        let image_indices = &[image_index as u32];
+        let swapchains_to_present_images_to = &[self.data.swapchain];
+        let image_index_in_swapchain = &[image_index as u32];
         let present_info = vk::PresentInfoKHR::builder()
-            .wait_semaphores(signal_semaphores)
-            .swapchains(swapchains)
-            .image_indices(image_indices);
+            .wait_semaphores(semaphores_to_signal_after_command_buffer_finished_executing)
+            .swapchains(swapchains_to_present_images_to)
+            .image_indices(image_index_in_swapchain);
         self.vulkan_device.queue_present_khr(self.data.presentation_queue, &present_info)?;
 
         Ok(())
@@ -96,5 +99,9 @@ impl VulkanApplication {
         }
         self.vulkan_instance.destroy_surface_khr(self.data.surface, None);
         self.vulkan_instance.destroy_instance(None);
+    }
+
+    fn present_image_to_swapchain(device: &Device, vk::queue: Queue) {
+        device.queue_present_kr()
     }
 }
