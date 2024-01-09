@@ -64,7 +64,6 @@ impl VulkanApplication {
         Ok(Self{vulkan_entry_point: vulkan_api_entry_point, vulkan_instance, data: vulkan_application_data, vulkan_device: vulkan_logical_device})
     }
     pub unsafe fn render_frame(&mut self, window: &Window) -> anyhow::Result<()> {
-        //specify which semaphores to wait on before execution begins and in which stage(s) of the pipeline to wait.
         let image_index = self.vulkan_device.acquire_next_image_khr(self.data.swapchain, u64::MAX, self.data.image_available_semaphore, vk::Fence::null())?.0 as usize;
         let semaphore_to_wait_on_before_execution = &[self.data.image_available_semaphore];
         let stage_of_pipeline_to_wait_on_before_execution = &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
@@ -75,12 +74,11 @@ impl VulkanApplication {
         self.vulkan_device.queue_submit(self.data.graphics_queue, &[info_to_submit_to_queue], vk::Fence::null())?;
         let swapchains_to_present_images_to = &[self.data.swapchain];
         let image_index_in_swapchain = &[image_index as u32];
-        let present_info = vk::PresentInfoKHR::builder()
+        let image_presentation_configuration = vk::PresentInfoKHR::builder()
             .wait_semaphores(semaphores_to_signal_after_command_buffer_finished_executing)
             .swapchains(swapchains_to_present_images_to)
             .image_indices(image_index_in_swapchain);
-        self.vulkan_device.queue_present_khr(self.data.presentation_queue, &present_info)?;
-
+        self.present_image_to_swapchain(image_presentation_configuration);
         Ok(())
     }
     pub unsafe fn destroy_vulkan_application(&mut self) {
@@ -96,12 +94,11 @@ impl VulkanApplication {
         self.vulkan_device.destroy_device(None);
         if VALIDATION_ENABLED {
             self.vulkan_instance.destroy_debug_utils_messenger_ext(self.data.debug_messenger, None);
-        }
+         }
         self.vulkan_instance.destroy_surface_khr(self.data.surface, None);
         self.vulkan_instance.destroy_instance(None);
     }
-
-    fn present_image_to_swapchain(device: &Device, vk::queue: Queue) {
-        device.queue_present_kr()
+    unsafe fn present_image_to_swapchain(&mut self, present_info: vk::PresentInfoKHRBuilder) {
+        self.vulkan_device.queue_present_khr(self.data.presentation_queue, &present_info)?;
     }
 }
