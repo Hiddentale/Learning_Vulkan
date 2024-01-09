@@ -5,6 +5,7 @@ use vulkanalia::{
     vk::{KhrSurfaceExtension, KhrSwapchainExtension, ExtDebugUtilsExtension},
     window as vulkan_window,
     prelude::v1_0::*,
+    Device::queue_present_kr as present_image_to_swapchain
 };
 use crate::graphical_core::{
     gpu::pick_physical_device,
