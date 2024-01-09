@@ -98,6 +98,6 @@ impl VulkanApplication {
         self.vulkan_instance.destroy_instance(None);
     }
     unsafe fn present_image_to_swapchain(&mut self, present_info: vk::PresentInfoKHRBuilder) {
-        self.vulkan_device.queue_present_khr(self.data.presentation_queue, &present_info)?;
+        self.vulkan_device.queue_present_khr(self.data.presentation_queue, &present_info).expect("Presenting the image to the swapchain resulted in an error!");
     }
 }
