@@ -5,7 +5,7 @@ use thiserror::Error;
 use vulkanalia::{Instance, vk};
 use vulkanalia::vk::{InstanceV1_0, PhysicalDevice, PhysicalDeviceProperties};
 use crate::DEVICE_EXTENSIONS;
-use crate::graphical_core::{vulkan_object::VulkanApplicationData, queue_families::QueueFamilyIndices};
+use crate::graphical_core::{vulkan_object::VulkanApplicationData, queue_families::RequiredQueueFamilies};
 
 #[derive(Debug, Error)]
 #[error("Missing {0}.")]
@@ -25,7 +25,7 @@ pub unsafe fn choose_gpu(current_system: &Instance, vulkan_application_data: &mu
     Err(anyhow!("Failed to find suitable GPU."))
 }
 pub unsafe fn check_gpu(current_system: &Instance, vulkan_application_data: &VulkanApplicationData, gpu: PhysicalDevice) -> anyhow::Result<()> {
-    QueueFamilyIndices::get(current_system, vulkan_application_data, gpu)?;
+    RequiredQueueFamilies::get(current_system, vulkan_application_data, gpu)?;
     check_gpu_extensions(current_system, gpu)?;
     let support = crate::graphical_core::swapchain::SwapchainSupport::get(current_system, vulkan_application_data, gpu)?;
     if support.formats.is_empty() || support.present_modes.is_empty() {
@@ -48,5 +48,10 @@ unsafe fn get_gpu_properties(current_system: &Instance, gpu: PhysicalDevice) -> 
     current_system.get_physical_device_properties(gpu)
 }
 unsafe fn gpu_not_have_required_properties(current_system: &Instance, vulkan_application_data: &VulkanApplicationData, gpu: PhysicalDevice) -> bool  {
-    matches!(Err(_), check_gpu(current_system, vulkan_application_data, gpu))
+    if let Err(_) = check_gpu(current_system, vulkan_application_data, gpu) {
+        true
+    }
+    else {
+        false
+    }
 }

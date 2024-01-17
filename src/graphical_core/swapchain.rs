@@ -1,11 +1,11 @@
 use vulkanalia::{Device, Instance, vk};
 use vulkanalia::vk::{DeviceV1_0, Handle, HasBuilder, KhrSurfaceExtension, KhrSwapchainExtension};
 use winit::window::Window;
-use crate::graphical_core::queue_families::QueueFamilyIndices;
+use crate::graphical_core::queue_families::RequiredQueueFamilies;
 use crate::graphical_core::vulkan_object::VulkanApplicationData;
 
 pub unsafe fn create_swapchain(window: &Window, instance: &Instance, device: &Device, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
-    let indices = QueueFamilyIndices::get(instance, data, data.physical_device)?;
+    let indices = RequiredQueueFamilies::get(instance, data, data.physical_device)?;
     let support = SwapchainSupport::get(instance, data, data.physical_device)?;
 
     let surface_format = get_swapchain_surface_format(&support.formats);
@@ -21,9 +21,9 @@ pub unsafe fn create_swapchain(window: &Window, instance: &Instance, device: &De
     }
 
     let mut queue_family_indices = vec![];
-    let image_sharing_mode = if indices.graphics != indices.present {
-        queue_family_indices.push(indices.graphics);
-        queue_family_indices.push(indices.present);
+    let image_sharing_mode = if indices.graphics_queue_index != indices.presentation_queue_index {
+        queue_family_indices.push(indices.graphics_queue_index);
+        queue_family_indices.push(indices.presentation_queue_index);
         vk::SharingMode::CONCURRENT
     } else {
         vk::SharingMode::EXCLUSIVE

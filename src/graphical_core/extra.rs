@@ -23,8 +23,8 @@ pub unsafe fn create_frame_buffers(device: &Device, data: &mut VulkanApplication
     Ok(())
 }
 pub unsafe fn create_command_pool(instance: &Instance, device: &Device, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
-    let indices = graphical_core::queue_families::QueueFamilyIndices::get(instance, data, data.physical_device)?;
-    let info = vk::CommandPoolCreateInfo::builder().flags(vk::CommandPoolCreateFlags::empty()).queue_family_index(indices.graphics);
+    let indices = graphical_core::queue_families::RequiredQueueFamilies::get(instance, data, data.physical_device)?;
+    let info = vk::CommandPoolCreateInfo::builder().flags(vk::CommandPoolCreateFlags::empty()).queue_family_index(indices.graphics_queue_index);
 
     data.command_pool = device.create_command_pool(&info, None)?;
     Ok(())
@@ -139,11 +139,11 @@ pub extern "system" fn debug_callback(severity: vk::DebugUtilsMessageSeverityFla
 #[error("Missing {0}.")]
 pub struct SuitabilityError(pub &'static str);
 pub unsafe fn create_logical_device(entry: &Entry, instance: &Instance, data: &mut VulkanApplicationData) -> anyhow::Result<Device> {
-    let indices = graphical_core::queue_families::QueueFamilyIndices::get(instance, data, data.physical_device)?;
+    let indices = graphical_core::queue_families::RequiredQueueFamilies::get(instance, data, data.physical_device)?;
     let mut unique_indices = HashSet::new();
 
-    unique_indices.insert(indices.graphics);
-    unique_indices.insert(indices.present);
+    unique_indices.insert(indices.graphics_queue_index);
+    unique_indices.insert(indices.presentation_queue_index);
 
     let queue_priorities = &[1.0];
     let queue_infos = unique_indices.iter().map(|i| { vk::DeviceQueueCreateInfo::builder()
@@ -164,8 +164,8 @@ pub unsafe fn create_logical_device(entry: &Entry, instance: &Instance, data: &m
     let info = vk::DeviceCreateInfo::builder().queue_create_infos(&queue_infos).enabled_layer_names(&layers).enabled_extension_names(&extensions).enabled_features(&features);
     let device = instance.create_device(data.physical_device, &info, None)?;
 
-    data.graphics_queue = device.get_device_queue(indices.graphics, 0);
-    data.presentation_queue = device.get_device_queue(indices.present, 0);
+    data.graphics_queue = device.get_device_queue(indices.graphics_queue_index, 0);
+    data.presentation_queue = device.get_device_queue(indices.presentation_queue_index, 0);
 
     Ok(device)
 }
