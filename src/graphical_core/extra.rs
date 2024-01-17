@@ -146,8 +146,7 @@ pub unsafe fn create_logical_device(entry: &Entry, instance: &Instance, data: &m
     unique_indices.insert(indices.presentation_queue_index);
 
     let queue_priorities = &[1.0];
-    let queue_infos = unique_indices.iter().map(|i| { vk::DeviceQueueCreateInfo::builder()
-        .queue_family_index(*i).queue_priorities(queue_priorities) }).collect::<Vec<_>>();
+    let queue_infos = unique_indices.iter().map(|i| {vk::DeviceQueueCreateInfo::builder().queue_family_index(*i).queue_priorities(queue_priorities)}).collect::<Vec<_>>();
 
     let layers = if VALIDATION_ENABLED {
         vec![VALIDATION_LAYER.as_ptr()]
@@ -168,9 +167,4 @@ pub unsafe fn create_logical_device(entry: &Entry, instance: &Instance, data: &m
     data.presentation_queue = device.get_device_queue(indices.presentation_queue_index, 0);
 
     Ok(device)
-}
-pub unsafe fn create_shader_module(device: &Device, bytecode: &[u8]) -> anyhow::Result<vk::ShaderModule> {
-    let bytecode = Bytecode::new(bytecode).unwrap();
-    let info = vk::ShaderModuleCreateInfo::builder().code_size(bytecode.code_size()).code(bytecode.code());
-    Ok(device.create_shader_module(&info, None)?)
 }

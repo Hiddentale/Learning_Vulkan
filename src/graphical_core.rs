@@ -5,3 +5,4 @@ pub mod render_pass;
 pub mod swapchain;
 pub mod vulkan_object;
 pub mod extra;
+mod shaders;

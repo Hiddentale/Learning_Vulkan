@@ -1,6 +1,6 @@
 use vulkanalia::{Device, vk};
 use vulkanalia::vk::{DeviceV1_0, Handle, HasBuilder};
-use crate::graphical_core::extra::create_shader_module;
+use crate::graphical_core::shaders::create_shader_module;
 use crate::graphical_core::vulkan_object::VulkanApplicationData;
 
 pub unsafe fn create_pipeline(device: &Device, data: &mut VulkanApplicationData) -> anyhow::Result<()> {

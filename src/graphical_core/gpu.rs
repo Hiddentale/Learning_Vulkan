@@ -33,7 +33,7 @@ pub unsafe fn check_gpu(current_system: &Instance, vulkan_application_data: &Vul
     }
     Ok(())
 }
-pub unsafe fn check_gpu_extensions(instance: &Instance, physical_device: vk::PhysicalDevice) -> anyhow::Result<()> {
+pub unsafe fn check_gpu_extensions(instance: &Instance, physical_device: PhysicalDevice) -> anyhow::Result<()> {
     let extensions = instance.enumerate_device_extension_properties(physical_device, None)?.iter().map(|e| e.extension_name).collect::<HashSet<_>>();
     if DEVICE_EXTENSIONS.iter().all(|e| extensions.contains(e)) {
         Ok(())
