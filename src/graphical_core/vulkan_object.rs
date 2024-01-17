@@ -7,7 +7,7 @@ use vulkanalia::{
     prelude::v1_0::*,
 };
 use crate::graphical_core::{
-    gpu::pick_physical_device,
+    gpu::choose_gpu,
     swapchain::{create_swapchain, create_swapchain_image_views},
     render_pass::create_render_pass,
     pipeline::create_pipeline,
@@ -50,7 +50,7 @@ impl VulkanApplication {
         let mut vulkan_application_data = VulkanApplicationData::default();
         let vulkan_instance = create_instance(user_window, &vulkan_api_entry_point, &mut vulkan_application_data)?;
         vulkan_application_data.surface = vulkan_window::create_surface(&vulkan_instance, &user_window, &user_window)?;
-        pick_physical_device(&vulkan_instance, &mut vulkan_application_data)?;
+        choose_gpu(&vulkan_instance, &mut vulkan_application_data)?;
         let vulkan_logical_device = create_logical_device(&vulkan_api_entry_point, &vulkan_instance, &mut vulkan_application_data)?;
         create_swapchain(user_window, &vulkan_instance, &vulkan_logical_device, &mut vulkan_application_data)?;
         create_swapchain_image_views(&vulkan_logical_device, &mut vulkan_application_data)?;
