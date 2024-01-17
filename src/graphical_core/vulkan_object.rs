@@ -11,7 +11,8 @@ use crate::graphical_core::{
     swapchain::{create_swapchain, create_swapchain_image_views},
     render_pass::create_render_pass,
     pipeline::create_pipeline,
-    extra::{create_command_buffers, create_command_pool, create_frame_buffers, create_instance, create_logical_device, create_sync_objects}
+    extra::{create_command_buffers, create_command_pool, create_frame_buffers, create_instance, create_logical_device, create_sync_objects},
+    MAX_FRAMES_IN_FLIGHT
 };
 use crate::VALIDATION_ENABLED;
 
@@ -34,14 +35,19 @@ pub struct VulkanApplicationData {
     pub command_pool: vk::CommandPool,
     pub command_buffers: Vec<vk::CommandBuffer>,
     pub image_available_semaphore: vk::Semaphore,
-    pub render_finished_semaphore: vk::Semaphore
+    pub render_finished_semaphore: vk::Semaphore,
+    pub image_available_semaphores: Vec<vk::Semaphore>,
+    pub render_finished_semaphores: Vec<vk::Semaphore>,
+    pub(crate) in_flight_fences: Vec<vk::Fence>,
+    pub(crate) images_in_flight: Vec<vk::Fence>
 }
 #[derive(Clone, Debug)]
 pub struct VulkanApplication {
     vulkan_entry_point: Entry,
     vulkan_instance: Instance,
     data: VulkanApplicationData,
-    vulkan_device: Device
+    vulkan_device: Device,
+    frame: usize
 }
 impl VulkanApplication {
     pub unsafe fn create_vulkan_application(user_window: &Window) -> anyhow::Result<Self> {
@@ -60,27 +66,49 @@ impl VulkanApplication {
         create_command_pool(&vulkan_instance, &vulkan_logical_device, &mut vulkan_application_data)?;
         create_command_buffers(&vulkan_logical_device, &mut vulkan_application_data)?;
         create_sync_objects(&vulkan_logical_device, &mut vulkan_application_data)?;
-        Ok(Self{vulkan_entry_point: vulkan_api_entry_point, vulkan_instance, data: vulkan_application_data, vulkan_device: vulkan_logical_device})
+        Ok(Self{vulkan_entry_point: vulkan_api_entry_point, vulkan_instance, data: vulkan_application_data, vulkan_device: vulkan_logical_device, frame: 0})
     }
     pub unsafe fn render_frame(&mut self, window: &Window) -> anyhow::Result<()> {
-        let image_index = self.vulkan_device.acquire_next_image_khr(self.data.swapchain, u64::MAX, self.data.image_available_semaphore, vk::Fence::null())?.0 as usize;
-        let semaphore_to_wait_on_before_execution = &[self.data.image_available_semaphore];
+        self.vulkan_device.wait_for_fences(&[self.data.in_flight_fences[self.frame]], true, u64::MAX, )?;
+
+        let image_index = self.vulkan_device.acquire_next_image_khr(self.data.swapchain, u64::MAX, self.data.image_available_semaphores[self.frame], vk::Fence::null(), )?.0 as usize;
+
+        if !self.data.images_in_flight[image_index].is_null() {
+            self.vulkan_device.wait_for_fences(&[self.data.images_in_flight[image_index]], true, u64::MAX, )?;
+        }
+
+        self.data.images_in_flight[image_index] = self.data.in_flight_fences[self.frame];
+
+        let semaphore_to_wait_on_before_execution = &[self.data.image_available_semaphores[self.frame]];
         let stage_of_pipeline_to_wait_on_before_execution = &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
         let command_buffer_to_use_at_execution = &[self.data.command_buffers[image_index]];
-        let semaphores_to_signal_after_command_buffer_finished_executing = &[self.data.render_finished_semaphore];
+        let semaphores_to_signal_after_command_buffer_finished_executing = &[self.data.render_finished_semaphores[self.frame]];
         let info_to_submit_to_queue = vk::SubmitInfo::builder().wait_semaphores(semaphore_to_wait_on_before_execution).wait_dst_stage_mask(stage_of_pipeline_to_wait_on_before_execution)
             .command_buffers(command_buffer_to_use_at_execution).signal_semaphores(semaphores_to_signal_after_command_buffer_finished_executing);
-        self.vulkan_device.queue_submit(self.data.graphics_queue, &[info_to_submit_to_queue], vk::Fence::null())?;
+
+        self.vulkan_device.reset_fences(&[self.data.in_flight_fences[self.frame]])?;
+
+        self.vulkan_device.queue_submit(self.data.graphics_queue, &[info_to_submit_to_queue], self.data.in_flight_fences[self.frame])?;
+
         let swapchains_to_present_images_to = &[self.data.swapchain];
         let image_index_in_swapchain = &[image_index as u32];
         let image_presentation_configuration = vk::PresentInfoKHR::builder()
             .wait_semaphores(semaphores_to_signal_after_command_buffer_finished_executing)
             .swapchains(swapchains_to_present_images_to)
             .image_indices(image_index_in_swapchain);
+
         self.present_image_to_swapchain(image_presentation_configuration);
+        self.vulkan_device.queue_present_khr(self.data.presentation_queue, &image_presentation_configuration)?;
+        self.vulkan_device.queue_wait_idle(self.data.presentation_queue)?;
+
+        self.frame = (self.frame + 1) % MAX_FRAMES_IN_FLIGHT;
+
         Ok(())
     }
     pub unsafe fn destroy_vulkan_application(&mut self) {
+        self.data.in_flight_fences.iter().for_each(|f| self.vulkan_device.destroy_fence(*f, None));
+        self.data.render_finished_semaphores.iter().for_each(|s| self.vulkan_device.destroy_semaphore(*s, None));
+        self.data.image_available_semaphores.iter().for_each(|s| self.vulkan_device.destroy_semaphore(*s, None));
         self.vulkan_device.destroy_semaphore(self.data.render_finished_semaphore, None);
         self.vulkan_device.destroy_semaphore(self.data.image_available_semaphore, None);
         self.vulkan_device.destroy_command_pool(self.data.command_pool, None);

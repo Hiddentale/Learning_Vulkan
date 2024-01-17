@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use anyhow::anyhow;
 use log::{info, warn};
 use thiserror::Error;
-use vulkanalia::{Instance, vk};
+use vulkanalia::Instance;
 use vulkanalia::vk::{InstanceV1_0, PhysicalDevice, PhysicalDeviceProperties};
 use crate::DEVICE_EXTENSIONS;
 use crate::graphical_core::{vulkan_object::VulkanApplicationData, queue_families::RequiredQueueFamilies};

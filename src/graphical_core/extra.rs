@@ -5,17 +5,20 @@ use anyhow::anyhow;
 use log::{debug, error, info, trace, warn};
 use thiserror::Error;
 use vulkanalia::{Device, Entry, Instance, vk};
-use vulkanalia::bytecode::Bytecode;
-use vulkanalia::vk::{DeviceV1_0, EntryV1_0, ExtDebugUtilsExtension, HasBuilder};
+use vulkanalia::vk::{DeviceV1_0, EntryV1_0, ExtDebugUtilsExtension, Handle, HasBuilder};
 use vulkanalia::window as vk_window;
 use winit::window::Window;
 use crate::{DEVICE_EXTENSIONS, graphical_core, PORTABILITY_MACOS_VERSION, VALIDATION_ENABLED, VALIDATION_LAYER};
-use crate::graphical_core::vulkan_object::VulkanApplicationData;
+use crate::graphical_core::{
+    MAX_FRAMES_IN_FLIGHT,
+    vulkan_object::VulkanApplicationData
+};
 
 pub unsafe fn create_frame_buffers(device: &Device, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
     data.framebuffers = data.swapchain_image_views.iter().map(|i| {
         let attachments = &[*i];
-        let create_info = vk::FramebufferCreateInfo::builder().render_pass(data.render_pass).attachments(attachments).width(data.swapchain_accepted_images_width_and_height.width).height(data.swapchain_accepted_images_width_and_height.height).layers(1);
+        let create_info = vk::FramebufferCreateInfo::builder().render_pass(data.render_pass).attachments(attachments).width(data.swapchain_accepted_images_width_and_height.width)
+            .height(data.swapchain_accepted_images_width_and_height.height).layers(1);
 
         device.create_framebuffer(&create_info, None)
     }).collect::<anyhow::Result<Vec<_>, _>>()?;
@@ -52,9 +55,14 @@ pub unsafe fn create_command_buffers(device: &Device, data: &mut VulkanApplicati
 }
 pub unsafe fn create_sync_objects(device: &Device, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
     let semaphore_info = vk::SemaphoreCreateInfo::builder();
+    let fence_info = vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED);
 
-    data.image_available_semaphore = device.create_semaphore(&semaphore_info, None)?;
-    data.render_finished_semaphore = device.create_semaphore(&semaphore_info, None)?;
+    for _ in 0..MAX_FRAMES_IN_FLIGHT {
+        data.image_available_semaphores.push(device.create_semaphore(&semaphore_info, None)?);
+        data.render_finished_semaphores.push(device.create_semaphore(&semaphore_info, None)?);
+        data.in_flight_fences.push(device.create_fence(&fence_info, None)?);
+    }
+    data.images_in_flight = data.swapchain_images.iter().map(|_| vk::Fence::null()).collect();
     Ok(())
 }
 pub unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut VulkanApplicationData) -> anyhow::Result<Instance> {
