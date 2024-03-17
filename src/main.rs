@@ -6,7 +6,6 @@ clippy::unnecessary_wraps
 )]
 mod graphical_core;
 use anyhow::Result;
-use log::*;
 use winit::{
     dpi::LogicalSize,
     event::{Event, WindowEvent},
@@ -16,7 +15,6 @@ use winit::{
 use vulkanalia::{
     prelude::v1_0::*,
     Version,
-    vk::ExtDebugUtilsExtension
 };
 use graphical_core::vulkan_object::VulkanApplication;
 
@@ -42,6 +40,7 @@ fn main() -> Result<()>
         match event
         {
             Event::WindowEvent {event: WindowEvent::CloseRequested, .. } => {exit_program(&mut destroy_application, current_window, &mut application);},
+            Event::WindowEvent { event: WindowEvent::Resized(_), .. } => application.resized = true,
             Event::AboutToWait => { user_window.request_redraw()},
             Event::WindowEvent {event: WindowEvent::RedrawRequested, .. } => {if !destroy_application {unsafe {application.render_frame(&user_window)}.unwrap()}},
             _ => ()
