@@ -108,7 +108,6 @@ impl VulkanApplication {
         let result = self.vulkan_logical_device.queue_present_khr(self.vulkan_application_data.presentation_queue, &image_presentation_configuration);
 
         let changed = result == Err(vk::ErrorCode::OUT_OF_DATE_KHR);
-        println!("Changed it has, or not, {}", changed);
 
         //let changed = result == Ok(vk::SuccessCode::SUBOPTIMAL_KHR) || result == Err(vk::ErrorCode::OUT_OF_DATE_KHR);
         //println!("{:?}", result?);

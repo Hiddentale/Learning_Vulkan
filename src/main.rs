@@ -35,14 +35,15 @@ fn main() -> Result<()>
 
     let mut application = unsafe {VulkanApplication::create_vulkan_application(&user_window)}?;
     let mut destroy_application = false;
+    let mut minimized = false;
 
     event_handler.run(move |event, current_window| {
         match event
         {
             Event::WindowEvent {event: WindowEvent::CloseRequested, .. } => {exit_program(&mut destroy_application, current_window, &mut application);},
-            Event::WindowEvent { event: WindowEvent::Resized(_), .. } => application.resized = true,
+            Event::WindowEvent { event: WindowEvent::Resized(size), .. } => {if size.width == 0 || size.height == 0 {minimized = true} else {minimized = false; application.resized = true}},
             Event::AboutToWait => { user_window.request_redraw()},
-            Event::WindowEvent {event: WindowEvent::RedrawRequested, .. } => {if !destroy_application {unsafe {application.render_frame(&user_window)}.unwrap()}},
+            Event::WindowEvent {event: WindowEvent::RedrawRequested, .. } => {if !destroy_application && !minimized {unsafe {application.render_frame(&user_window)}.unwrap()}},
             _ => ()
         }
     }).expect("Main function crashed!");
