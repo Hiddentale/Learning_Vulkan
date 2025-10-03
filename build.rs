@@ -24,6 +24,8 @@
 fn main()  -> anyhow::Result<()> {
     let glslc_path = find_glslc()?;
     println!("Using glslc at: {:?}", glslc_path.display());
+    let all_shader_source_files = read_all_entries()?;
+    println!("{:?}", all_shader_source_files);
     Ok(())
 }
 
@@ -31,13 +33,35 @@ fn find_glslc() -> anyhow::Result<std::path::PathBuf> {
     let environment_variable_path = std::env::var("PATH")?;
 
     for directory in std::env::split_paths(&environment_variable_path) {
-        let files_in_directory = std::fs::read_dir(&directory)?;
-        for file in files_in_directory {
-            let entry = file?;
-            if entry.file_name() == "glslc.exe" {
-                return Ok(entry.path());
+        if let Ok(files_in_directory) = std::fs::read_dir(&directory) {
+            for file in files_in_directory {
+                if let Ok(entry) = file {
+                    if entry.file_name() == "glslc.exe" {
+                        return Ok(entry.path());
+                    }
+                }
             }
         }
     }
     anyhow::bail!("glslc.exe not found!")
+}
+
+fn read_all_entries() -> anyhow::Result<Vec<std::path::PathBuf>> {
+    let mut shader_paths = Vec::new();
+    let shader_directory_path = "src/shaders";
+    for entry_result in std::fs::read_dir(shader_directory_path)? { // For each entry
+        if let Ok(entry) = entry_result {
+            if entry.path().is_file() {
+                if entry.path().extension().unwrap() == "vert" || entry.path().extension().unwrap() == "frag" {
+                    shader_paths.push(entry.path())
+                }
+            }
+        }   
+    }
+    if shader_paths.is_empty() {
+        anyhow::bail!("No shaders found!")
+    }
+    else {
+        return Ok(shader_paths);
+    }
 }
