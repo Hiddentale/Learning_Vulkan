@@ -21,6 +21,23 @@
      */
 
 
-fn main() {
-    println!("Hello from build script!");
+fn main()  -> anyhow::Result<()> {
+    let glslc_path = find_glslc()?;
+    println!("Using glslc at: {:?}", glslc_path.display());
+    Ok(())
+}
+
+fn find_glslc() -> anyhow::Result<std::path::PathBuf> {
+    let environment_variable_path = std::env::var("PATH")?;
+
+    for directory in std::env::split_paths(&environment_variable_path) {
+        let files_in_directory = std::fs::read_dir(&directory)?;
+        for file in files_in_directory {
+            let entry = file?;
+            if entry.file_name() == "glslc.exe" {
+                return Ok(entry.path());
+            }
+        }
+    }
+    anyhow::bail!("glslc.exe not found!")
 }
