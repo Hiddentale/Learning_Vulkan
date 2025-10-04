@@ -4,8 +4,8 @@ use crate::graphical_core::shaders::create_shader_module;
 use crate::graphical_core::vulkan_object::VulkanApplicationData;
 
 pub unsafe fn create_pipeline(device: &Device, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
-    let vertex_shader = include_bytes!("../shaders/vert.spv");
-    let fragment_shader = include_bytes!("../shaders/frag.spv");
+    let vertex_shader = include_bytes!("../shaders/shader.vert.spv");
+    let fragment_shader = include_bytes!("../shaders/shader.frag.spv");
 
     let vertex_shader_module = create_shader_module(device, &vertex_shader[..])?;
     let fragment_shader_module = create_shader_module(device, &fragment_shader[..])?;
