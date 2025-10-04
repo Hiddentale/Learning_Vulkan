@@ -1,42 +1,71 @@
-/*
-1. Check if glslc is available
-   - If not, panic with helpful message
+//! Build script for automatic shader compilation.
+//!
+//! This script runs before the main crate is compiled and handles:
+//! - Detecting the GLSL compiler (glslc from Vulkan SDK)
+//! - Discovering shader source files in `src/shaders/`
+//! - Compiling GLSL to SPIR-V bytecode
+//! - Incremental compilation (only recompile when source changes)
+//! - Integration with Cargo's rebuild system
 
-2. Define shader directory path ("src/shaders")
+use std::path::PathBuf;
 
-3. Read all entries in shader directory
-   - For each entry:
-     - Check if it's a file
-     - Check if extension is "vert" or "frag"
-     - If yes: this is a shader source file
-
-4. For each shader source file:
-   - Tell Cargo to watch this file
-   - Build the output path
-   - Check if output exists and if source is newer
-   - If we need to compile:
-     - Run glslc with input and output paths
-     - Check if compilation succeeded
-     - If failed, panic with error message
-     */
 fn main() -> anyhow::Result<()> {
+    // Rebuild if this build script changes
     println!("cargo:rerun-if-changed=build.rs");
-    let all_shader_source_files = read_all_entries()?;
-    let a = process_shaders(all_shader_source_files);
+
+    validate_glsl_compiler()?;
+    let all_shader_source_files = discover_shader_files()?;
+    process_shaders(all_shader_source_files)?;
 
     Ok(())
 }
 
-fn read_all_entries() -> anyhow::Result<Vec<std::path::PathBuf>> {
+/// Validates that the GLSL compiler (glslc) is available.
+///
+/// This checks if `glslc` is in the system PATH by attempting to run it
+/// with the `--version` flag. If the compiler is not found, the build fails
+/// with a helpful error message.
+///
+/// # Errors
+///
+/// Returns an error if glslc cannot be found or executed.
+fn validate_glsl_compiler() -> anyhow::Result<()> {
+    let compiler_exists = std::process::Command::new("glslc").arg("--version").output().is_ok();
+    if !compiler_exists {
+        anyhow::bail!(
+            "glslc not found in PATH. Please install the Vulkan SDK.\n\
+             Download from: https://vulkan.lunarg.com/"
+        );
+    }
+    Ok(())
+}
+
+/// Discovers all shader source files in the `src/shaders/` directory.
+///
+/// Scans for files with `.vert` (vertex) and `.frag` (fragment) extensions.
+/// Only files (not directories) are included in the result.
+///
+/// # Returns
+///
+/// A vector of paths to shader source files.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - The shader directory cannot be read
+/// - No shader files are found in the directory
+fn discover_shader_files() -> anyhow::Result<Vec<PathBuf>> {
     let mut shader_paths = Vec::new();
     let shader_directory_path = "src/shaders";
+
     for entry_result in std::fs::read_dir(shader_directory_path)? {
-        if let Ok(entry) = entry_result {
-            if entry.path().is_file() {
-                if let Some(extension) = entry.path().extension() {
-                    if extension == "vert" || extension == "frag" {
-                        shader_paths.push(entry.path())
-                    }
+        let entry = entry_result?.path();
+        // Only process files, not directories
+        if entry.is_file() {
+            if let Some(extension) = entry.extension() {
+                // Check for vertex and fragment shader extensions
+                if extension == "vert" || extension == "frag" {
+                    shader_paths.push(entry)
                 }
             }
         }
@@ -48,26 +77,57 @@ fn read_all_entries() -> anyhow::Result<Vec<std::path::PathBuf>> {
     }
 }
 
-fn process_shaders(shader_paths: Vec<std::path::PathBuf>) -> anyhow::Result<()> {
+/// Compiles shader source files to SPIR-V bytecode.
+///
+/// For each shader source file:
+/// 1. Registers it with Cargo's rebuild system (recompile if it changes)
+/// 2. Checks if recompilation is needed (source is newer than output)
+/// 3. Invokes glslc to compile GLSL → SPIR-V
+/// 4. Verifies compilation succeeded
+///
+/// Output files are named by appending `.spv` to the source filename.
+/// For example: `shader.vert` → `shader.vert.spv`
+///
+/// # Arguments
+///
+/// * `shader_paths` - Paths to shader source files to compile
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - File metadata cannot be read
+/// - Shader compilation fails (syntax errors, etc.)
+/// - glslc cannot be executed
+fn process_shaders(shader_paths: Vec<PathBuf>) -> anyhow::Result<()> {
     for shader_path in shader_paths {
-        println!("cargo:rerun-if-changed={:?}", shader_path);
+        // Tell Cargo to rerun this build script if the shader changes
+        println!("cargo:rerun-if-changed={}", shader_path.display());
+
+        // Get source file modification time
         let shader_modified_date = std::fs::metadata(&shader_path)?.modified();
+
+        // Construct output path: shader.vert → shader.vert.spv
         let compiled_shader_path = format!("{}.spv", shader_path.display());
+
+        // Determine if recompilation is needed
         let needs_recompile = match std::fs::metadata(&compiled_shader_path) {
             Ok(metadata) => {
                 let compiled_time = metadata.modified()?;
-                shader_modified_date? > compiled_time
+                shader_modified_date? > compiled_time // Source is newer
             }
-            Err(_) => true,
+            Err(_) => true, // Output doesn't exist yet
         };
         if needs_recompile {
+            // Compile GLSL to SPIR-V
             let output = std::process::Command::new("glslc")
                 .arg(shader_path)
                 .arg("-o")
                 .arg(compiled_shader_path)
-                .output();
-            if output.is_err() {
-                anyhow::bail!("glslc not found in PATH. Please install Vulkan SDK.");
+                .output()?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                anyhow::bail!("Shader compilation failed: \n{}", stderr);
             }
         }
     }
