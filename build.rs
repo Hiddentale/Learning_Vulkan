@@ -60,10 +60,8 @@ fn discover_shader_files() -> anyhow::Result<Vec<PathBuf>> {
 
     for entry_result in std::fs::read_dir(shader_directory_path)? {
         let entry = entry_result?.path();
-        // Only process files, not directories
         if entry.is_file() {
             if let Some(extension) = entry.extension() {
-                // Check for vertex and fragment shader extensions
                 if extension == "vert" || extension == "frag" {
                     shader_paths.push(entry)
                 }
@@ -100,22 +98,17 @@ fn discover_shader_files() -> anyhow::Result<Vec<PathBuf>> {
 /// - glslc cannot be executed
 fn process_shaders(shader_paths: Vec<PathBuf>) -> anyhow::Result<()> {
     for shader_path in shader_paths {
-        // Tell Cargo to rerun this build script if the shader changes
         println!("cargo:rerun-if-changed={}", shader_path.display());
 
-        // Get source file modification time
         let shader_modified_date = std::fs::metadata(&shader_path)?.modified();
-
-        // Construct output path: shader.vert → shader.vert.spv
         let compiled_shader_path = format!("{}.spv", shader_path.display());
 
-        // Determine if recompilation is needed
         let needs_recompile = match std::fs::metadata(&compiled_shader_path) {
             Ok(metadata) => {
                 let compiled_time = metadata.modified()?;
-                shader_modified_date? > compiled_time // Source is newer
+                shader_modified_date? > compiled_time
             }
-            Err(_) => true, // Output doesn't exist yet
+            Err(_) => true,
         };
         if needs_recompile {
             // Compile GLSL to SPIR-V
