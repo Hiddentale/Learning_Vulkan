@@ -5,33 +5,6 @@ use vulkanalia::{
     vk::{self, DeviceV1_0, InstanceV1_0},
     Device, Instance,
 };
-
-/// Represents a single vertex with position and color data.
-///
-/// # Memory Layout
-/// `#[repr(C)]` ensures the struct has a predictable memory layout matching C/Vulkan expectations.
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Default)]
-struct Vertex {
-    pos: [f32; 2],
-    color: [f32; 3],
-}
-
-const VERTICES: [Vertex; 3] = [
-    Vertex {
-        pos: [0.0, -0.5],
-        color: [1.0, 0.0, 0.0],
-    },
-    Vertex {
-        pos: [0.5, 0.5],
-        color: [0.0, 1.0, 0.0],
-    },
-    Vertex {
-        pos: [-0.5, 0.5],
-        color: [0.0, 0.0, 1.0],
-    },
-];
-
 /// Allocates GPU buffer memory, copies data from CPU to GPU, and returns handles.
 ///
 /// # Process Overview
@@ -73,7 +46,7 @@ const VERTICES: [Vertex; 3] = [
 /// - Memory allocation fails
 /// - No suitable memory type is found
 /// - Memory mapping fails
-unsafe fn allocate_and_fill_buffer<T>(
+pub unsafe fn allocate_and_fill_buffer<T>(
     data_slice: &[T],
     buffer_usage_flags: vk::BufferUsageFlags,
     vulkan_logical_device: &Device,
@@ -83,7 +56,7 @@ unsafe fn allocate_and_fill_buffer<T>(
     let buffer_size_in_bytes = (data_slice.len() * size_of::<T>()) as u64;
 
     let buffer_create_info = vk::BufferCreateInfo {
-        size: (VERTICES.len() * size_of::<Vertex>()) as u64,
+        size: buffer_size_in_bytes,
         usage: vk::BufferUsageFlags::VERTEX_BUFFER,
         sharing_mode: vk::SharingMode::EXCLUSIVE,
         ..Default::default()
@@ -120,13 +93,13 @@ unsafe fn allocate_and_fill_buffer<T>(
         )?
     };
 
-    let vertex_pointer = pointer_to_mapped_memory as *mut Vertex;
+    let vertex_pointer = pointer_to_mapped_memory as *mut T;
 
     unsafe {
         copy_nonoverlapping(
-            VERTICES.as_ptr(), // Source: CPU memory containing our data
+            data_slice.as_ptr(), // Source: CPU memory containing our data
             vertex_pointer,    // Destination: Mapped pointer to GPU memory
-            VERTICES.len(),    // Number of elements to copy
+            data_slice.len(),    // Number of elements to copy
         )
     };
 

@@ -1,9 +1,33 @@
 use crate::graphical_core::shaders::create_shader_module;
-use crate::graphical_core::vulkan_object::VulkanApplicationData;
+use crate::graphical_core::vulkan_object::{Vertex, VulkanApplicationData};
 use vulkanalia::vk::{DeviceV1_0, Handle, HasBuilder};
 use vulkanalia::{vk, Device};
 
 pub unsafe fn create_pipeline(vulkan_logical_device: &Device, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
+    let vertex_binding_description = vk::VertexInputBindingDescription::builder()
+        .binding(0)
+        .stride(std::mem::size_of::<Vertex>() as u32)
+        .input_rate(vk::VertexInputRate::VERTEX);
+
+    let position_attribute = vk::VertexInputAttributeDescription::builder()
+        .binding(0)
+        .location(0)
+        .format(vk::Format::R32G32_SFLOAT)
+        .offset(0);
+
+    let color_attribute = vk::VertexInputAttributeDescription::builder()
+        .binding(0)
+        .location(1)
+        .format(vk::Format::R32G32B32_SFLOAT)
+        .offset(8);
+
+    let bindings = &[vertex_binding_description];
+    let attributes = &[position_attribute, color_attribute];
+
+    let vertex_input_state = vk::PipelineVertexInputStateCreateInfo::builder()
+        .vertex_binding_descriptions(bindings)
+        .vertex_attribute_descriptions(attributes);
+
     let vertex_shader = include_bytes!("../shaders/shader.vert.spv");
     let fragment_shader = include_bytes!("../shaders/shader.frag.spv");
 
@@ -18,7 +42,7 @@ pub unsafe fn create_pipeline(vulkan_logical_device: &Device, data: &mut VulkanA
         .stage(vk::ShaderStageFlags::FRAGMENT)
         .module(fragment_shader_module)
         .name(b"main\0");
-    let vertex_input_state = vk::PipelineVertexInputStateCreateInfo::builder();
+    //let vertex_input_state = vk::PipelineVertexInputStateCreateInfo::builder();
     let input_assembly_state = vk::PipelineInputAssemblyStateCreateInfo::builder()
         .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
         .primitive_restart_enable(false);
