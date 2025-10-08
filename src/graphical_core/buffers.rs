@@ -1,19 +1,3 @@
-/*
-Plan:
-    Allocate a chunk of GPU memory (vertex buffer):
-        1. Create a buffer with usage VERTEX_BUFFER
-        2. Allocate memory with properties HOST_VISIBLE | HOST_COHERENT
-        3. Bind buffer to memory
-
-    Upload vertex data from CPU → GPU:
-        4. Map the memory (get a raw pointer)
-        5. memcpy your vertex data into it
-        6. Unmap the memory
-
-    Bind that buffer when  ready to draw
-    Tell the GPU how to interpret the data
- */
-/* */
 use crate::graphical_core::vulkan_object::VulkanApplicationData;
 use anyhow;
 use vulkanalia::{
@@ -44,16 +28,16 @@ const VERTICES: [Vertex; 3] = [
 ];
 
 unsafe fn temp(vulkan_logical_device: &Device, instance: &Instance, vulkan_application_data: &mut VulkanApplicationData) -> anyhow::Result<()> {
-    let vertex_buffer_create_info = &vk::BufferCreateInfo {
+    let buffer_create_info = &vk::BufferCreateInfo {
         size: (VERTICES.len() * size_of::<Vertex>()) as u64,
         usage: vk::BufferUsageFlags::VERTEX_BUFFER,
         sharing_mode: vk::SharingMode::EXCLUSIVE,
         ..Default::default()
     };
 
-    let vertex_buffer = unsafe{ vulkan_logical_device.create_buffer(vertex_buffer_create_info, None)? };
+    let buffer = unsafe { vulkan_logical_device.create_buffer(buffer_create_info, None)? };
 
-    let buffer_mem_requirement = unsafe{ vulkan_logical_device.get_buffer_memory_requirements(vertex_buffer) };
+    let buffer_mem_requirement = unsafe { vulkan_logical_device.get_buffer_memory_requirements(buffer) };
 
     let memory_properties = instance.get_physical_device_memory_properties(vulkan_application_data.physical_device);
     let allowed_memory_types = buffer_mem_requirement.memory_type_bits;
@@ -61,15 +45,23 @@ unsafe fn temp(vulkan_logical_device: &Device, instance: &Instance, vulkan_appli
 
     let buffer_memory_type = find_memory_type(&memory_properties, allowed_memory_types, desired_properties)?;
 
-    let allocation_info = vk::MemoryAllocateInfo{
+    let allocation_info = vk::MemoryAllocateInfo {
         s_type: vk::StructureType::MEMORY_ALLOCATE_INFO,
         next: std::ptr::null(),
         allocation_size: buffer_mem_requirement.size,
         memory_type_index: buffer_memory_type,
     };
 
-    let memory_allocated = unsafe{ vulkan_logical_device.allocate_memory(&allocation_info, None) };
-    
+    let memory_allocated = unsafe { vulkan_logical_device.allocate_memory(&allocation_info, None)? };
+
+    let allocate_buffer = unsafe { vulkan_logical_device.bind_buffer_memory(buffer, memory_allocated, 0)? };
+
+    let map_memory = unsafe { vulkan_logical_device.map_memory(memory_allocated, vk::DeviceSize::default(), buffer_mem_requirement.size, vk::MemoryMapFlags::empty())? };
+
+    let m
+
+    unmap_memory = unsafe { vulkan_logical_device.unmap_memory(memory_allocated) };
+
     Ok(())
 }
 
