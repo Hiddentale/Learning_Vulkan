@@ -51,15 +51,25 @@ unsafe fn temp(vulkan_logical_device: &Device, instance: &Instance, vulkan_appli
         ..Default::default()
     };
 
-    let vertex_buffer = vulkan_logical_device.create_buffer(vertex_buffer_create_info, None)?;
+    let vertex_buffer = unsafe{ vulkan_logical_device.create_buffer(vertex_buffer_create_info, None)? };
 
-    let v_buffer_mem_requirement = vulkan_logical_device.get_buffer_memory_requirements(vertex_buffer);
+    let buffer_mem_requirement = unsafe{ vulkan_logical_device.get_buffer_memory_requirements(vertex_buffer) };
 
     let memory_properties = instance.get_physical_device_memory_properties(vulkan_application_data.physical_device);
-    let allowed_memory_types = v_buffer_mem_requirement.memory_type_bits;
+    let allowed_memory_types = buffer_mem_requirement.memory_type_bits;
     let desired_properties = vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT;
 
-    let v_buffer_memory_type = find_memory_type(&memory_properties, allowed_memory_types, desired_properties)?;
+    let buffer_memory_type = find_memory_type(&memory_properties, allowed_memory_types, desired_properties)?;
+
+    let allocation_info = vk::MemoryAllocateInfo{
+        s_type: vk::StructureType::MEMORY_ALLOCATE_INFO,
+        next: std::ptr::null(),
+        allocation_size: buffer_mem_requirement.size,
+        memory_type_index: buffer_memory_type,
+    };
+
+    let memory_allocated = unsafe{ vulkan_logical_device.allocate_memory(&allocation_info, None) };
+    
     Ok(())
 }
 
