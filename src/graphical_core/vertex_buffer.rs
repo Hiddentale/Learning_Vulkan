@@ -56,18 +56,25 @@ unsafe fn temp(vulkan_logical_device: &Device, instance: &Instance, vulkan_appli
     let v_buffer_mem_requirement = vulkan_logical_device.get_buffer_memory_requirements(vertex_buffer);
 
     let memory_properties = instance.get_physical_device_memory_properties(vulkan_application_data.physical_device);
-    let type_filter = v_buffer_mem_requirement.memory_type_bits;
+    let allowed_memory_types = v_buffer_mem_requirement.memory_type_bits;
     let desired_properties = vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT;
 
-    let v_buffer_memory_type = find_memory_type(&memory_properties, type_filter, desired_properties);
+    let v_buffer_memory_type = find_memory_type(&memory_properties, allowed_memory_types, desired_properties)?;
     Ok(())
 }
 
-fn find_memory_type(memory_properties: &vk::PhysicalDeviceMemoryProperties, type_filter: u32, properties: vk::MemoryPropertyFlags) -> Option<u32> {
+fn find_memory_type(
+    memory_properties: &vk::PhysicalDeviceMemoryProperties,
+    allowed_memory_types: u32,
+    desired_properties: vk::MemoryPropertyFlags,
+) -> anyhow::Result<u32> {
     let number_of_different_memory_types = memory_properties.memory_type_count;
-    for i in 0..(number_of_different_memory_types - 1) {
-        if (type_filter & (1 << i)) != 0 { // Need to understand this better
+    for i in 0..number_of_different_memory_types {
+        if (allowed_memory_types & (1 << i)) != 0 {
+            if (memory_properties.memory_types[i as usize].property_flags & desired_properties) == desired_properties {
+                return Ok(i);
+            }
         }
     }
-    Some(2)
+    anyhow::bail!("Couldn't find a suitable memory type for given properties: {:?}", desired_properties);
 }
