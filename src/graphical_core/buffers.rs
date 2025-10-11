@@ -98,7 +98,7 @@ pub unsafe fn allocate_and_fill_buffer<T>(
     unsafe {
         copy_nonoverlapping(
             data_slice.as_ptr(), // Source: CPU memory containing our data
-            vertex_pointer,    // Destination: Mapped pointer to GPU memory
+            vertex_pointer,      // Destination: Mapped pointer to GPU memory
             data_slice.len(),    // Number of elements to copy
         )
     };
@@ -128,7 +128,6 @@ fn find_memory_type(
 
     for memory_type_index in 0..number_of_different_memory_types {
         let memory_type_is_allowed = (allowed_memory_types & (1 << memory_type_index)) != 0;
-
         if memory_type_is_allowed {
             let memory_type_properties = memory_properties.memory_types[memory_type_index as usize].property_flags;
 

@@ -1,10 +1,15 @@
-use vulkanalia::{Device, Instance, vk};
-use vulkanalia::vk::{DeviceV1_0, Handle, HasBuilder, KhrSurfaceExtension, KhrSwapchainExtension};
-use winit::window::Window;
 use crate::graphical_core::queue_families::RequiredQueueFamilies;
 use crate::graphical_core::vulkan_object::VulkanApplicationData;
+use vulkanalia::vk::{DeviceV1_0, Handle, HasBuilder, KhrSurfaceExtension, KhrSwapchainExtension};
+use vulkanalia::{vk, Device, Instance};
+use winit::window::Window;
 
-pub unsafe fn create_swapchain(user_window: &Window, current_system: &Instance, vulkan_logical_device: &Device, vulkan_application_data: &mut VulkanApplicationData) -> anyhow::Result<()> {
+pub unsafe fn create_swapchain(
+    user_window: &Window,
+    current_system: &Instance,
+    vulkan_logical_device: &Device,
+    vulkan_application_data: &mut VulkanApplicationData,
+) -> anyhow::Result<()> {
     let indices = RequiredQueueFamilies::get(current_system, vulkan_application_data, vulkan_application_data.physical_device)?;
     let current_swapchain_capabilities = SwapchainSupport::get(current_system, vulkan_application_data, vulkan_application_data.physical_device)?;
 
@@ -52,34 +57,66 @@ pub unsafe fn create_swapchain(user_window: &Window, current_system: &Instance, 
 }
 
 fn get_swapchain_surface_format(formats: &[vk::SurfaceFormatKHR]) -> vk::SurfaceFormatKHR {
-    formats.iter().cloned().find(|f| f.format == vk::Format::B8G8R8A8_SRGB && f.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR).unwrap_or_else(|| formats[0])
+    formats
+        .iter()
+        .cloned()
+        .find(|f| f.format == vk::Format::B8G8R8A8_SRGB && f.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR)
+        .unwrap_or_else(|| formats[0])
 }
 
 fn get_swapchain_presentation_mode(present_modes: &[vk::PresentModeKHR]) -> vk::PresentModeKHR {
-    present_modes.iter().cloned().find(|m| *m == vk::PresentModeKHR::MAILBOX).unwrap_or(vk::PresentModeKHR::FIFO)
+    present_modes
+        .iter()
+        .cloned()
+        .find(|m| *m == vk::PresentModeKHR::MAILBOX)
+        .unwrap_or(vk::PresentModeKHR::FIFO)
 }
 
 fn get_swapchain_extent(window: &Window, capabilities: vk::SurfaceCapabilitiesKHR) -> vk::Extent2D {
     if capabilities.current_extent.width != u32::MAX {
         capabilities.current_extent
-    }
-    else {
+    } else {
         let size = window.inner_size();
         let clamp = |min: u32, max: u32, v: u32| min.max(max.min(v));
-        vk::Extent2D::builder().width(clamp(capabilities.min_image_extent.width, capabilities.max_image_extent.width, size.width))
-            .height(clamp(capabilities.min_image_extent.height, capabilities.max_image_extent.height, size.height)).build()
+        vk::Extent2D::builder()
+            .width(clamp(
+                capabilities.min_image_extent.width,
+                capabilities.max_image_extent.width,
+                size.width,
+            ))
+            .height(clamp(
+                capabilities.min_image_extent.height,
+                capabilities.max_image_extent.height,
+                size.height,
+            ))
+            .build()
     }
 }
 pub unsafe fn create_swapchain_image_views(device: &Device, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
-    data.swapchain_image_views = data.swapchain_images.iter().map(|i|{
-        let components = vk::ComponentMapping::builder().r(vk::ComponentSwizzle::IDENTITY).g(vk::ComponentSwizzle::IDENTITY).b(vk::ComponentSwizzle::IDENTITY)
-            .a(vk::ComponentSwizzle::IDENTITY);
-        let subresource_range = vk::ImageSubresourceRange::builder().aspect_mask(vk::ImageAspectFlags::COLOR).base_mip_level(0).level_count(1).base_array_layer(0)
-            .layer_count(1);
-        let info = vk::ImageViewCreateInfo::builder().image(*i).view_type(vk::ImageViewType::_2D).format(data.swapchain_format).components(components)
-            .subresource_range(subresource_range);
-        device.create_image_view(&info, None)
-    }).collect::<anyhow::Result<Vec<_>, _>>()?;
+    data.swapchain_image_views = data
+        .swapchain_images
+        .iter()
+        .map(|i| {
+            let components = vk::ComponentMapping::builder()
+                .r(vk::ComponentSwizzle::IDENTITY)
+                .g(vk::ComponentSwizzle::IDENTITY)
+                .b(vk::ComponentSwizzle::IDENTITY)
+                .a(vk::ComponentSwizzle::IDENTITY);
+            let subresource_range = vk::ImageSubresourceRange::builder()
+                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                .base_mip_level(0)
+                .level_count(1)
+                .base_array_layer(0)
+                .layer_count(1);
+            let info = vk::ImageViewCreateInfo::builder()
+                .image(*i)
+                .view_type(vk::ImageViewType::_2D)
+                .format(data.swapchain_format)
+                .components(components)
+                .subresource_range(subresource_range);
+            device.create_image_view(&info, None)
+        })
+        .collect::<anyhow::Result<Vec<_>, _>>()?;
     Ok(())
 }
 
