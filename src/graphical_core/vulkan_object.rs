@@ -43,6 +43,8 @@ pub struct VulkanApplicationData {
     pub(crate) images_in_flight: Vec<vk::Fence>,
     pub vertex_buffer: vk::Buffer,
     pub vertex_buffer_memory: vk::DeviceMemory,
+    pub index_buffer: vk::Buffer,
+    pub index_buffer_memory: vk::DeviceMemory,
 }
 
 /// Represents a single vertex with position and color data.
@@ -53,24 +55,48 @@ pub struct VulkanApplicationData {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Vertex {
-    pos: [f32; 2],
+    pos: [f32; 3],
     color: [f32; 3],
 }
-
-const VERTICES: [Vertex; 3] = [
+const VERTICES: [Vertex; 8] = [
     Vertex {
-        pos: [0.0, -0.5],
+        pos: [-1.0, -1.0, 0.3],
         color: [1.0, 0.0, 0.0],
     },
     Vertex {
-        pos: [0.5, 0.5],
+        pos: [1.0, -1.0, 0.3],
         color: [0.0, 1.0, 0.0],
     },
     Vertex {
-        pos: [-0.5, 0.5],
+        pos: [1.0, 1.0, 0.3],
         color: [0.0, 0.0, 1.0],
     },
+    Vertex {
+        pos: [-1.0, 1.0, 0.3],
+        color: [1.0, 1.0, 0.0],
+    },
+    Vertex {
+        pos: [-1.0, -1.0, 0.7],
+        color: [1.0, 0.0, 1.0],
+    },
+    Vertex {
+        pos: [1.0, -1.0, 0.7],
+        color: [0.0, 1.0, 1.0],
+    },
+    Vertex {
+        pos: [1.0, 1.0, 0.7],
+        color: [1.0, 1.0, 1.0],
+    },
+    Vertex {
+        pos: [-1.0, 1.0, 0.7],
+        color: [0.5, 0.5, 0.5],
+    },
 ];
+
+const INDICES: [u16; 36] = [
+    0, 1, 2, 0, 2, 3, 5, 4, 7, 5, 7, 6, 1, 5, 6, 1, 6, 2, 4, 0, 3, 4, 3, 7, 3, 2, 6, 3, 6, 7, 4, 5, 1, 4, 1, 0,
+];
+
 #[derive(Clone, Debug)]
 pub struct VulkanApplication {
     vulkan_entry_point: Entry,
@@ -102,8 +128,18 @@ impl VulkanApplication {
             &vulkan_instance,
             &mut vulkan_application_data,
         )?;
+
+        let (index_buffer, index_buffer_memory) = allocate_and_fill_buffer(
+            &INDICES,
+            vk::BufferUsageFlags::INDEX_BUFFER, // Different usage!
+            &vulkan_logical_device,
+            &vulkan_instance,
+            &mut vulkan_application_data,
+        )?;
         vulkan_application_data.vertex_buffer = vertex_buffer;
+        vulkan_application_data.index_buffer = index_buffer;
         vulkan_application_data.vertex_buffer_memory = vertex_buffer_memory;
+        vulkan_application_data.index_buffer_memory = index_buffer_memory;
         create_command_buffers(&vulkan_logical_device, &mut vulkan_application_data)?;
         create_sync_objects(&vulkan_logical_device, &mut vulkan_application_data)?;
         Ok(Self {
@@ -250,6 +286,9 @@ impl VulkanApplication {
             .destroy_buffer(self.vulkan_application_data.vertex_buffer, None);
         self.vulkan_logical_device
             .free_memory(self.vulkan_application_data.vertex_buffer_memory, None);
+        self.vulkan_logical_device.destroy_buffer(self.vulkan_application_data.index_buffer, None);
+        self.vulkan_logical_device
+            .free_memory(self.vulkan_application_data.index_buffer_memory, None);
         self.vulkan_logical_device.destroy_device(None);
         self.vulkan_instance.destroy_surface_khr(self.vulkan_application_data.surface, None);
         if VALIDATION_ENABLED {
