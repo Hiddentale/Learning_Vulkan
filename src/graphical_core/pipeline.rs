@@ -12,14 +12,14 @@ pub unsafe fn create_pipeline(vulkan_logical_device: &Device, data: &mut VulkanA
     let position_attribute = vk::VertexInputAttributeDescription::builder()
         .binding(0)
         .location(0)
-        .format(vk::Format::R32G32_SFLOAT)
+        .format(vk::Format::R32G32B32_SFLOAT)
         .offset(0);
 
     let color_attribute = vk::VertexInputAttributeDescription::builder()
         .binding(0)
         .location(1)
         .format(vk::Format::R32G32B32_SFLOAT)
-        .offset(8);
+        .offset(12);
 
     let bindings = &[vertex_binding_description];
     let attributes = &[position_attribute, color_attribute];

@@ -57,7 +57,7 @@ pub unsafe fn allocate_and_fill_buffer<T>(
 
     let buffer_create_info = vk::BufferCreateInfo {
         size: buffer_size_in_bytes,
-        usage: vk::BufferUsageFlags::VERTEX_BUFFER,
+        usage: buffer_usage_flags,
         sharing_mode: vk::SharingMode::EXCLUSIVE,
         ..Default::default()
     };
