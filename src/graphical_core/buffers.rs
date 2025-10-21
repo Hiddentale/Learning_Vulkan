@@ -86,7 +86,7 @@ pub unsafe fn allocate_and_fill_buffer<T>(
 
     let pointer_to_mapped_memory = unsafe {
         vulkan_logical_device.map_memory(
-            allocated_memory,
+            allocated_memory,             // Which GPU memory to map
             vk::DeviceSize::default(),    // Start at the beginning of the allocation
             buffer_mem_requirements.size, // Map the entire allocation
             vk::MemoryMapFlags::empty(),  // No special flags needed
