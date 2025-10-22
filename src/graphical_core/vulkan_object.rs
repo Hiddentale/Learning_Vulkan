@@ -121,21 +121,27 @@ impl VulkanApplication {
         create_pipeline(&vulkan_logical_device, &mut vulkan_application_data)?;
         create_frame_buffers(&vulkan_logical_device, &mut vulkan_application_data)?;
         create_command_pool(&vulkan_instance, &vulkan_logical_device, &mut vulkan_application_data)?;
+
+        let vertex_buffer_size_in_bytes = (VERTICES.len() * size_of::<Vertex>()) as u64;
         let (vertex_buffer, vertex_buffer_memory) = allocate_and_fill_buffer(
             &VERTICES,
+            vertex_buffer_size_in_bytes,
             vk::BufferUsageFlags::VERTEX_BUFFER,
             &vulkan_logical_device,
             &vulkan_instance,
             &mut vulkan_application_data,
         )?;
 
+        let index_buffer_size_in_bytes = INDICES.len() as u64;
         let (index_buffer, index_buffer_memory) = allocate_and_fill_buffer(
             &INDICES,
+            index_buffer_size_in_bytes,
             vk::BufferUsageFlags::INDEX_BUFFER, // Different usage!
             &vulkan_logical_device,
             &vulkan_instance,
             &mut vulkan_application_data,
         )?;
+
         vulkan_application_data.vertex_buffer = vertex_buffer;
         vulkan_application_data.index_buffer = index_buffer;
         vulkan_application_data.vertex_buffer_memory = vertex_buffer_memory;

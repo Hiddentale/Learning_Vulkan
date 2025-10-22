@@ -1,6 +1,6 @@
 use crate::graphical_core::vulkan_object::VulkanApplicationData;
 use anyhow;
-use std::{mem::size_of, ptr::copy_nonoverlapping};
+use std::ptr::copy_nonoverlapping;
 use vulkanalia::{
     vk::{self, DeviceV1_0, InstanceV1_0},
     Device, Instance,
@@ -48,13 +48,12 @@ use vulkanalia::{
 /// - Memory mapping fails
 pub unsafe fn allocate_and_fill_buffer<T>(
     data_slice: &[T],
+    buffer_size_in_bytes: u64,
     buffer_usage_flags: vk::BufferUsageFlags,
     vulkan_logical_device: &Device,
     instance: &Instance,
     vulkan_application_data: &mut VulkanApplicationData,
 ) -> anyhow::Result<(vk::Buffer, vk::DeviceMemory)> {
-    let buffer_size_in_bytes = (data_slice.len() * size_of::<T>()) as u64;
-
     let buffer_create_info = vk::BufferCreateInfo {
         size: buffer_size_in_bytes,
         usage: buffer_usage_flags,

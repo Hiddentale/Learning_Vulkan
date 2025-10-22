@@ -44,7 +44,9 @@ pub unsafe fn create_command_buffers(device: &Device, data: &mut VulkanApplicati
         .command_pool(data.command_pool)
         .level(vk::CommandBufferLevel::PRIMARY)
         .command_buffer_count(data.framebuffers.len() as u32);
+
     data.command_buffers = device.allocate_command_buffers(&allocate_info)?;
+    
     for (i, command_buffer) in data.command_buffers.iter().enumerate() {
         let info = vk::CommandBufferBeginInfo::builder();
 

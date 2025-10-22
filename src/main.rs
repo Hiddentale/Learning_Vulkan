@@ -1,6 +1,7 @@
 #![allow(dead_code, unused_variables, clippy::too_many_arguments, clippy::unnecessary_wraps)]
 mod graphical_core;
 use anyhow::Result;
+use graphical_core::texture_mapping;
 use graphical_core::vulkan_object::VulkanApplication;
 use vulkanalia::{prelude::v1_0::*, Version};
 use winit::{
