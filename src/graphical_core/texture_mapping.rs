@@ -2,8 +2,9 @@ use crate::graphical_core::buffers::allocate_and_fill_buffer;
 use crate::graphical_core::vulkan_object::VulkanApplicationData;
 use image;
 use vulkanalia::vk;
-use vulkanalia::vk::{BufferUsageFlags, MemoryPropertyFlags};
-use vulkanalia::{Device, DeviceV1_0, Instance};
+use vulkanalia::vk::DeviceV1_0;
+use vulkanalia::vk::{BufferUsageFlags, HasBuilder};
+use vulkanalia::{Device, Instance};
 
 fn load_texture_from_disk(path_to_texture: &str) -> anyhow::Result<(Vec<u8>, u32, u32)> {
     let texture = image::ImageReader::open(path_to_texture)?.decode()?;
@@ -39,24 +40,19 @@ fn create_staging_buffer(
 }
 
 fn create_image(device: &Device, width: u32, height: u32) -> anyhow::Result<vk::Image> {
-    let image_info = vk::ImageCreateInfo {
-        s_type: vk::StructureType::IMAGE_CREATE_INFO,
-        flags: None,
-        next: std::ptr::null(),
-        image_type: vk::ImageType::_2D,
-        format: vk::Format::R8G8B8A8_SRGB,
-        extent: vk::Extent3D { width, height },
-        mip_levels: None,
-        array_layers: None,
-        samples: None,
-        tiling: vk::ImageTiling::OPTIMAL,
-        usage: vk::ImageUsageFlags::TRANSFER_SRC,
-        sharing_mode: None,
-        queue_family_index_count: None,
-        queue_family_indices: None,
-        initial_layout: None,
-    };
-    device.create_image(&image_info, allocator)
+    let image_info = vk::ImageCreateInfo::builder()
+        .image_type(vk::ImageType::_2D)
+        .format(vk::Format::R8G8B8A8_SRGB)
+        .extent(vk::Extent3D { width, height, depth: 1 }) // Every 2D texture exists in 3D space conceptually
+        .mip_levels(1) // How many mipmaps, 1 means no mipmaps
+        .array_layers(1) //Number of texture layers
+        .samples(vk::SampleCountFlags::_1) //Multisampling/anti-aliasing (number of samples per pixel)
+        .tiling(vk::ImageTiling::OPTIMAL)
+        .usage(vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED)
+        .sharing_mode(vk::SharingMode::EXCLUSIVE)
+        .initial_layout(vk::ImageLayout::UNDEFINED);
+
+    Ok(unsafe { device.create_image(&image_info, None)? })
 }
 
 fn create_image_view() {}
