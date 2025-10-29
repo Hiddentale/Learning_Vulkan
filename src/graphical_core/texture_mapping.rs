@@ -114,7 +114,22 @@ fn create_image_view(device: &Device, image: vk::Image) -> anyhow::Result<vk::Im
     Ok(unsafe { device.create_image_view(&image_view_create_info, None)? })
 }
 
-fn create_sampler() {}
+fn create_sampler(device: &Device) -> anyhow::Result<vk::Sampler> {
+    let sampler_create_info = vk::SamplerCreateInfo::builder()
+        .mag_filter(vk::Filter::NEAREST)
+        .min_filter(vk::Filter::NEAREST)
+        .address_mode_u(vk::SamplerAddressMode::REPEAT)
+        .address_mode_v(vk::SamplerAddressMode::REPEAT)
+        .address_mode_w(vk::SamplerAddressMode::REPEAT)
+        .mipmap_mode(vk::SamplerMipmapMode::NEAREST)
+        .anisotropy_enable(false)
+        .max_anisotropy(1.0)
+        .min_lod(0.0)
+        .max_lod(0.0)
+        .mip_lod_bias(0.0);
+
+    Ok(unsafe { device.create_sampler(&sampler_create_info, None)? })
+}
 
 fn transfer_image_data() {} // Command buffer recording
 
