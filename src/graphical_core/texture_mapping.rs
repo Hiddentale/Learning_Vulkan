@@ -131,7 +131,25 @@ fn create_sampler(device: &Device) -> anyhow::Result<vk::Sampler> {
     Ok(unsafe { device.create_sampler(&sampler_create_info, None)? })
 }
 
-fn transfer_image_data() {} // Command buffer recording
+fn transfer_image_data(
+    device: &Device,
+    image: vk::Image,
+    instance: &Instance,
+    vulkan_application_data: &mut VulkanApplicationData,
+) -> anyhow::Result<()> {
+    let allocate_info = vk::CommandBufferAllocateInfo::builder()
+        .command_buffer_count(1)
+        .command_pool(vulkan_application_data.command_pool)
+        .level(vk::CommandBufferLevel::PRIMARY);
+
+    let command_buffer = unsafe { device.allocate_command_buffers(&allocate_info)? };
+
+    let command_buffer_begin_info = vk::CommandBufferBeginInfo::builder()
+        .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+
+    unsafe { device.begin_command_buffer(command_buffer[0], &command_buffer_begin_info)? };
+    Ok(())
+}
 
 fn create_descriptor_set_layout() {} // Define what resources shaders expect
 
@@ -142,9 +160,3 @@ fn create_descriptor_pool() {}
 fn allocate_descriptor_set() {}
 
 fn update_descriptor_set() {}
-
-pub fn check_working() -> anyhow::Result<()> {
-    let (image_bytes, width, height) = load_texture_from_disk("textures/red_grass.png")?;
-    let staging_buffer = create_and_fill_staging_buffer(image_bytes, width, height, vulkan_logical_device, instance, vulkan_application_data);
-    Ok(())
-}
