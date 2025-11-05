@@ -21,13 +21,13 @@ fn load_texture_from_disk(path_to_texture: &str) -> anyhow::Result<(Vec<u8>, u32
 
 fn create_and_fill_staging_buffer(
     image_bytes: Vec<u8>,
-    width: u32,
-    height: u32,
+    image_width: u32,
+    image_height: u32,
     vulkan_logical_device: &Device,
     instance: &Instance,
     vulkan_application_data: &mut VulkanApplicationData,
 ) -> anyhow::Result<(vk::Buffer, vk::DeviceMemory)> {
-    let staging_buffer_size_in_bytes = (width * height * 4) as u64;
+    let staging_buffer_size_in_bytes = (image_width * image_height * 4) as u64;
     let staging_buffer = unsafe {
         allocate_and_fill_buffer(
             &image_bytes,
@@ -134,6 +134,9 @@ fn create_sampler(device: &Device) -> anyhow::Result<vk::Sampler> {
 fn transfer_image_data(
     device: &Device,
     image: vk::Image,
+    image_width: u32,
+    image_height: u32,
+    staging_buffer: vk::Buffer,
     instance: &Instance,
     vulkan_application_data: &mut VulkanApplicationData,
 ) -> anyhow::Result<()> {
@@ -144,10 +147,87 @@ fn transfer_image_data(
 
     let command_buffer = unsafe { device.allocate_command_buffers(&allocate_info)? };
 
-    let command_buffer_begin_info = vk::CommandBufferBeginInfo::builder()
-        .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+    let command_buffer_begin_info = vk::CommandBufferBeginInfo::builder().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
 
     unsafe { device.begin_command_buffer(command_buffer[0], &command_buffer_begin_info)? };
+
+    let subresource_range = vk::ImageSubresourceRange::builder()
+        .aspect_mask(vk::ImageAspectFlags::COLOR)
+        .base_mip_level(0)
+        .base_array_layer(0)
+        .level_count(1)
+        .layer_count(1);
+
+    let initial_image_memory_barriers = vk::ImageMemoryBarrier::builder()
+        .src_access_mask(vk::AccessFlags::empty())
+        .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+        .old_layout(vk::ImageLayout::UNDEFINED)
+        .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+        .image(image)
+        .subresource_range(subresource_range)
+        .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+        .build();
+
+    unsafe {
+        device.cmd_pipeline_barrier(
+            command_buffer[0],
+            vk::PipelineStageFlags::TOP_OF_PIPE,
+            vk::PipelineStageFlags::TRANSFER,
+            vk::DependencyFlags::empty(),
+            &[] as &[vk::MemoryBarrier],
+            &[] as &[vk::BufferMemoryBarrier],
+            &[initial_image_memory_barriers],
+        );
+    }
+
+    let image_subresource = vk::ImageSubresourceLayers::builder()
+        .aspect_mask(vk::ImageAspectFlags::COLOR)
+        .mip_level(0)
+        .base_array_layer(0)
+        .layer_count(1);
+
+    let offset = vk::Offset3D::builder().x(0).y(0).z(0);
+    let image_extent = vk::Extent3D::builder().width(image_width).height(image_height).depth(1);
+
+    let regions = vk::BufferImageCopy::builder()
+        .buffer_offset(0)
+        .buffer_row_length(0)
+        .buffer_image_height(0)
+        .image_subresource(image_subresource)
+        .image_offset(offset)
+        .image_extent(image_extent);
+
+    unsafe {
+        device.cmd_copy_buffer_to_image(
+            command_buffer[0],
+            staging_buffer,
+            image,
+            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            &[regions],
+        );
+    }
+
+    let image_memory_barriers = vk::ImageMemoryBarrier::builder()
+        .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+        .dst_access_mask(vk::AccessFlags::SHADER_READ)
+        .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+        .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+    unsafe {
+        device.cmd_pipeline_barrier(
+            command_buffer[0],
+            vk::PipelineStageFlags::TRANSFER,
+            vk::PipelineStageFlags::FRAGMENT_SHADER,
+            vk::DependencyFlags::empty(),
+            &[] as &[vk::MemoryBarrier],
+            &[] as &[vk::BufferMemoryBarrier],
+            &[image_memory_barriers],
+        );
+    }
+
+    unsafe { device.end_command_buffer(command_buffer[0])? }
+
     Ok(())
 }
 
