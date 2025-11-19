@@ -1,9 +1,12 @@
+use std::io::empty;
+
 use crate::graphical_core::buffers::allocate_and_fill_buffer;
 use crate::graphical_core::memory::find_memory_type;
 use crate::graphical_core::vulkan_object::VulkanApplicationData;
 use image;
 use vulkanalia::vk;
 use vulkanalia::vk::DeviceV1_0;
+use vulkanalia::vk::Handle;
 use vulkanalia::vk::InstanceV1_0;
 use vulkanalia::vk::{BufferUsageFlags, HasBuilder};
 use vulkanalia::{Device, Instance};
@@ -227,6 +230,20 @@ fn transfer_image_data(
     }
 
     unsafe { device.end_command_buffer(command_buffer[0])? }
+
+    let submit_info = vk::SubmitInfo::builder()
+        .command_buffers(&[command_buffer[0]])
+        .wait_semaphores(&[])
+        .signal_semaphores(&[])
+        .wait_dst_stage_mask(&[]);
+
+    unsafe { device.queue_submit(vulkan_application_data.graphics_queue, &[submit_info], vk::Fence::null())? }
+
+    unsafe { device.queue_wait_idle(vulkan_application_data.graphics_queue)? }
+
+    unsafe {
+        device.free_command_buffers(vulkan_application_data.command_pool, &[command_buffer[0]]);
+    }
 
     Ok(())
 }
