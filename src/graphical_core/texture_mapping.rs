@@ -231,8 +231,10 @@ fn transfer_image_data(
 
     unsafe { device.end_command_buffer(command_buffer[0])? }
 
+    let command_buffers = [command_buffer[0]];
+
     let submit_info = vk::SubmitInfo::builder()
-        .command_buffers(&[command_buffer[0]])
+        .command_buffers(&command_buffers)
         .wait_semaphores(&[])
         .signal_semaphores(&[])
         .wait_dst_stage_mask(&[]);
