@@ -55,46 +55,51 @@ pub struct VulkanApplicationData {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Vertex {
-    pos: [f32; 3],
-    color: [f32; 3],
+    position: [f32; 3],
+    uv_coordinate: [f32; 2],
 }
 const VERTICES: [Vertex; 8] = [
     Vertex {
-        pos: [-1.0, -1.0, 0.3],
-        color: [1.0, 0.0, 0.0],
+        position: [-1.0, -1.0, 0.3],
+        uv_coordinate: [0.0, 1.0],
     },
     Vertex {
-        pos: [1.0, -1.0, 0.3],
-        color: [0.0, 1.0, 0.0],
+        position: [1.0, -1.0, 0.3],
+        uv_coordinate: [1.0, 1.0],
     },
     Vertex {
-        pos: [1.0, 1.0, 0.3],
-        color: [0.0, 0.0, 1.0],
+        position: [1.0, 1.0, 0.3],
+        uv_coordinate: [1.0, 0.0],
     },
     Vertex {
-        pos: [-1.0, 1.0, 0.3],
-        color: [1.0, 1.0, 0.0],
+        position: [-1.0, 1.0, 0.3],
+        uv_coordinate: [0.0, 0.0],
     },
     Vertex {
-        pos: [-1.0, -1.0, 0.7],
-        color: [1.0, 0.0, 1.0],
+        position: [-1.0, -1.0, 0.7],
+        uv_coordinate: [0.0, 1.0],
     },
     Vertex {
-        pos: [1.0, -1.0, 0.7],
-        color: [0.0, 1.0, 1.0],
+        position: [1.0, -1.0, 0.7],
+        uv_coordinate: [1.0, 1.0],
     },
     Vertex {
-        pos: [1.0, 1.0, 0.7],
-        color: [1.0, 1.0, 1.0],
+        position: [1.0, 1.0, 0.7],
+        uv_coordinate: [1.0, 0.0],
     },
     Vertex {
-        pos: [-1.0, 1.0, 0.7],
-        color: [0.5, 0.5, 0.5],
+        position: [-1.0, 1.0, 0.7],
+        uv_coordinate: [0.0, 0.0],
     },
 ];
 
 const INDICES: [u16; 36] = [
-    0, 1, 2, 0, 2, 3, 5, 4, 7, 5, 7, 6, 1, 5, 6, 1, 6, 2, 4, 0, 3, 4, 3, 7, 3, 2, 6, 3, 6, 7, 4, 5, 1, 4, 1, 0,
+    0, 1, 2, 0, 2, 3, // Front face
+    5, 4, 7, 5, 7, 6, // Back Face
+    1, 5, 6, 1, 6, 2, // Right face
+    4, 0, 3, 4, 3, 7, // Left face
+    3, 2, 6, 3, 6, 7, // Top face
+    4, 5, 1, 4, 1, 0, // Bottom face
 ];
 
 #[derive(Clone, Debug)]

@@ -250,7 +250,7 @@ fn transfer_image_data(
     Ok(())
 }
 
-fn create_descriptor_set_layout() {} // Define what resources shaders expect
+fn create_descriptor_set_layout() {}
 
 fn update_graphics_pipeline() {}
 
