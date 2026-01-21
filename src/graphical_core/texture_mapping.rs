@@ -1,5 +1,3 @@
-use std::io::empty;
-
 use crate::graphical_core::buffers::allocate_and_fill_buffer;
 use crate::graphical_core::memory::find_memory_type;
 use crate::graphical_core::vulkan_object::VulkanApplicationData;
@@ -250,9 +248,17 @@ fn transfer_image_data(
     Ok(())
 }
 
-fn create_descriptor_set_layout() {}
-
-fn update_graphics_pipeline() {}
+pub fn create_descriptor_set_layout(device: &Device, vulkan_application_data: &mut VulkanApplicationData,) -> anyhow::Result<()> {
+    let layout_info = vk::DescriptorSetLayoutBinding::builder()
+        .binding(0)
+        .descriptor_count(1)
+        .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+        .stage_flags(vk::ShaderStageFlags::FRAGMENT)
+        .build();
+    let create_info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&[layout_info]).build();
+    vulkan_application_data.descriptor_set_layout = unsafe { device.create_descriptor_set_layout(&create_info, None)? };
+    Ok(())
+}
 
 fn create_descriptor_pool() {}
 

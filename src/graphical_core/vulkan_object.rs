@@ -5,6 +5,7 @@ use crate::graphical_core::{
     pipeline::create_pipeline,
     render_pass::create_render_pass,
     swapchain::{create_swapchain, create_swapchain_image_views},
+    texture_mapping::create_descriptor_set_layout,
     MAX_FRAMES_IN_FLIGHT,
 };
 use crate::VALIDATION_ENABLED;
@@ -45,6 +46,7 @@ pub struct VulkanApplicationData {
     pub vertex_buffer_memory: vk::DeviceMemory,
     pub index_buffer: vk::Buffer,
     pub index_buffer_memory: vk::DeviceMemory,
+    pub descriptor_set_layout: vk::DescriptorSetLayout,
 }
 
 /// Represents a single vertex with position and color data.
@@ -123,6 +125,7 @@ impl VulkanApplication {
         create_swapchain(user_window, &vulkan_instance, &vulkan_logical_device, &mut vulkan_application_data)?;
         create_swapchain_image_views(&vulkan_logical_device, &mut vulkan_application_data)?;
         create_render_pass(&vulkan_instance, &vulkan_logical_device, &mut vulkan_application_data)?;
+        create_descriptor_set_layout(&vulkan_logical_device, &mut vulkan_application_data)?;
         create_pipeline(&vulkan_logical_device, &mut vulkan_application_data)?;
         create_frame_buffers(&vulkan_logical_device, &mut vulkan_application_data)?;
         create_command_pool(&vulkan_instance, &vulkan_logical_device, &mut vulkan_application_data)?;
@@ -153,6 +156,7 @@ impl VulkanApplication {
         vulkan_application_data.index_buffer_memory = index_buffer_memory;
         create_command_buffers(&vulkan_logical_device, &mut vulkan_application_data)?;
         create_sync_objects(&vulkan_logical_device, &mut vulkan_application_data)?;
+
         Ok(Self {
             vulkan_entry_point: vulkan_api_entry_point,
             vulkan_instance,

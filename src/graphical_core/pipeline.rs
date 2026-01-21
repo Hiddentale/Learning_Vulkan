@@ -85,7 +85,7 @@ pub unsafe fn create_pipeline(vulkan_logical_device: &Device, data: &mut VulkanA
         .logic_op(vk::LogicOp::COPY)
         .attachments(attachments)
         .blend_constants([0.0, 0.0, 0.0, 0.0]);
-    let layout_info = vk::PipelineLayoutCreateInfo::builder();
+    let layout_info = vk::PipelineLayoutCreateInfo::builder().set_layouts(&[data.descriptor_set_layout]).build();
 
     data.pipeline_layout = vulkan_logical_device.create_pipeline_layout(&layout_info, None)?;
 
