@@ -47,6 +47,7 @@ pub struct VulkanApplicationData {
     pub index_buffer: vk::Buffer,
     pub index_buffer_memory: vk::DeviceMemory,
     pub descriptor_set_layout: vk::DescriptorSetLayout,
+    pub descriptor_pool: vk::DescriptorPool,
 }
 
 /// Represents a single vertex with position and color data.

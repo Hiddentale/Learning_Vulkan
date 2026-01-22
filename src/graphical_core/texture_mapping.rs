@@ -5,7 +5,9 @@ use image;
 use vulkanalia::vk;
 use vulkanalia::vk::DeviceV1_0;
 use vulkanalia::vk::Handle;
+use vulkanalia::vk::ImageView;
 use vulkanalia::vk::InstanceV1_0;
+use vulkanalia::vk::Sampler;
 use vulkanalia::vk::{BufferUsageFlags, HasBuilder};
 use vulkanalia::{Device, Instance};
 
@@ -260,8 +262,12 @@ pub fn create_descriptor_set_layout(device: &Device, vulkan_application_data: &m
     Ok(())
 }
 
-fn create_descriptor_pool() {}
+fn create_descriptor_pool(device: &Device, vulkan_application_data: &mut VulkanApplicationData) -> anyhow::Result<()> {
+    let pool_info = vk::DescriptorPoolCreateInfo::builder().flags().max_sets(1).pool_sizes().build();
+    vulkan_application_data.descriptor_pool = unsafe { device.create_descriptor_pool(&pool_info, None)?}
+    Ok(())
+}
 
 fn allocate_descriptor_set() {}
 
-fn update_descriptor_set() {}
+fn update_descriptor_set(image_view: ImageView, sampler: Sampler) {}
