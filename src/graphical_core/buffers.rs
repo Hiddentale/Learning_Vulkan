@@ -1,8 +1,8 @@
-use crate::graphical_core::vulkan_object::VulkanApplicationData;
+use crate::graphical_core::{vulkan_object::VulkanApplicationData, memory::find_memory_type};
 use anyhow;
-use std::{mem::size_of, ptr::copy_nonoverlapping};
+use std::ptr::copy_nonoverlapping;
 use vulkanalia::{
-    vk::{self, DeviceV1_0, InstanceV1_0},
+    vk::{self, DeviceV1_0, HasBuilder, InstanceV1_0},
     Device, Instance,
 };
 /// Allocates GPU buffer memory, copies data from CPU to GPU, and returns handles.
@@ -48,19 +48,16 @@ use vulkanalia::{
 /// - Memory mapping fails
 pub unsafe fn allocate_and_fill_buffer<T>(
     data_slice: &[T],
+    buffer_size_in_bytes: u64,
     buffer_usage_flags: vk::BufferUsageFlags,
     vulkan_logical_device: &Device,
     instance: &Instance,
     vulkan_application_data: &mut VulkanApplicationData,
 ) -> anyhow::Result<(vk::Buffer, vk::DeviceMemory)> {
-    let buffer_size_in_bytes = (data_slice.len() * size_of::<T>()) as u64;
-
-    let buffer_create_info = vk::BufferCreateInfo {
-        size: buffer_size_in_bytes,
-        usage: buffer_usage_flags,
-        sharing_mode: vk::SharingMode::EXCLUSIVE,
-        ..Default::default()
-    };
+    let buffer_create_info = vk::BufferCreateInfo::builder()
+        .size(buffer_size_in_bytes)
+        .usage(buffer_usage_flags)
+        .sharing_mode(vk::SharingMode::EXCLUSIVE);
 
     let buffer = unsafe { vulkan_logical_device.create_buffer(&buffer_create_info, None)? };
 
@@ -73,12 +70,9 @@ pub unsafe fn allocate_and_fill_buffer<T>(
 
     let buffer_memory_type_index = find_memory_type(&memory_properties, allowed_memory_types, desired_properties)?;
 
-    let allocation_info = vk::MemoryAllocateInfo {
-        s_type: vk::StructureType::MEMORY_ALLOCATE_INFO,
-        next: std::ptr::null(),
-        allocation_size: buffer_mem_requirements.size,
-        memory_type_index: buffer_memory_type_index,
-    };
+    let allocation_info = vk::MemoryAllocateInfo::builder()
+        .allocation_size(buffer_mem_requirements.size)
+        .memory_type_index(buffer_memory_type_index);
 
     let allocated_memory = unsafe { vulkan_logical_device.allocate_memory(&allocation_info, None)? };
 
@@ -86,7 +80,7 @@ pub unsafe fn allocate_and_fill_buffer<T>(
 
     let pointer_to_mapped_memory = unsafe {
         vulkan_logical_device.map_memory(
-            allocated_memory,
+            allocated_memory,             // Which GPU memory to map
             vk::DeviceSize::default(),    // Start at the beginning of the allocation
             buffer_mem_requirements.size, // Map the entire allocation
             vk::MemoryMapFlags::empty(),  // No special flags needed
@@ -106,39 +100,4 @@ pub unsafe fn allocate_and_fill_buffer<T>(
     unsafe { vulkan_logical_device.unmap_memory(allocated_memory) };
 
     Ok((buffer, allocated_memory))
-}
-
-/// Finds a memory type that satisfies both hardware requirements and desired properties.
-/// # Parameters
-/// - `memory_properties`: The GPU's available memory types and their properties
-/// - `allowed_memory_types`: Bitmask of which memory types the buffer supports
-/// - `desired_properties`: The properties we need
-///
-/// # Returns
-/// The index of the first suitable memory type found.
-///
-/// # Errors
-/// Returns an error if no memory type satisfies both requirements.
-fn find_memory_type(
-    memory_properties: &vk::PhysicalDeviceMemoryProperties,
-    allowed_memory_types: u32,
-    requested_properties: vk::MemoryPropertyFlags,
-) -> anyhow::Result<u32> {
-    let number_of_different_memory_types = memory_properties.memory_type_count;
-
-    for memory_type_index in 0..number_of_different_memory_types {
-        let memory_type_is_allowed = (allowed_memory_types & (1 << memory_type_index)) != 0;
-        if memory_type_is_allowed {
-            let memory_type_properties = memory_properties.memory_types[memory_type_index as usize].property_flags;
-
-            let has_all_desired_properties = (memory_type_properties & requested_properties) == requested_properties;
-            if has_all_desired_properties {
-                return Ok(memory_type_index);
-            }
-        }
-    }
-    anyhow::bail!(
-        "Failed to find a suitable memory type for requested properties: {:?}",
-        requested_properties
-    );
 }

@@ -93,15 +93,17 @@ fn get_swapchain_extent(window: &Window, capabilities: vk::SurfaceCapabilitiesKH
     }
 }
 pub unsafe fn create_swapchain_image_views(device: &Device, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
+    let normal_rgba_values = vk::ComponentSwizzle::IDENTITY;
+    
     data.swapchain_image_views = data
         .swapchain_images
         .iter()
         .map(|i| {
             let components = vk::ComponentMapping::builder()
-                .r(vk::ComponentSwizzle::IDENTITY)
-                .g(vk::ComponentSwizzle::IDENTITY)
-                .b(vk::ComponentSwizzle::IDENTITY)
-                .a(vk::ComponentSwizzle::IDENTITY);
+                .r(normal_rgba_values)
+                .g(normal_rgba_values)
+                .b(normal_rgba_values)
+                .a(normal_rgba_values);
             let subresource_range = vk::ImageSubresourceRange::builder()
                 .aspect_mask(vk::ImageAspectFlags::COLOR)
                 .base_mip_level(0)

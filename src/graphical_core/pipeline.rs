@@ -15,14 +15,14 @@ pub unsafe fn create_pipeline(vulkan_logical_device: &Device, data: &mut VulkanA
         .format(vk::Format::R32G32B32_SFLOAT)
         .offset(0);
 
-    let color_attribute = vk::VertexInputAttributeDescription::builder()
+    let uv_coordinate_attribute = vk::VertexInputAttributeDescription::builder()
         .binding(0)
         .location(1)
-        .format(vk::Format::R32G32B32_SFLOAT)
+        .format(vk::Format::R32G32_SFLOAT)
         .offset(12);
 
     let bindings = &[vertex_binding_description];
-    let attributes = &[position_attribute, color_attribute];
+    let attributes = &[position_attribute, uv_coordinate_attribute];
 
     let vertex_input_state = vk::PipelineVertexInputStateCreateInfo::builder()
         .vertex_binding_descriptions(bindings)
@@ -85,7 +85,7 @@ pub unsafe fn create_pipeline(vulkan_logical_device: &Device, data: &mut VulkanA
         .logic_op(vk::LogicOp::COPY)
         .attachments(attachments)
         .blend_constants([0.0, 0.0, 0.0, 0.0]);
-    let layout_info = vk::PipelineLayoutCreateInfo::builder();
+    let layout_info = vk::PipelineLayoutCreateInfo::builder().set_layouts(&[data.descriptor_set_layout]).build();
 
     data.pipeline_layout = vulkan_logical_device.create_pipeline_layout(&layout_info, None)?;
 
