@@ -238,7 +238,7 @@ impl VulkanApplication {
             &mut vulkan_application_data,
         )?;
 
-        let index_buffer_size_in_bytes = INDICES.len() as u64;
+        let index_buffer_size_in_bytes = (INDICES.len() * 2) as u64;
         let (index_buffer, index_buffer_memory) = allocate_and_fill_buffer(
             &INDICES,
             index_buffer_size_in_bytes,

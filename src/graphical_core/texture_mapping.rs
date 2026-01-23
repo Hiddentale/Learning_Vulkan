@@ -74,12 +74,17 @@ pub fn create_texture_image(
 ) -> anyhow::Result<(Image, DeviceMemory, ImageView, Sampler)> {
     let texture_path = get_texture_path("red_grass.png");
     let (image_bytes, width, height) = load_texture_from_disk(&texture_path)?;
-    let (staging_buffer, _) = create_and_fill_staging_buffer(image_bytes, width, height, device, instance, vulkan_application_data)?;
+    let (staging_buffer, staging_buffer_memory) =
+        create_and_fill_staging_buffer(image_bytes, width, height, device, instance, vulkan_application_data)?;
     let image = create_image(device, width, height)?;
     let device_memory = allocate_and_bind_image_device_memory(device, image, instance, vulkan_application_data)?;
     transfer_image_data(device, image, width, height, staging_buffer, instance, vulkan_application_data)?;
     let image_view = create_image_view(device, image)?;
     let sampler = create_sampler(device)?;
+    unsafe {
+        device.destroy_buffer(staging_buffer, None);
+        device.free_memory(staging_buffer_memory, None);
+    }
     Ok((image, device_memory, image_view, sampler))
 }
 
@@ -401,7 +406,6 @@ fn transfer_image_data(
     unsafe {
         device.free_command_buffers(vulkan_application_data.command_pool, &[command_buffer[0]]);
     }
-
     Ok(())
 }
 
@@ -508,9 +512,7 @@ pub fn create_descriptor_set_layout(device: &Device, vulkan_application_data: &m
         .descriptor_count(1)
         .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
         .stage_flags(vk::ShaderStageFlags::FRAGMENT);
-    let create_info = vk::DescriptorSetLayoutCreateInfo::builder()
-    .bindings(&[layout_info])
-    .build();
+    let create_info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&[layout_info]).build();
     vulkan_application_data.descriptor_set_layout = unsafe { device.create_descriptor_set_layout(&create_info, None)? };
     Ok(())
 }
@@ -520,7 +522,7 @@ pub fn create_descriptor_set_layout(device: &Device, vulkan_application_data: &m
 /// # Pool Configuration
 /// - **Max Sets**: 1
 /// - **Pool Sizes**: 1 combined image sampler
-/// 
+///
 /// # Parameters
 /// - `device`: The logical device to create the pool with
 /// - `vulkan_application_data`: Stores the pool for later allocation and cleanup
