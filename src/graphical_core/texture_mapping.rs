@@ -3,6 +3,7 @@ use crate::graphical_core::memory::find_memory_type;
 use crate::graphical_core::vulkan_object::VulkanApplicationData;
 use image;
 use vulkanalia::vk;
+use vulkanalia::vk::CopyDescriptorSet;
 use vulkanalia::vk::DeviceV1_0;
 use vulkanalia::vk::Handle;
 use vulkanalia::vk::ImageView;
@@ -10,6 +11,9 @@ use vulkanalia::vk::InstanceV1_0;
 use vulkanalia::vk::Sampler;
 use vulkanalia::vk::{BufferUsageFlags, HasBuilder};
 use vulkanalia::{Device, Instance};
+use vulkanalia::vk::DescriptorSetLayout;
+use vulkanalia::vk::DescriptorSet;
+use vulkanalia::vk::DescriptorPool;
 
 fn load_texture_from_disk(path_to_texture: &str) -> anyhow::Result<(Vec<u8>, u32, u32)> {
     let texture = image::ImageReader::open(path_to_texture)?.decode()?;
@@ -263,11 +267,42 @@ pub fn create_descriptor_set_layout(device: &Device, vulkan_application_data: &m
 }
 
 fn create_descriptor_pool(device: &Device, vulkan_application_data: &mut VulkanApplicationData) -> anyhow::Result<()> {
-    let pool_info = vk::DescriptorPoolCreateInfo::builder().flags().max_sets(1).pool_sizes().build();
+    let descriptor_pool_size = vk::DescriptorPoolSize::builder()
+    .descriptor_count(1)
+    .type_(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+    .build();
+
+    let pool_info = vk::DescriptorPoolCreateInfo::builder()
+    .flags(vk::DescriptorPoolCreateFlags::empty())
+    .max_sets(1)
+    .pool_sizes(&[descriptor_pool_size])
+    .build();
+
     vulkan_application_data.descriptor_pool = unsafe { device.create_descriptor_pool(&pool_info, None)?}
     Ok(())
 }
 
-fn allocate_descriptor_set() {}
+fn allocate_descriptor_set(device: &Device, descriptor_pool: DescriptorPool, layouts: DescriptorSetLayout) -> anyhow::Result<Vec<DescriptorSet>> {
+    let allocate_info = vk::DescriptorSetAllocateInfo::builder()
+    .descriptor_pool(descriptor_pool)
+    .set_layouts(&[layouts])
+    .build();
+    Ok(unsafe{ device.allocate_descriptor_sets(&allocate_info)?})
+} 
 
-fn update_descriptor_set(image_view: ImageView, sampler: Sampler) {}
+fn update_descriptor_set(device: &Device, descriptor_set: DescriptorSet, image_view: ImageView, sampler: Sampler) {
+    let image_info = vk::DescriptorImageInfo::builder()
+    .image_view(image_view)
+    .sampler(sampler)
+    .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+    .build();
+    
+    let descriptor_writes = vk::WriteDescriptorSet::builder()
+    .dst_set(descriptor_set)
+    .dst_binding(0)
+    .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+    .image_info(&[image_info])
+    .build();
+
+    unsafe { device.update_descriptor_sets(&[descriptor_writes], &[] as &[CopyDescriptorSet]); }
+}
