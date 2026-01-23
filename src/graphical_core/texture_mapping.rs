@@ -17,11 +17,56 @@ use vulkanalia::vk::Sampler;
 use vulkanalia::vk::{BufferUsageFlags, HasBuilder};
 use vulkanalia::{Device, Instance};
 
+/// Resolves a texture filename to an absolute path at compile time.
+///
+/// # Process Overview
+/// Uses the `CARGO_MANIFEST_DIR` environment variable (set by Cargo during compilation)
+/// to construct an absolute path to the project's textures directory. This ensures
+/// the texture can be found regardless of where the executable is run from.
+///
+/// # Parameters
+/// - `texture_name`: Filename of the texture (e.g., "dirt.png")
+///
+/// # Returns
+/// Absolute path string like "/home/user/project/textures/dirt.png"
+///
+/// # Note
+/// The path is baked into the binary at compile time. If you move the project
+/// directory, you'll need to recompile.
 fn get_texture_path(texture_name: &str) -> String {
     let project_root = env!("CARGO_MANIFEST_DIR");
     format!("{}/textures/{}", project_root, texture_name)
 }
 
+/// Orchestrates the complete texture loading pipeline from disk to GPU.
+///
+/// # Process Overview
+/// This is the main public function that coordinates all texture creation steps:
+/// 1. Load PNG/JPEG from disk into RAM
+/// 2. Create CPU-accessible staging buffer and copy pixel data into it
+/// 3. Create GPU image handle (no memory yet)
+/// 4. Allocate GPU-only memory and bind image to it
+/// 5. Transfer data: staging buffer → GPU image (with layout transitions)
+/// 6. Create image view (how shaders interpret the image)
+/// 7. Create sampler (how shaders sample the image)
+///
+/// # Parameters
+/// - `device`: The logical device for all resource creation
+/// - `instance`: Needed for memory type queries
+/// - `vulkan_application_data`: Contains physical device and command pool
+///
+/// # Returns
+/// A tuple containing all texture resources needed for rendering:
+/// - `vk::Image`: The GPU image handle (must be destroyed at shutdown)
+/// - `vk::DeviceMemory`: The GPU memory backing the image (must be freed at shutdown)
+/// - `vk::ImageView`: View into the image for shader access (must be destroyed)
+/// - `vk::Sampler`: Sampler defining filtering/addressing (must be destroyed)
+///
+/// # Errors
+/// Returns an error if any step fails (file not found, out of memory, etc.)
+///
+/// # Note
+/// Currently hardcoded to load "red_grass.png".
 pub fn create_texture_image(
     device: &Device,
     instance: &Instance,
@@ -38,6 +83,28 @@ pub fn create_texture_image(
     Ok((image, device_memory, image_view, sampler))
 }
 
+/// Loads an image file from disk and decodes it into raw RGBA8 pixel data.
+///
+/// # Process Overview
+/// 1. Open the image file using the `image` crate
+/// 2. Decode the image format (PNG, JPEG, etc.)
+/// 3. Convert to RGBA8 format (4 bytes per pixel: red, green, blue, alpha)
+/// 4. Extract dimensions and raw pixel bytes
+///
+/// # Parameters
+/// - `path_to_texture`: File path to the image
+///
+/// # Returns
+/// A tuple containing:
+/// - `Vec<u8>`: Raw pixel data in RGBA8 format (width × height × 4 bytes)
+/// - `u32`: Image width in pixels
+/// - `u32`: Image height in pixels
+///
+/// # Errors
+/// Returns an error if:
+/// - File cannot be opened
+/// - Image format is unsupported or corrupted
+/// - File is not a valid image
 fn load_texture_from_disk(path_to_texture: &str) -> anyhow::Result<(Vec<u8>, u32, u32)> {
     let texture = image::ImageReader::open(path_to_texture)?.decode()?;
 
@@ -49,6 +116,34 @@ fn load_texture_from_disk(path_to_texture: &str) -> anyhow::Result<(Vec<u8>, u32
     Ok((image_bytes, width, height))
 }
 
+/// Creates a CPU-accessible staging buffer and fills it with texture pixel data.
+///
+/// # Purpose
+/// Staging buffers act as an intermediate workspace for transferring data to GPU-only
+/// memory. The CPU can write to staging buffers, but they're not optimal for GPU access.
+/// After filling the staging buffer, we'll copy its contents to a DEVICE_LOCAL image.
+///
+/// # Process Overview
+/// 1. Calculate buffer size (width × height × 4 bytes per RGBA pixel)
+/// 2. Create buffer with TRANSFER_SRC usage (can be source of copy operations)
+/// 3. Allocate HOST_VISIBLE memory (CPU can write to it)
+/// 4. Map memory and copy pixel data from CPU to GPU
+///
+/// # Parameters
+/// - `image_bytes`: Raw RGBA8 pixel data from `load_texture_from_disk`
+/// - `image_width`: Width of the texture in pixels
+/// - `image_height`: Height of the texture in pixels
+/// - `vulkan_logical_device`: Device to create buffer with
+/// - `instance`: Needed to query memory properties
+/// - `vulkan_application_data`: Contains physical device handle
+///
+/// # Returns
+/// A tuple containing:
+/// - `vk::Buffer`: The staging buffer handle
+/// - `vk::DeviceMemory`: The memory backing the buffer
+///
+/// # Errors
+/// Returns an error if buffer creation or memory allocation fails.
 fn create_and_fill_staging_buffer(
     image_bytes: Vec<u8>,
     image_width: u32,
@@ -70,13 +165,31 @@ fn create_and_fill_staging_buffer(
     };
     Ok(staging_buffer)
 }
-/// Create a GPU resource handle that describes the pixel data and what you can do with it.
-/// # Parameters
-/// - `device`: The Vulkan physical device that communicates with the GPU
-/// - `width`: The width of the pixel data before it was converted to bytes
-/// - `height`: The height of the pixel data before it was converted to bytes
+
+/// Creates a GPU image resource with optimal layout for texture sampling.
 ///
-/// Note that this creates an Image in GPU-only memory, with a special type of layout, it doesn't contain any data yet!
+/// # Key Concept
+/// This creates an image HANDLE but doesn't allocate any memory yet. Think of it as
+/// declaring a variable without initializing it. Memory allocation happens separately
+/// in `allocate_and_bind_image_device_memory`.
+///
+/// # Image Configuration
+/// - **Type**: 2D (even though stored in 3D space conceptually)
+/// - **Format**: R8G8B8A8_SRGB (4 bytes per pixel, sRGB color space)
+/// - **Tiling**: OPTIMAL (GPU-specific layout for fast sampling, not CPU-readable)
+/// - **Usage**: TRANSFER_DST (can receive data) | SAMPLED (can be sampled in shaders)
+/// - **Initial Layout**: UNDEFINED (contents are garbage until we transfer data)
+///
+/// # Parameters
+/// - `device`: The logical device to create the image with
+/// - `width`: Image width in pixels
+/// - `height`: Image height in pixels
+///
+/// # Returns
+/// An image handle that must later be bound to actual GPU memory
+///
+/// # Errors
+/// Returns an error if image creation fails (unlikely unless parameters are invalid).
 fn create_image(device: &Device, width: u32, height: u32) -> anyhow::Result<vk::Image> {
     let image_info = vk::ImageCreateInfo::builder()
         .image_type(vk::ImageType::_2D)
@@ -93,6 +206,28 @@ fn create_image(device: &Device, width: u32, height: u32) -> anyhow::Result<vk::
     Ok(unsafe { device.create_image(&image_info, None)? })
 }
 
+/// Allocates GPU-only memory for an image and binds the image handle to it.
+///
+/// # Process Overview
+/// 1. Query the image's memory requirements (size, alignment, compatible types)
+/// 2. Find a DEVICE_LOCAL memory type (fastest for GPU access, CPU cannot touch it)
+/// 3. Allocate the memory from the GPU
+/// 4. Bind the image handle to the allocated memory (connect them)
+///
+/// # Parameters
+/// - `device`: The logical device to allocate memory with
+/// - `image`: The image handle created by `create_image`
+/// - `instance`: Needed to query physical device memory properties
+/// - `vulkan_application_data`: Contains the physical device handle
+///
+/// # Returns
+/// The allocated GPU memory that backs the image
+///
+/// # Errors
+/// Returns an error if:
+/// - Memory allocation fails (out of VRAM)
+/// - No suitable DEVICE_LOCAL memory type exists
+/// - Memory binding fails
 fn allocate_and_bind_image_device_memory(
     device: &Device,
     image: vk::Image,
@@ -120,6 +255,37 @@ fn allocate_and_bind_image_device_memory(
     Ok(allocated_memory)
 }
 
+/// Copies texture data from a staging buffer to a GPU-only image with layout transitions.
+///
+/// # Process Overview
+/// 1. Allocate a temporary command buffer (one-time use)
+/// 2. Begin recording commands
+/// 3. **Transition**: UNDEFINED → TRANSFER_DST_OPTIMAL (prepare image to receive data)
+/// 4. **Copy**: Staging buffer → Image (the actual pixel data transfer)
+/// 5. **Transition**: TRANSFER_DST_OPTIMAL → SHADER_READ_ONLY_OPTIMAL (prepare for sampling)
+/// 6. End recording and submit to GPU queue
+/// 7. Wait for completion
+/// 8. Free the temporary command buffer
+///
+/// # Parameters
+/// - `device`: The logical device for command execution
+/// - `image`: The destination image (GPU-only memory)
+/// - `image_width`: Width in pixels (for defining copy region)
+/// - `image_height`: Height in pixels (for defining copy region)
+/// - `staging_buffer`: Source buffer containing pixel data (CPU-visible memory)
+/// - `instance`: Needed for physical device queries
+/// - `vulkan_application_data`: Contains command pool and graphics queue
+///
+/// # Synchronization
+/// This function performs a **blocking wait** (`queue_wait_idle`). The CPU stalls
+/// until the GPU finishes copying. For initialization, this is fine. For runtime
+/// texture streaming, we'd want asynchronous transfers with fences/semaphores.
+///
+/// # Errors
+/// Returns an error if:
+/// - Command buffer allocation fails
+/// - Command recording fails
+/// - Queue submission fails
 fn transfer_image_data(
     device: &Device,
     image: vk::Image,
@@ -155,8 +321,7 @@ fn transfer_image_data(
         .image(image)
         .subresource_range(subresource_range)
         .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-        .build();
+        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED);
 
     unsafe {
         device.cmd_pipeline_barrier(
@@ -201,7 +366,11 @@ fn transfer_image_data(
         .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
         .dst_access_mask(vk::AccessFlags::SHADER_READ)
         .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-        .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+        .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+        .image(image)
+        .subresource_range(subresource_range)
+        .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED);
 
     unsafe {
         device.cmd_pipeline_barrier(
@@ -236,6 +405,27 @@ fn transfer_image_data(
     Ok(())
 }
 
+/// Creates a view into an image that describes how shaders should interpret it.
+///
+/// # Purpose
+/// Images are raw memory. Image views add interpretation: "This is a 2D RGBA texture,
+/// access the color channel, don't swizzle components, use all mip levels."
+///
+/// # Configuration
+/// - **View Type**: 2D
+/// - **Format**: R8G8B8A8_SRGB
+/// - **Component Mapping**: Identity
+/// - **Subresource**: All color data, no mipmaps, single layer
+///
+/// # Parameters
+/// - `device`: The logical device to create the view with
+/// - `image`: The image to create a view into
+///
+/// # Returns
+/// An image view handle that can be bound to descriptor sets
+///
+/// # Errors
+/// Returns an error if view creation fails.
 fn create_image_view(device: &Device, image: vk::Image) -> anyhow::Result<vk::ImageView> {
     let normal_rgba_values = vk::ComponentSwizzle::IDENTITY;
     let components = vk::ComponentMapping::builder()
@@ -260,6 +450,28 @@ fn create_image_view(device: &Device, image: vk::Image) -> anyhow::Result<vk::Im
     Ok(unsafe { device.create_image_view(&image_view_create_info, None)? })
 }
 
+/// Creates a sampler that defines how textures are filtered and addressed.
+///
+/// # Purpose
+/// Samplers control HOW the GPU reads texture data:
+/// - What happens when UVs go outside [0, 1]? (address mode)
+/// - How to interpolate between pixels? (filtering)
+/// - How to blend between mipmap levels? (mipmapping)
+///
+/// # Configuration
+/// - **Filtering**: NEAREST
+/// - **Address Mode**: REPEAT
+/// - **Mipmapping**: Disabled
+/// - **Anisotropic Filtering**: Disabled
+///
+/// # Parameters
+/// - `device`: The logical device to create the sampler with
+///
+/// # Returns
+/// A sampler handle that can be combined with image views in descriptor sets
+///
+/// # Errors
+/// Returns an error if sampler creation fails.
 fn create_sampler(device: &Device) -> anyhow::Result<vk::Sampler> {
     let sampler_create_info = vk::SamplerCreateInfo::builder()
         .mag_filter(vk::Filter::NEAREST)
@@ -277,23 +489,47 @@ fn create_sampler(device: &Device) -> anyhow::Result<vk::Sampler> {
     Ok(unsafe { device.create_sampler(&sampler_create_info, None)? })
 }
 
+/// Defines the structure of descriptor sets: what resources shaders can access.
+///
+/// # Layout Structure
+/// - **Binding 0**: One combined image sampler (image view + sampler in one)
+/// - **Shader Stage**: Fragment shader only
+/// - **Descriptor Count**: 1
+///
+/// # Parameters
+/// - `device`: The logical device to create the layout with
+/// - `vulkan_application_data`: Stores the created layout for later use
+///
+/// # Errors
+/// Returns an error if layout creation fails.
 pub fn create_descriptor_set_layout(device: &Device, vulkan_application_data: &mut VulkanApplicationData) -> anyhow::Result<()> {
     let layout_info = vk::DescriptorSetLayoutBinding::builder()
         .binding(0)
         .descriptor_count(1)
         .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-        .stage_flags(vk::ShaderStageFlags::FRAGMENT)
-        .build();
-    let create_info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&[layout_info]).build();
+        .stage_flags(vk::ShaderStageFlags::FRAGMENT);
+    let create_info = vk::DescriptorSetLayoutCreateInfo::builder()
+    .bindings(&[layout_info])
+    .build();
     vulkan_application_data.descriptor_set_layout = unsafe { device.create_descriptor_set_layout(&create_info, None)? };
     Ok(())
 }
 
+/// Creates a pool that can allocate descriptor sets.
+///
+/// # Pool Configuration
+/// - **Max Sets**: 1
+/// - **Pool Sizes**: 1 combined image sampler
+/// 
+/// # Parameters
+/// - `device`: The logical device to create the pool with
+/// - `vulkan_application_data`: Stores the pool for later allocation and cleanup
+/// # Errors
+/// Returns an error if pool creation fails.
 pub fn create_descriptor_pool(device: &Device, vulkan_application_data: &mut VulkanApplicationData) -> anyhow::Result<()> {
     let descriptor_pool_size = vk::DescriptorPoolSize::builder()
         .descriptor_count(1)
-        .type_(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-        .build();
+        .type_(vk::DescriptorType::COMBINED_IMAGE_SAMPLER);
 
     let pool_info = vk::DescriptorPoolCreateInfo::builder()
         .flags(vk::DescriptorPoolCreateFlags::empty())
@@ -305,6 +541,21 @@ pub fn create_descriptor_pool(device: &Device, vulkan_application_data: &mut Vul
     Ok(())
 }
 
+/// Allocates a descriptor set from a pool, matching the provided layout.
+///
+/// # Parameters
+/// - `device`: The logical device to allocate with
+/// - `descriptor_pool`: The pool to allocate from (must have capacity remaining)
+/// - `layouts`: The descriptor set layout defining the set's structure
+///
+/// # Returns
+/// A handle to a vector of  descriptor sets
+///
+/// # Errors
+/// Returns an error if:
+/// - Pool is exhausted (no capacity left)
+/// - Pool doesn't support the requested layout
+/// - Allocation fails
 pub fn allocate_descriptor_set(device: &Device, descriptor_pool: DescriptorPool, layouts: DescriptorSetLayout) -> anyhow::Result<Vec<DescriptorSet>> {
     let allocate_info = vk::DescriptorSetAllocateInfo::builder()
         .descriptor_pool(descriptor_pool)
@@ -313,12 +564,18 @@ pub fn allocate_descriptor_set(device: &Device, descriptor_pool: DescriptorPool,
     Ok(unsafe { device.allocate_descriptor_sets(&allocate_info)? })
 }
 
+/// Writes actual texture resources (image view + sampler) into a descriptor set.
+///
+/// # Parameters
+/// - `device`: The logical device to execute the write with
+/// - `descriptor_set`: The descriptor set to write into
+/// - `image_view`: The texture image view to bind
+/// - `sampler`: The sampler to bind
 pub fn update_descriptor_set(device: &Device, descriptor_set: DescriptorSet, image_view: ImageView, sampler: Sampler) {
     let image_info = vk::DescriptorImageInfo::builder()
         .image_view(image_view)
         .sampler(sampler)
-        .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-        .build();
+        .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     let descriptor_writes = vk::WriteDescriptorSet::builder()
         .dst_set(descriptor_set)

@@ -39,6 +39,7 @@ pub unsafe fn create_command_pool(instance: &Instance, device: &Device, data: &m
     data.command_pool = device.create_command_pool(&info, None)?;
     Ok(())
 }
+
 pub unsafe fn create_command_buffers(device: &Device, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
     let allocate_info = vk::CommandBufferAllocateInfo::builder()
         .command_pool(data.command_pool)
@@ -46,7 +47,7 @@ pub unsafe fn create_command_buffers(device: &Device, data: &mut VulkanApplicati
         .command_buffer_count(data.framebuffers.len() as u32);
 
     data.command_buffers = device.allocate_command_buffers(&allocate_info)?;
-    
+
     for (i, command_buffer) in data.command_buffers.iter().enumerate() {
         let info = vk::CommandBufferBeginInfo::builder();
 
@@ -71,12 +72,21 @@ pub unsafe fn create_command_buffers(device: &Device, data: &mut VulkanApplicati
         device.cmd_bind_pipeline(*command_buffer, vk::PipelineBindPoint::GRAPHICS, data.pipeline);
         device.cmd_bind_vertex_buffers(*command_buffer, 0, &[data.vertex_buffer], &[0]);
         device.cmd_bind_index_buffer(*command_buffer, data.index_buffer, 0, vk::IndexType::UINT16);
+        device.cmd_bind_descriptor_sets(
+            *command_buffer,
+            vk::PipelineBindPoint::GRAPHICS,
+            data.pipeline_layout,
+            0,
+            &[data.descriptor_set],
+            &[],
+        );
         device.cmd_draw_indexed(*command_buffer, 36, 1, 0, 0, 0);
         device.cmd_end_render_pass(*command_buffer);
         device.end_command_buffer(*command_buffer)?;
     }
     Ok(())
 }
+
 pub unsafe fn create_sync_objects(device: &Device, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
     let semaphore_info = vk::SemaphoreCreateInfo::builder();
     let fence_info = vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED);
