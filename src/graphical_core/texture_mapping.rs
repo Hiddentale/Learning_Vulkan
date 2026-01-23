@@ -4,16 +4,39 @@ use crate::graphical_core::vulkan_object::VulkanApplicationData;
 use image;
 use vulkanalia::vk;
 use vulkanalia::vk::CopyDescriptorSet;
+use vulkanalia::vk::DescriptorPool;
+use vulkanalia::vk::DescriptorSet;
+use vulkanalia::vk::DescriptorSetLayout;
+use vulkanalia::vk::DeviceMemory;
 use vulkanalia::vk::DeviceV1_0;
 use vulkanalia::vk::Handle;
+use vulkanalia::vk::Image;
 use vulkanalia::vk::ImageView;
 use vulkanalia::vk::InstanceV1_0;
 use vulkanalia::vk::Sampler;
 use vulkanalia::vk::{BufferUsageFlags, HasBuilder};
 use vulkanalia::{Device, Instance};
-use vulkanalia::vk::DescriptorSetLayout;
-use vulkanalia::vk::DescriptorSet;
-use vulkanalia::vk::DescriptorPool;
+
+fn get_texture_path(texture_name: &str) -> String {
+    let project_root = env!("CARGO_MANIFEST_DIR");
+    format!("{}/textures/{}", project_root, texture_name)
+}
+
+pub fn create_texture_image(
+    device: &Device,
+    instance: &Instance,
+    vulkan_application_data: &mut VulkanApplicationData,
+) -> anyhow::Result<(Image, DeviceMemory, ImageView, Sampler)> {
+    let texture_path = get_texture_path("red_grass.png");
+    let (image_bytes, width, height) = load_texture_from_disk(&texture_path)?;
+    let (staging_buffer, _) = create_and_fill_staging_buffer(image_bytes, width, height, device, instance, vulkan_application_data)?;
+    let image = create_image(device, width, height)?;
+    let device_memory = allocate_and_bind_image_device_memory(device, image, instance, vulkan_application_data)?;
+    transfer_image_data(device, image, width, height, staging_buffer, instance, vulkan_application_data)?;
+    let image_view = create_image_view(device, image)?;
+    let sampler = create_sampler(device)?;
+    Ok((image, device_memory, image_view, sampler))
+}
 
 fn load_texture_from_disk(path_to_texture: &str) -> anyhow::Result<(Vec<u8>, u32, u32)> {
     let texture = image::ImageReader::open(path_to_texture)?.decode()?;
@@ -95,47 +118,6 @@ fn allocate_and_bind_image_device_memory(
     unsafe { device.bind_image_memory(image, allocated_memory, 0)? };
 
     Ok(allocated_memory)
-}
-
-fn create_image_view(device: &Device, image: vk::Image) -> anyhow::Result<vk::ImageView> {
-    let normal_rgba_values = vk::ComponentSwizzle::IDENTITY;
-    let components = vk::ComponentMapping::builder()
-        .r(normal_rgba_values)
-        .g(normal_rgba_values)
-        .b(normal_rgba_values)
-        .a(normal_rgba_values);
-    let subresource_range = vk::ImageSubresourceRange::builder()
-        .aspect_mask(vk::ImageAspectFlags::COLOR)
-        .base_mip_level(0)
-        .level_count(1)
-        .base_array_layer(0)
-        .layer_count(1);
-
-    let image_view_create_info = vk::ImageViewCreateInfo::builder()
-        .image(image)
-        .format(vk::Format::R8G8B8A8_SRGB)
-        .view_type(vk::ImageViewType::_2D)
-        .components(components)
-        .subresource_range(subresource_range);
-
-    Ok(unsafe { device.create_image_view(&image_view_create_info, None)? })
-}
-
-fn create_sampler(device: &Device) -> anyhow::Result<vk::Sampler> {
-    let sampler_create_info = vk::SamplerCreateInfo::builder()
-        .mag_filter(vk::Filter::NEAREST)
-        .min_filter(vk::Filter::NEAREST)
-        .address_mode_u(vk::SamplerAddressMode::REPEAT)
-        .address_mode_v(vk::SamplerAddressMode::REPEAT)
-        .address_mode_w(vk::SamplerAddressMode::REPEAT)
-        .mipmap_mode(vk::SamplerMipmapMode::NEAREST)
-        .anisotropy_enable(false)
-        .max_anisotropy(1.0)
-        .min_lod(0.0)
-        .max_lod(0.0)
-        .mip_lod_bias(0.0);
-
-    Ok(unsafe { device.create_sampler(&sampler_create_info, None)? })
 }
 
 fn transfer_image_data(
@@ -254,7 +236,48 @@ fn transfer_image_data(
     Ok(())
 }
 
-pub fn create_descriptor_set_layout(device: &Device, vulkan_application_data: &mut VulkanApplicationData,) -> anyhow::Result<()> {
+fn create_image_view(device: &Device, image: vk::Image) -> anyhow::Result<vk::ImageView> {
+    let normal_rgba_values = vk::ComponentSwizzle::IDENTITY;
+    let components = vk::ComponentMapping::builder()
+        .r(normal_rgba_values)
+        .g(normal_rgba_values)
+        .b(normal_rgba_values)
+        .a(normal_rgba_values);
+    let subresource_range = vk::ImageSubresourceRange::builder()
+        .aspect_mask(vk::ImageAspectFlags::COLOR)
+        .base_mip_level(0)
+        .level_count(1)
+        .base_array_layer(0)
+        .layer_count(1);
+
+    let image_view_create_info = vk::ImageViewCreateInfo::builder()
+        .image(image)
+        .format(vk::Format::R8G8B8A8_SRGB)
+        .view_type(vk::ImageViewType::_2D)
+        .components(components)
+        .subresource_range(subresource_range);
+
+    Ok(unsafe { device.create_image_view(&image_view_create_info, None)? })
+}
+
+fn create_sampler(device: &Device) -> anyhow::Result<vk::Sampler> {
+    let sampler_create_info = vk::SamplerCreateInfo::builder()
+        .mag_filter(vk::Filter::NEAREST)
+        .min_filter(vk::Filter::NEAREST)
+        .address_mode_u(vk::SamplerAddressMode::REPEAT)
+        .address_mode_v(vk::SamplerAddressMode::REPEAT)
+        .address_mode_w(vk::SamplerAddressMode::REPEAT)
+        .mipmap_mode(vk::SamplerMipmapMode::NEAREST)
+        .anisotropy_enable(false)
+        .max_anisotropy(1.0)
+        .min_lod(0.0)
+        .max_lod(0.0)
+        .mip_lod_bias(0.0);
+
+    Ok(unsafe { device.create_sampler(&sampler_create_info, None)? })
+}
+
+pub fn create_descriptor_set_layout(device: &Device, vulkan_application_data: &mut VulkanApplicationData) -> anyhow::Result<()> {
     let layout_info = vk::DescriptorSetLayoutBinding::builder()
         .binding(0)
         .descriptor_count(1)
@@ -266,43 +289,45 @@ pub fn create_descriptor_set_layout(device: &Device, vulkan_application_data: &m
     Ok(())
 }
 
-fn create_descriptor_pool(device: &Device, vulkan_application_data: &mut VulkanApplicationData) -> anyhow::Result<()> {
+pub fn create_descriptor_pool(device: &Device, vulkan_application_data: &mut VulkanApplicationData) -> anyhow::Result<()> {
     let descriptor_pool_size = vk::DescriptorPoolSize::builder()
-    .descriptor_count(1)
-    .type_(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-    .build();
+        .descriptor_count(1)
+        .type_(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+        .build();
 
     let pool_info = vk::DescriptorPoolCreateInfo::builder()
-    .flags(vk::DescriptorPoolCreateFlags::empty())
-    .max_sets(1)
-    .pool_sizes(&[descriptor_pool_size])
-    .build();
+        .flags(vk::DescriptorPoolCreateFlags::empty())
+        .max_sets(1)
+        .pool_sizes(&[descriptor_pool_size])
+        .build();
 
-    vulkan_application_data.descriptor_pool = unsafe { device.create_descriptor_pool(&pool_info, None)?}
+    vulkan_application_data.descriptor_pool = unsafe { device.create_descriptor_pool(&pool_info, None)? };
     Ok(())
 }
 
-fn allocate_descriptor_set(device: &Device, descriptor_pool: DescriptorPool, layouts: DescriptorSetLayout) -> anyhow::Result<Vec<DescriptorSet>> {
+pub fn allocate_descriptor_set(device: &Device, descriptor_pool: DescriptorPool, layouts: DescriptorSetLayout) -> anyhow::Result<Vec<DescriptorSet>> {
     let allocate_info = vk::DescriptorSetAllocateInfo::builder()
-    .descriptor_pool(descriptor_pool)
-    .set_layouts(&[layouts])
-    .build();
-    Ok(unsafe{ device.allocate_descriptor_sets(&allocate_info)?})
-} 
+        .descriptor_pool(descriptor_pool)
+        .set_layouts(&[layouts])
+        .build();
+    Ok(unsafe { device.allocate_descriptor_sets(&allocate_info)? })
+}
 
-fn update_descriptor_set(device: &Device, descriptor_set: DescriptorSet, image_view: ImageView, sampler: Sampler) {
+pub fn update_descriptor_set(device: &Device, descriptor_set: DescriptorSet, image_view: ImageView, sampler: Sampler) {
     let image_info = vk::DescriptorImageInfo::builder()
-    .image_view(image_view)
-    .sampler(sampler)
-    .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-    .build();
-    
-    let descriptor_writes = vk::WriteDescriptorSet::builder()
-    .dst_set(descriptor_set)
-    .dst_binding(0)
-    .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-    .image_info(&[image_info])
-    .build();
+        .image_view(image_view)
+        .sampler(sampler)
+        .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+        .build();
 
-    unsafe { device.update_descriptor_sets(&[descriptor_writes], &[] as &[CopyDescriptorSet]); }
+    let descriptor_writes = vk::WriteDescriptorSet::builder()
+        .dst_set(descriptor_set)
+        .dst_binding(0)
+        .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+        .image_info(&[image_info])
+        .build();
+
+    unsafe {
+        device.update_descriptor_sets(&[descriptor_writes], &[] as &[CopyDescriptorSet]);
+    }
 }
