@@ -1,21 +1,13 @@
-use crate::graphical_core::buffers::allocate_and_fill_buffer;
-use crate::graphical_core::memory::find_memory_type;
-use crate::graphical_core::vulkan_object::VulkanApplicationData;
+use crate::graphical_core::{buffers::allocate_and_fill_buffer, memory::find_memory_type, vulkan_object::VulkanApplicationData};
 use image;
 use vulkanalia::vk;
-use vulkanalia::vk::CopyDescriptorSet;
-use vulkanalia::vk::DescriptorPool;
-use vulkanalia::vk::DescriptorSet;
-use vulkanalia::vk::DescriptorSetLayout;
-use vulkanalia::vk::DeviceMemory;
-use vulkanalia::vk::DeviceV1_0;
-use vulkanalia::vk::Handle;
-use vulkanalia::vk::Image;
-use vulkanalia::vk::ImageView;
-use vulkanalia::vk::InstanceV1_0;
-use vulkanalia::vk::Sampler;
-use vulkanalia::vk::{BufferUsageFlags, HasBuilder};
-use vulkanalia::{Device, Instance};
+use vulkanalia::{
+    vk::{
+        BufferUsageFlags, CopyDescriptorSet, DescriptorPool, DescriptorSet, DescriptorSetLayout, DeviceMemory, DeviceV1_0, Handle, HasBuilder, Image,
+        ImageView, InstanceV1_0, Sampler,
+    },
+    Device, Instance,
+};
 
 /// Resolves a texture filename to an absolute path at compile time.
 ///

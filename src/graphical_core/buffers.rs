@@ -1,5 +1,4 @@
-use crate::graphical_core::vulkan_object::VulkanApplicationData;
-use crate::graphical_core::memory::find_memory_type;
+use crate::graphical_core::{vulkan_object::VulkanApplicationData, memory::find_memory_type};
 use anyhow;
 use std::ptr::copy_nonoverlapping;
 use vulkanalia::{
