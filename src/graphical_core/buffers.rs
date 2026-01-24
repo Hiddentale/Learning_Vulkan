@@ -1,4 +1,4 @@
-use crate::graphical_core::{vulkan_object::VulkanApplicationData, memory::find_memory_type};
+use crate::graphical_core::{memory::find_memory_type, vulkan_object::VulkanApplicationData};
 use anyhow;
 use std::ptr::copy_nonoverlapping;
 use vulkanalia::{
@@ -53,6 +53,7 @@ pub unsafe fn allocate_and_fill_buffer<T>(
     vulkan_logical_device: &Device,
     instance: &Instance,
     vulkan_application_data: &mut VulkanApplicationData,
+    properties: vk::MemoryPropertyFlags,
 ) -> anyhow::Result<(vk::Buffer, vk::DeviceMemory)> {
     let buffer_create_info = vk::BufferCreateInfo::builder()
         .size(buffer_size_in_bytes)
@@ -66,9 +67,8 @@ pub unsafe fn allocate_and_fill_buffer<T>(
     let memory_properties = instance.get_physical_device_memory_properties(vulkan_application_data.physical_device);
 
     let allowed_memory_types = buffer_mem_requirements.memory_type_bits;
-    let desired_properties = vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT;
 
-    let buffer_memory_type_index = find_memory_type(&memory_properties, allowed_memory_types, desired_properties)?;
+    let buffer_memory_type_index = find_memory_type(&memory_properties, allowed_memory_types, properties)?;
 
     let allocation_info = vk::MemoryAllocateInfo::builder()
         .allocation_size(buffer_mem_requirements.size)

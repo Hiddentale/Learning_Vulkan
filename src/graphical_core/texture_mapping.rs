@@ -158,6 +158,7 @@ fn create_and_fill_staging_buffer(
             vulkan_logical_device,
             instance,
             vulkan_application_data,
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT
         )?
     };
     Ok(staging_buffer)

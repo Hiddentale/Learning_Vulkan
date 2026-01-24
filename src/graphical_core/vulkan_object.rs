@@ -236,6 +236,7 @@ impl VulkanApplication {
             &device,
             &instance,
             &mut vulkan_application_data,
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT
         )?;
 
         let index_buffer_size_in_bytes = (INDICES.len() * 2) as u64;
@@ -246,6 +247,7 @@ impl VulkanApplication {
             &device,
             &instance,
             &mut vulkan_application_data,
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT
         )?;
 
         vulkan_application_data.vertex_buffer = vertex_buffer;
