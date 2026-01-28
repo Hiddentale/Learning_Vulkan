@@ -158,7 +158,7 @@ fn create_and_fill_staging_buffer(
             vulkan_logical_device,
             instance,
             vulkan_application_data,
-            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
         )?
     };
     Ok(staging_buffer)
@@ -581,5 +581,14 @@ pub fn update_descriptor_set(device: &Device, descriptor_set: DescriptorSet, ima
 
     unsafe {
         device.update_descriptor_sets(&[descriptor_writes], &[] as &[CopyDescriptorSet]);
+    }
+}
+
+pub fn destroy_textures(device: &vulkanalia::Device, vulkan_application_data: &mut VulkanApplicationData) {
+    unsafe {
+        device.destroy_sampler(vulkan_application_data.texture_sampler, None);
+        device.destroy_image_view(vulkan_application_data.texture_image_view, None);
+        device.destroy_image(vulkan_application_data.texture_image, None);
+        device.free_memory(vulkan_application_data.texture_memory, None);
     }
 }

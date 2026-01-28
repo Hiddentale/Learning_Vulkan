@@ -1,12 +1,5 @@
 use crate::graphical_core::{
-    buffers::allocate_and_fill_buffer,
-    extra::{create_command_buffers, create_command_pool, create_frame_buffers, create_instance, create_logical_device, create_sync_objects},
-    gpu::choose_gpu,
-    pipeline::create_pipeline,
-    render_pass::create_render_pass,
-    swapchain::{create_swapchain, create_swapchain_image_views},
-    texture_mapping::{allocate_descriptor_set, create_descriptor_pool, create_descriptor_set_layout, create_texture_image, update_descriptor_set},
-    MAX_FRAMES_IN_FLIGHT,
+    MAX_FRAMES_IN_FLIGHT, buffers::allocate_and_fill_buffer, camera::{UniformBufferObject, create_uniform_buffer, destroy_uniform_buffer}, extra::{create_command_buffers, create_command_pool, create_frame_buffers, create_instance, create_logical_device, create_sync_objects}, gpu::choose_gpu, pipeline::create_pipeline, render_pass::create_render_pass, swapchain::{create_swapchain, create_swapchain_image_views}, texture_mapping::{allocate_descriptor_set, create_descriptor_pool, create_descriptor_set_layout, create_texture_image, update_descriptor_set}
 };
 use crate::VALIDATION_ENABLED;
 use anyhow::anyhow;
@@ -53,6 +46,9 @@ pub struct VulkanApplicationData {
     pub texture_image_view: vk::ImageView,
     pub texture_sampler: vk::Sampler,
     pub descriptor_set: vk::DescriptorSet,
+    pub uniform_buffer: vk::Buffer,
+    pub uniform_buffer_memory: vk::DeviceMemory,
+    pub uniform_buffer_ptr: *mut UniformBufferObject,
 }
 
 /// Represents a single vertex with position and color data.
@@ -205,6 +201,7 @@ impl VulkanApplication {
 
         create_frame_buffers(&device, &mut vulkan_application_data)?;
         create_command_pool(&instance, &device, &mut vulkan_application_data)?;
+        create_uniform_buffer(&device, &instance, &mut vulkan_application_data);
 
         let (texture_image, texture_memory, texture_image_view, texture_sampler) =
             create_texture_image(&device, &instance, &mut vulkan_application_data)?;
@@ -499,10 +496,8 @@ impl VulkanApplication {
     ///
     /// Manual cleanup with `destroy_vulkan_application()` gives us full control.
     pub unsafe fn destroy_vulkan_application(&mut self) {
-        self.device.destroy_sampler(self.vulkan_application_data.texture_sampler, None);
-        self.device.destroy_image_view(self.vulkan_application_data.texture_image_view, None);
-        self.device.destroy_image(self.vulkan_application_data.texture_image, None);
-        self.device.free_memory(self.vulkan_application_data.texture_memory, None);
+        destroy_textures(&self.device, &mut self.vulkan_application_data);
+        destroy_uniform_buffer(&self.device, &mut self.vulkan_application_data);
 
         self.device.destroy_descriptor_pool(self.vulkan_application_data.descriptor_pool, None);
         self.device
