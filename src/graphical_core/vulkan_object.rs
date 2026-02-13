@@ -312,6 +312,7 @@ impl VulkanApplication {
     /// This function blocks on fences, which stalls the CPU until GPU work completes.
     /// For optimal performance, we'd want triple buffering with async submission.
     pub unsafe fn render_frame(&mut self, window: &Window) -> anyhow::Result<()> {
+        // Change this with uncommented function below
         self.device
             .wait_for_fences(&[self.vulkan_application_data.in_flight_fences[self.frame]], true, u64::MAX)?;
 
@@ -331,6 +332,8 @@ impl VulkanApplication {
             self.device
                 .wait_for_fences(&[self.vulkan_application_data.images_in_flight[image_index]], true, u64::MAX)?;
         }
+        // ---------------------------------------------------------------------------------
+        //self.synchronize_renderer();
 
         self.vulkan_application_data.images_in_flight[image_index] = self.vulkan_application_data.in_flight_fences[self.frame];
 
@@ -556,5 +559,28 @@ impl VulkanApplication {
         self.device
             .queue_present_khr(self.vulkan_application_data.presentation_queue, &present_info)
             .expect("Presenting the image to the swapchain resulted in an error!");
+    }
+
+    unsafe fn synchronize_renderer(&mut self) -> anyhow::Result<()> {
+        self.device
+            .wait_for_fences(&[self.vulkan_application_data.in_flight_fences[self.frame]], true, u64::MAX)?;
+
+        let result = self.device.acquire_next_image_khr(
+            self.vulkan_application_data.swapchain,
+            u64::MAX,
+            self.vulkan_application_data.image_available_semaphores[self.frame],
+            vk::Fence::null(),
+        );
+        let image_index = match result {
+            Ok((image_index, _)) => image_index as usize,
+            Err(vk::ErrorCode::OUT_OF_DATE_KHR) => return self.recreate_swapchain(window),
+            Err(e) => return Err(anyhow!(e)),
+        };
+
+        if !self.vulkan_application_data.images_in_flight[image_index].is_null() {
+            self.device
+                .wait_for_fences(&[self.vulkan_application_data.images_in_flight[image_index]], true, u64::MAX)?;
+        }
+        Ok(())
     }
 }
