@@ -1,4 +1,4 @@
-#![allow(dead_code, unused_variables, clippy::too_many_arguments, clippy::unnecessary_wraps)]
+#![allow(clippy::too_many_arguments)]
 mod graphical_core;
 use anyhow::Result;
 use graphical_core::vulkan_object::VulkanApplication;
@@ -54,7 +54,10 @@ fn main() -> Result<()> {
                 ..
             } => {
                 if !destroy_application && !minimized {
-                    unsafe { application.render_frame(&user_window) }.unwrap()
+                    if let Err(e) = unsafe { application.render_frame(&user_window) } {
+                        eprintln!("Render error: {e}");
+                        exit_program(&mut destroy_application, current_window, &mut application);
+                    }
                 }
             }
             _ => (),

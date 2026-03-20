@@ -19,7 +19,7 @@ impl RequiredQueueFamilies {
             .map(|i| i as u32);
 
         let mut presentation_queue_index = None;
-        for (index, properties) in required_properties.iter().enumerate() {
+        for (index, _properties) in required_properties.iter().enumerate() {
             if queue_family_has_capability_of_presenting_to_our_window_surface(current_system, vulkan_application_data, gpu, index)? {
                 presentation_queue_index = Some(index as u32);
                 break;
@@ -47,9 +47,5 @@ unsafe fn queue_family_has_capability_of_presenting_to_our_window_surface(
     current_system.get_physical_device_surface_support_khr(gpu, index as u32, vulkan_application_data.surface)
 }
 fn queue_family_indexes_not_empty(graphics_queue_index: Option<u32>, presentation_queue_index: Option<u32>) -> bool {
-    if let (Some(graphics_queue_index), Some(presentation_queue_index)) = (graphics_queue_index, presentation_queue_index) {
-        true
-    } else {
-        false
-    }
+    graphics_queue_index.is_some() && presentation_queue_index.is_some()
 }

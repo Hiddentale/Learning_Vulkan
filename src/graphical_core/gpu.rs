@@ -52,9 +52,5 @@ unsafe fn get_gpu_properties(current_system: &Instance, gpu: PhysicalDevice) -> 
     current_system.get_physical_device_properties(gpu)
 }
 unsafe fn gpu_not_have_required_properties(current_system: &Instance, vulkan_application_data: &VulkanApplicationData, gpu: PhysicalDevice) -> bool {
-    if let Err(_) = check_gpu(current_system, vulkan_application_data, gpu) {
-        true
-    } else {
-        false
-    }
+    check_gpu(current_system, vulkan_application_data, gpu).is_err()
 }

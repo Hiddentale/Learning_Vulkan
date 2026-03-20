@@ -4,12 +4,12 @@ use crate::graphical_core::{
     depth::{create_depth_image, destroy_depth_image},
     extra::{create_command_buffers, create_command_pool, create_frame_buffers, create_instance, create_logical_device, create_sync_objects},
     gpu::choose_gpu,
+    mesh::{Vertex, CUBE_VERTICES, CUBE_INDICES},
     pipeline::create_pipeline,
     render_pass::create_render_pass,
     swapchain::{create_swapchain, create_swapchain_image_views},
-    texture_mapping::{
-        allocate_descriptor_set, create_descriptor_pool, create_descriptor_set_layout, create_texture_image, destroy_textures, update_descriptor_set,
-    },
+    descriptors,
+    texture_mapping::{create_texture_image, destroy_textures},
     MAX_FRAMES_IN_FLIGHT,
 };
 use crate::VALIDATION_ENABLED;
@@ -30,7 +30,7 @@ pub struct VulkanApplicationData {
     pub graphics_queue: vk::Queue,
     pub presentation_queue: vk::Queue,
     pub swapchain_format: vk::Format,
-    pub swapchain_accepted_images_width_and_height: vk::Extent2D,
+    pub swapchain_extent: vk::Extent2D,
     pub swapchain: vk::SwapchainKHR,
     pub swapchain_images: Vec<vk::Image>,
     pub swapchain_image_views: Vec<vk::ImageView>,
@@ -40,8 +40,6 @@ pub struct VulkanApplicationData {
     pub framebuffers: Vec<vk::Framebuffer>,
     pub command_pool: vk::CommandPool,
     pub command_buffers: Vec<vk::CommandBuffer>,
-    pub image_available_semaphore: vk::Semaphore,
-    pub render_finished_semaphore: vk::Semaphore,
     pub image_available_semaphores: Vec<vk::Semaphore>,
     pub render_finished_semaphores: Vec<vk::Semaphore>,
     pub(crate) in_flight_fences: Vec<vk::Fence>,
@@ -65,134 +63,9 @@ pub struct VulkanApplicationData {
     pub depth_image_view: vk::ImageView,
 }
 
-/// Represents a single vertex with position and color data.
-///
-/// # Memory Layout
-/// `#[repr(C)]` ensures the struct has a predictable memory layout matching C/Vulkan expectations.
-/// This is critical because the GPU needs to know exactly where each field is in memory.
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Default)]
-pub struct Vertex {
-    position: [f32; 3],
-    uv_coordinate: [f32; 2],
-}
-const VERTICES: [Vertex; 24] = [
-    // Front face (z = -0.5)
-    Vertex {
-        position: [-0.5, -0.5, -0.5],
-        uv_coordinate: [0.0, 1.0],
-    },
-    Vertex {
-        position: [0.5, -0.5, -0.5],
-        uv_coordinate: [1.0, 1.0],
-    },
-    Vertex {
-        position: [0.5, 0.5, -0.5],
-        uv_coordinate: [1.0, 0.0],
-    },
-    Vertex {
-        position: [-0.5, 0.5, -0.5],
-        uv_coordinate: [0.0, 0.0],
-    },
-    // Back face (z = 0.5)
-    Vertex {
-        position: [0.5, -0.5, 0.5],
-        uv_coordinate: [0.0, 1.0],
-    },
-    Vertex {
-        position: [-0.5, -0.5, 0.5],
-        uv_coordinate: [1.0, 1.0],
-    },
-    Vertex {
-        position: [-0.5, 0.5, 0.5],
-        uv_coordinate: [1.0, 0.0],
-    },
-    Vertex {
-        position: [0.5, 0.5, 0.5],
-        uv_coordinate: [0.0, 0.0],
-    },
-    // Right face (x = 0.5)
-    Vertex {
-        position: [0.5, -0.5, -0.5],
-        uv_coordinate: [0.0, 1.0],
-    },
-    Vertex {
-        position: [0.5, -0.5, 0.5],
-        uv_coordinate: [1.0, 1.0],
-    },
-    Vertex {
-        position: [0.5, 0.5, 0.5],
-        uv_coordinate: [1.0, 0.0],
-    },
-    Vertex {
-        position: [0.5, 0.5, -0.5],
-        uv_coordinate: [0.0, 0.0],
-    },
-    // Left face (x = -0.5)
-    Vertex {
-        position: [-0.5, -0.5, 0.5],
-        uv_coordinate: [0.0, 1.0],
-    },
-    Vertex {
-        position: [-0.5, -0.5, -0.5],
-        uv_coordinate: [1.0, 1.0],
-    },
-    Vertex {
-        position: [-0.5, 0.5, -0.5],
-        uv_coordinate: [1.0, 0.0],
-    },
-    Vertex {
-        position: [-0.5, 0.5, 0.5],
-        uv_coordinate: [0.0, 0.0],
-    },
-    // Top face (y = 0.5)
-    Vertex {
-        position: [-0.5, 0.5, -0.5],
-        uv_coordinate: [0.0, 1.0],
-    },
-    Vertex {
-        position: [0.5, 0.5, -0.5],
-        uv_coordinate: [1.0, 1.0],
-    },
-    Vertex {
-        position: [0.5, 0.5, 0.5],
-        uv_coordinate: [1.0, 0.0],
-    },
-    Vertex {
-        position: [-0.5, 0.5, 0.5],
-        uv_coordinate: [0.0, 0.0],
-    },
-    // Bottom face (y = -0.5)
-    Vertex {
-        position: [-0.5, -0.5, 0.5],
-        uv_coordinate: [0.0, 1.0],
-    },
-    Vertex {
-        position: [0.5, -0.5, 0.5],
-        uv_coordinate: [1.0, 1.0],
-    },
-    Vertex {
-        position: [0.5, -0.5, -0.5],
-        uv_coordinate: [1.0, 0.0],
-    },
-    Vertex {
-        position: [-0.5, -0.5, -0.5],
-        uv_coordinate: [0.0, 0.0],
-    },
-];
-
-const INDICES: [u16; 36] = [
-    0, 1, 2, 0, 2, 3, // Front
-    4, 5, 6, 4, 6, 7, // Back
-    8, 9, 10, 8, 10, 11, // Right
-    12, 13, 14, 12, 14, 15, // Left
-    16, 17, 18, 16, 18, 19, // Top
-    20, 21, 22, 20, 22, 23, // Bottom
-];
-
 #[derive(Clone, Debug)]
 pub struct VulkanApplication {
-    vulkan_entry_point: Entry,
+    _vulkan_entry_point: Entry,
     vulkan_instance: Instance,
     vulkan_application_data: VulkanApplicationData,
     device: Device,
@@ -281,7 +154,7 @@ impl VulkanApplication {
         create_swapchain_image_views(&device, &mut vulkan_application_data)?;
         create_depth_image(&device, &instance, &mut vulkan_application_data)?;
         create_render_pass(&instance, &device, &mut vulkan_application_data)?;
-        create_descriptor_set_layout(&device, &mut vulkan_application_data)?;
+        descriptors::create_layout(&device, &mut vulkan_application_data)?;
         create_pipeline(&device, &mut vulkan_application_data)?;
 
         create_frame_buffers(&device, &mut vulkan_application_data)?;
@@ -291,8 +164,8 @@ impl VulkanApplication {
         let (texture_image, texture_memory, texture_image_view, texture_sampler) =
             create_texture_image(&device, &instance, &mut vulkan_application_data)?;
 
-        create_descriptor_pool(&device, &mut vulkan_application_data)?;
-        let descriptor_sets = allocate_descriptor_set(
+        descriptors::create_pool(&device, &mut vulkan_application_data)?;
+        let descriptor_sets = descriptors::allocate_set(
             &device,
             vulkan_application_data.descriptor_pool,
             vulkan_application_data.descriptor_set_layout,
@@ -302,7 +175,7 @@ impl VulkanApplication {
             .copied()
             .ok_or_else(|| anyhow::anyhow!("Failed to allocate descriptor set"))?;
 
-        update_descriptor_set(
+        descriptors::update_set(
             &device,
             descriptor_set,
             texture_image_view,
@@ -316,9 +189,9 @@ impl VulkanApplication {
         vulkan_application_data.texture_sampler = texture_sampler;
         vulkan_application_data.descriptor_set = descriptor_set;
 
-        let vertex_buffer_size_in_bytes = (VERTICES.len() * size_of::<Vertex>()) as u64;
+        let vertex_buffer_size_in_bytes = (CUBE_VERTICES.len() * size_of::<Vertex>()) as u64;
         let (vertex_buffer, vertex_buffer_memory) = allocate_and_fill_buffer(
-            &VERTICES,
+            &CUBE_VERTICES,
             vertex_buffer_size_in_bytes,
             vk::BufferUsageFlags::VERTEX_BUFFER,
             &device,
@@ -327,9 +200,9 @@ impl VulkanApplication {
             vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
         )?;
 
-        let index_buffer_size_in_bytes = (INDICES.len() * 2) as u64;
+        let index_buffer_size_in_bytes = (CUBE_INDICES.len() * size_of::<u16>()) as u64;
         let (index_buffer, index_buffer_memory) = allocate_and_fill_buffer(
-            &INDICES,
+            &CUBE_INDICES,
             index_buffer_size_in_bytes,
             vk::BufferUsageFlags::INDEX_BUFFER,
             &device,
@@ -347,7 +220,7 @@ impl VulkanApplication {
         create_sync_objects(&device, &mut vulkan_application_data)?;
 
         Ok(Self {
-            vulkan_entry_point: vulkan_api_entry_point,
+            _vulkan_entry_point: vulkan_api_entry_point,
             vulkan_instance: instance,
             vulkan_application_data,
             device,
@@ -423,42 +296,39 @@ impl VulkanApplication {
             self.device
                 .wait_for_fences(&[self.vulkan_application_data.images_in_flight[image_index]], true, u64::MAX)?;
         }
-        // ---------------------------------------------------------------------------------
-        //self.synchronize_renderer();
-
         self.vulkan_application_data.images_in_flight[image_index] = self.vulkan_application_data.in_flight_fences[self.frame];
 
         update_uniform_buffer(&self.vulkan_application_data)?;
 
-        let semaphore_to_wait_on_before_execution = &[self.vulkan_application_data.image_available_semaphores[self.frame]];
-        let stage_of_pipeline_to_wait_on_before_execution = &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
-        let command_buffer_to_use_at_execution = &[self.vulkan_application_data.command_buffers[image_index]];
-        let semaphores_to_signal_after_command_buffer_finished_executing = &[self.vulkan_application_data.render_finished_semaphores[self.frame]];
-        let info_to_submit_to_queue = vk::SubmitInfo::builder()
-            .wait_semaphores(semaphore_to_wait_on_before_execution)
-            .wait_dst_stage_mask(stage_of_pipeline_to_wait_on_before_execution)
-            .command_buffers(command_buffer_to_use_at_execution)
-            .signal_semaphores(semaphores_to_signal_after_command_buffer_finished_executing);
+        let wait_semaphores = &[self.vulkan_application_data.image_available_semaphores[self.frame]];
+        let wait_stages = &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
+        let command_buffers = &[self.vulkan_application_data.command_buffers[image_index]];
+        let signal_semaphores = &[self.vulkan_application_data.render_finished_semaphores[self.frame]];
+        let submit_info = vk::SubmitInfo::builder()
+            .wait_semaphores(wait_semaphores)
+            .wait_dst_stage_mask(wait_stages)
+            .command_buffers(command_buffers)
+            .signal_semaphores(signal_semaphores);
 
         self.device.reset_fences(&[self.vulkan_application_data.in_flight_fences[self.frame]])?;
 
         self.device.queue_submit(
             self.vulkan_application_data.graphics_queue,
-            &[info_to_submit_to_queue],
+            &[submit_info],
             self.vulkan_application_data.in_flight_fences[self.frame],
         )?;
 
-        let swapchains_to_present_images_to = &[self.vulkan_application_data.swapchain];
-        let image_index_in_swapchain = &[image_index as u32];
-        let image_presentation_configuration = vk::PresentInfoKHR::builder()
-            .wait_semaphores(semaphores_to_signal_after_command_buffer_finished_executing)
-            .swapchains(swapchains_to_present_images_to)
-            .image_indices(image_index_in_swapchain);
+        let swapchains = &[self.vulkan_application_data.swapchain];
+        let image_indices = &[image_index as u32];
+        let present_info = vk::PresentInfoKHR::builder()
+            .wait_semaphores(signal_semaphores)
+            .swapchains(swapchains)
+            .image_indices(image_indices);
 
         self.device.queue_wait_idle(self.vulkan_application_data.presentation_queue)?;
         let result = self
             .device
-            .queue_present_khr(self.vulkan_application_data.presentation_queue, &image_presentation_configuration);
+            .queue_present_khr(self.vulkan_application_data.presentation_queue, &present_info);
 
         let changed = result == Err(vk::ErrorCode::OUT_OF_DATE_KHR);
 
@@ -594,6 +464,7 @@ impl VulkanApplication {
     ///
     /// Manual cleanup with `destroy_vulkan_application()` gives us full control.
     pub unsafe fn destroy_vulkan_application(&mut self) {
+        self.device.device_wait_idle().unwrap();
         destroy_textures(&self.device, &mut self.vulkan_application_data);
         destroy_uniform_buffer(&self.device, &mut self.vulkan_application_data);
 
@@ -628,54 +499,4 @@ impl VulkanApplication {
         self.vulkan_instance.destroy_instance(None);
     }
 
-    /// Presents a rendered image to the swapchain for display on screen.
-    ///
-    /// # Purpose
-    /// After the GPU finishes rendering to a swapchain image, this function tells
-    /// the presentation engine: "Display this image in the window now."
-    ///
-    /// # Parameters
-    /// - `present_info`: Configuration specifying:
-    ///   - Which swapchain to present to
-    ///   - Which image index to present
-    ///   - Which semaphores to wait on (ensures rendering finished)
-    ///
-    /// # Safety
-    /// This function is marked `unsafe` because it calls the unsafe Vulkan function
-    /// `queue_present_khr`.
-    ///
-    /// # Errors
-    /// Panics if presentation fails. This function expects the error to be handled
-    /// by the caller.
-    ///
-    /// # Note
-    /// This function is currently unused
-    unsafe fn present_image_to_swapchain(&mut self, present_info: vk::PresentInfoKHRBuilder) {
-        self.device
-            .queue_present_khr(self.vulkan_application_data.presentation_queue, &present_info)
-            .expect("Presenting the image to the swapchain resulted in an error!");
-    }
-
-    unsafe fn synchronize_renderer(&mut self, window: &Window) -> anyhow::Result<()> {
-        self.device
-            .wait_for_fences(&[self.vulkan_application_data.in_flight_fences[self.frame]], true, u64::MAX)?;
-
-        let result = self.device.acquire_next_image_khr(
-            self.vulkan_application_data.swapchain,
-            u64::MAX,
-            self.vulkan_application_data.image_available_semaphores[self.frame],
-            vk::Fence::null(),
-        );
-        let image_index = match result {
-            Ok((image_index, _)) => image_index as usize,
-            Err(vk::ErrorCode::OUT_OF_DATE_KHR) => return self.recreate_swapchain(window),
-            Err(e) => return Err(anyhow!(e)),
-        };
-
-        if !self.vulkan_application_data.images_in_flight[image_index].is_null() {
-            self.device
-                .wait_for_fences(&[self.vulkan_application_data.images_in_flight[image_index]], true, u64::MAX)?;
-        }
-        Ok(())
-    }
 }

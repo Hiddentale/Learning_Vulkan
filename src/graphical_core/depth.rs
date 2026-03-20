@@ -10,7 +10,7 @@ pub fn depth_format() -> vk::Format {
 }
 
 pub unsafe fn create_depth_image(device: &Device, instance: &Instance, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
-    let extent = data.swapchain_accepted_images_width_and_height;
+    let extent = data.swapchain_extent;
 
     let image_info = vk::ImageCreateInfo::builder()
         .image_type(vk::ImageType::_2D)

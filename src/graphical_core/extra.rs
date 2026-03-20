@@ -20,8 +20,8 @@ pub unsafe fn create_frame_buffers(device: &Device, data: &mut VulkanApplication
             let create_info = vk::FramebufferCreateInfo::builder()
                 .render_pass(data.render_pass)
                 .attachments(attachments)
-                .width(data.swapchain_accepted_images_width_and_height.width)
-                .height(data.swapchain_accepted_images_width_and_height.height)
+                .width(data.swapchain_extent.width)
+                .height(data.swapchain_extent.height)
                 .layers(1);
 
             device.create_framebuffer(&create_info, None)
@@ -55,7 +55,7 @@ pub unsafe fn create_command_buffers(device: &Device, data: &mut VulkanApplicati
 
         let render_area = vk::Rect2D::builder()
             .offset(vk::Offset2D::default())
-            .extent(data.swapchain_accepted_images_width_and_height); //Size of the area that will be rendered to.
+            .extent(data.swapchain_extent); //Size of the area that will be rendered to.
         let color_clear_value = vk::ClearValue {
             color: vk::ClearColorValue {
                 float32: [0.0, 0.0, 0.0, 1.0],

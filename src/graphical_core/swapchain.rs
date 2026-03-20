@@ -18,7 +18,7 @@ pub unsafe fn create_swapchain(
     let swapchain_image_resolution = get_swapchain_extent(user_window, current_swapchain_capabilities.capabilities);
 
     vulkan_application_data.swapchain_format = surface_format.format;
-    vulkan_application_data.swapchain_accepted_images_width_and_height = swapchain_image_resolution;
+    vulkan_application_data.swapchain_extent = swapchain_image_resolution;
 
     let mut image_count = current_swapchain_capabilities.capabilities.min_image_count + 1; //We add one more image to the image count to make sure we never have to wait for an image.
     if current_swapchain_capabilities.capabilities.max_image_count != 0 && image_count > current_swapchain_capabilities.capabilities.max_image_count {

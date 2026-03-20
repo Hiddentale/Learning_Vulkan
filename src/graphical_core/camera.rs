@@ -40,7 +40,7 @@ pub fn create_uniform_buffer(device: &Device, instance: &Instance, vulkan_applic
 }
 
 pub fn update_uniform_buffer(vulkan_application_data: &VulkanApplicationData) -> anyhow::Result<()> {
-    let extent = vulkan_application_data.swapchain_accepted_images_width_and_height;
+    let extent = vulkan_application_data.swapchain_extent;
     let width = extent.width as f32;
     let height = extent.height as f32;
 
