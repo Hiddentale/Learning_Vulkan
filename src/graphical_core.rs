@@ -1,4 +1,5 @@
 pub mod buffers;
+pub mod depth;
 pub mod extra;
 pub mod gpu;
 pub mod memory;

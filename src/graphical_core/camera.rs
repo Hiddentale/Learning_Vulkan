@@ -1,25 +1,15 @@
 use crate::graphical_core::buffers::allocate_buffer;
-use crate::graphical_core::{buffers::allocate_and_fill_buffer, vulkan_object::VulkanApplicationData};
+use crate::graphical_core::vulkan_object::VulkanApplicationData;
 use glam::{Mat4, Quat, Vec3};
 use vulkanalia::vk::{self, DeviceV1_0};
-use vulkanalia::{vk::BufferUsageFlags, Device, Instance};
+use vulkanalia::{Device, Instance};
 
-/*
-Initialization:
-    Projection = compute_projection(fov, aspect, near, far)
-
-Each frame:
-    if camera_moved:
-        View = compute_view(camera_pos, camera_target, up)
-
-    ViewProjection = Projection × View
-    Send ViewProjection to GPU
-
-    For each object:
-        Model = compute_model(object_pos, object_rotation)
-        Send Model to GPU
-        GPU: gl_Position = ViewProjection × Model × vertex
- */
+const FOV_DEGREES: f32 = 90.0;
+const NEAR_PLANE: f32 = 0.1;
+const FAR_PLANE: f32 = 100.0;
+const CAMERA_POSITION: Vec3 = Vec3::new(0.0, 0.0, 2.0);
+const CAMERA_TARGET: Vec3 = Vec3::ZERO;
+const UP: Vec3 = Vec3::Y;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
@@ -28,10 +18,16 @@ pub struct UniformBufferObject {
     view_projection_matrix: [[f32; 4]; 4],
 }
 
-pub fn create_uniform_buffer(device: &vulkanalia::Device, instance: &vulkanalia::Instance, vulkan_application_data: &mut VulkanApplicationData) {
-    buffer_size_in_bytes = std::mem::size_of::<UniformBufferObject>() as u64;
-    buffer_usage_flags = vk::BufferUsageFlags::UNIFORM_BUFFER;
-    properties = vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT | vk::MemoryPropertyFlags::DEVICE_LOCAL;
+pub fn create_uniform_buffer(
+    device: &Device,
+    instance: &Instance,
+    vulkan_application_data: &mut VulkanApplicationData,
+) -> anyhow::Result<()> {
+    let buffer_size_in_bytes = std::mem::size_of::<UniformBufferObject>() as u64;
+    let buffer_usage_flags = vk::BufferUsageFlags::UNIFORM_BUFFER;
+    let properties = vk::MemoryPropertyFlags::HOST_VISIBLE
+        | vk::MemoryPropertyFlags::HOST_COHERENT
+        | vk::MemoryPropertyFlags::DEVICE_LOCAL;
 
     let (uniform_buffer, uniform_memory, uniform_ptr) = unsafe {
         allocate_buffer::<UniformBufferObject>(
@@ -46,18 +42,32 @@ pub fn create_uniform_buffer(device: &vulkanalia::Device, instance: &vulkanalia:
     vulkan_application_data.uniform_buffer = uniform_buffer;
     vulkan_application_data.uniform_buffer_memory = uniform_memory;
     vulkan_application_data.uniform_buffer_ptr = uniform_ptr;
+    Ok(())
 }
 
-/*
-pub fn update_camera() {
-    let fov_degrees = 90;
-    let near = 1;
-    let far = 100;
-    let width = ;
-    let height = ;
-    let projection_matrix = compute_projection_matrix(fov_degrees, near, far, width, height)
+pub fn update_uniform_buffer(vulkan_application_data: &VulkanApplicationData) -> anyhow::Result<()> {
+    let extent = vulkan_application_data.swapchain_accepted_images_width_and_height;
+    let width = extent.width as f32;
+    let height = extent.height as f32;
+
+    let projection = compute_projection_matrix(FOV_DEGREES, NEAR_PLANE, FAR_PLANE, width, height)?;
+    let view = compute_view_matrix(CAMERA_POSITION, CAMERA_TARGET, UP)?;
+    let view_projection = projection * view;
+
+    let rotation = Quat::from_rotation_y(30.0_f32.to_radians())
+        * Quat::from_rotation_x(-20.0_f32.to_radians());
+    let model = compute_model_matrix(Vec3::ONE, rotation, Vec3::ZERO)?;
+
+    let ubo = UniformBufferObject {
+        model_matrix: model.to_cols_array_2d(),
+        view_projection_matrix: view_projection.to_cols_array_2d(),
+    };
+
+    unsafe {
+        std::ptr::copy_nonoverlapping(&ubo, vulkan_application_data.uniform_buffer_ptr, 1);
+    }
+    Ok(())
 }
-*/
 
 pub fn destroy_uniform_buffer(device: &vulkanalia::Device, vulkan_application_data: &mut VulkanApplicationData) {
     unsafe {

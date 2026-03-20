@@ -1,5 +1,5 @@
 use crate::graphical_core::{
-    MAX_FRAMES_IN_FLIGHT, buffers::allocate_and_fill_buffer, camera::{UniformBufferObject, create_uniform_buffer, destroy_uniform_buffer}, extra::{create_command_buffers, create_command_pool, create_frame_buffers, create_instance, create_logical_device, create_sync_objects}, gpu::choose_gpu, pipeline::create_pipeline, render_pass::create_render_pass, swapchain::{create_swapchain, create_swapchain_image_views}, texture_mapping::{allocate_descriptor_set, create_descriptor_pool, create_descriptor_set_layout, create_texture_image, update_descriptor_set}
+    MAX_FRAMES_IN_FLIGHT, buffers::allocate_and_fill_buffer, camera::{UniformBufferObject, create_uniform_buffer, destroy_uniform_buffer, update_uniform_buffer}, depth::{create_depth_image, destroy_depth_image}, extra::{create_command_buffers, create_command_pool, create_frame_buffers, create_instance, create_logical_device, create_sync_objects}, gpu::choose_gpu, pipeline::create_pipeline, render_pass::create_render_pass, swapchain::{create_swapchain, create_swapchain_image_views}, texture_mapping::{allocate_descriptor_set, create_descriptor_pool, create_descriptor_set_layout, create_texture_image, destroy_textures, update_descriptor_set}
 };
 use crate::VALIDATION_ENABLED;
 use anyhow::anyhow;
@@ -49,6 +49,9 @@ pub struct VulkanApplicationData {
     pub uniform_buffer: vk::Buffer,
     pub uniform_buffer_memory: vk::DeviceMemory,
     pub uniform_buffer_ptr: *mut UniformBufferObject,
+    pub depth_image: vk::Image,
+    pub depth_image_memory: vk::DeviceMemory,
+    pub depth_image_view: vk::ImageView,
 }
 
 /// Represents a single vertex with position and color data.
@@ -62,48 +65,46 @@ pub struct Vertex {
     position: [f32; 3],
     uv_coordinate: [f32; 2],
 }
-const VERTICES: [Vertex; 8] = [
-    Vertex {
-        position: [-1.0, -1.0, 0.3],
-        uv_coordinate: [0.0, 1.0],
-    },
-    Vertex {
-        position: [1.0, -1.0, 0.3],
-        uv_coordinate: [1.0, 1.0],
-    },
-    Vertex {
-        position: [1.0, 1.0, 0.3],
-        uv_coordinate: [1.0, 0.0],
-    },
-    Vertex {
-        position: [-1.0, 1.0, 0.3],
-        uv_coordinate: [0.0, 0.0],
-    },
-    Vertex {
-        position: [-1.0, -1.0, 0.7],
-        uv_coordinate: [0.0, 1.0],
-    },
-    Vertex {
-        position: [1.0, -1.0, 0.7],
-        uv_coordinate: [1.0, 1.0],
-    },
-    Vertex {
-        position: [1.0, 1.0, 0.7],
-        uv_coordinate: [1.0, 0.0],
-    },
-    Vertex {
-        position: [-1.0, 1.0, 0.7],
-        uv_coordinate: [0.0, 0.0],
-    },
+const VERTICES: [Vertex; 24] = [
+    // Front face (z = -0.5)
+    Vertex { position: [-0.5, -0.5, -0.5], uv_coordinate: [0.0, 1.0] },
+    Vertex { position: [ 0.5, -0.5, -0.5], uv_coordinate: [1.0, 1.0] },
+    Vertex { position: [ 0.5,  0.5, -0.5], uv_coordinate: [1.0, 0.0] },
+    Vertex { position: [-0.5,  0.5, -0.5], uv_coordinate: [0.0, 0.0] },
+    // Back face (z = 0.5)
+    Vertex { position: [ 0.5, -0.5,  0.5], uv_coordinate: [0.0, 1.0] },
+    Vertex { position: [-0.5, -0.5,  0.5], uv_coordinate: [1.0, 1.0] },
+    Vertex { position: [-0.5,  0.5,  0.5], uv_coordinate: [1.0, 0.0] },
+    Vertex { position: [ 0.5,  0.5,  0.5], uv_coordinate: [0.0, 0.0] },
+    // Right face (x = 0.5)
+    Vertex { position: [ 0.5, -0.5, -0.5], uv_coordinate: [0.0, 1.0] },
+    Vertex { position: [ 0.5, -0.5,  0.5], uv_coordinate: [1.0, 1.0] },
+    Vertex { position: [ 0.5,  0.5,  0.5], uv_coordinate: [1.0, 0.0] },
+    Vertex { position: [ 0.5,  0.5, -0.5], uv_coordinate: [0.0, 0.0] },
+    // Left face (x = -0.5)
+    Vertex { position: [-0.5, -0.5,  0.5], uv_coordinate: [0.0, 1.0] },
+    Vertex { position: [-0.5, -0.5, -0.5], uv_coordinate: [1.0, 1.0] },
+    Vertex { position: [-0.5,  0.5, -0.5], uv_coordinate: [1.0, 0.0] },
+    Vertex { position: [-0.5,  0.5,  0.5], uv_coordinate: [0.0, 0.0] },
+    // Top face (y = 0.5)
+    Vertex { position: [-0.5,  0.5, -0.5], uv_coordinate: [0.0, 1.0] },
+    Vertex { position: [ 0.5,  0.5, -0.5], uv_coordinate: [1.0, 1.0] },
+    Vertex { position: [ 0.5,  0.5,  0.5], uv_coordinate: [1.0, 0.0] },
+    Vertex { position: [-0.5,  0.5,  0.5], uv_coordinate: [0.0, 0.0] },
+    // Bottom face (y = -0.5)
+    Vertex { position: [-0.5, -0.5,  0.5], uv_coordinate: [0.0, 1.0] },
+    Vertex { position: [ 0.5, -0.5,  0.5], uv_coordinate: [1.0, 1.0] },
+    Vertex { position: [ 0.5, -0.5, -0.5], uv_coordinate: [1.0, 0.0] },
+    Vertex { position: [-0.5, -0.5, -0.5], uv_coordinate: [0.0, 0.0] },
 ];
 
 const INDICES: [u16; 36] = [
-    0, 1, 2, 0, 2, 3, // Front face
-    5, 4, 7, 5, 7, 6, // Back Face
-    1, 5, 6, 1, 6, 2, // Right face
-    4, 0, 3, 4, 3, 7, // Left face
-    3, 2, 6, 3, 6, 7, // Top face
-    4, 5, 1, 4, 1, 0, // Bottom face
+     0,  1,  2,  0,  2,  3, // Front
+     4,  5,  6,  4,  6,  7, // Back
+     8,  9, 10,  8, 10, 11, // Right
+    12, 13, 14, 12, 14, 15, // Left
+    16, 17, 18, 16, 18, 19, // Top
+    20, 21, 22, 20, 22, 23, // Bottom
 ];
 
 #[derive(Clone, Debug)]
@@ -195,13 +196,14 @@ impl VulkanApplication {
         let device = create_logical_device(&vulkan_api_entry_point, &instance, &mut vulkan_application_data)?;
         create_swapchain(user_window, &instance, &device, &mut vulkan_application_data)?;
         create_swapchain_image_views(&device, &mut vulkan_application_data)?;
+        create_depth_image(&device, &instance, &mut vulkan_application_data)?;
         create_render_pass(&instance, &device, &mut vulkan_application_data)?;
         create_descriptor_set_layout(&device, &mut vulkan_application_data)?;
         create_pipeline(&device, &mut vulkan_application_data)?;
 
         create_frame_buffers(&device, &mut vulkan_application_data)?;
         create_command_pool(&instance, &device, &mut vulkan_application_data)?;
-        create_uniform_buffer(&device, &instance, &mut vulkan_application_data);
+        create_uniform_buffer(&device, &instance, &mut vulkan_application_data)?;
 
         let (texture_image, texture_memory, texture_image_view, texture_sampler) =
             create_texture_image(&device, &instance, &mut vulkan_application_data)?;
@@ -217,7 +219,7 @@ impl VulkanApplication {
             .copied()
             .ok_or_else(|| anyhow::anyhow!("Failed to allocate descriptor set"))?;
 
-        update_descriptor_set(&device, descriptor_set, texture_image_view, texture_sampler);
+        update_descriptor_set(&device, descriptor_set, texture_image_view, texture_sampler, vulkan_application_data.uniform_buffer);
 
         vulkan_application_data.texture_image = texture_image;
         vulkan_application_data.texture_memory = texture_memory;
@@ -337,6 +339,8 @@ impl VulkanApplication {
 
         self.vulkan_application_data.images_in_flight[image_index] = self.vulkan_application_data.in_flight_fences[self.frame];
 
+        update_uniform_buffer(&self.vulkan_application_data)?;
+
         let semaphore_to_wait_on_before_execution = &[self.vulkan_application_data.image_available_semaphores[self.frame]];
         let stage_of_pipeline_to_wait_on_before_execution = &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
         let command_buffer_to_use_at_execution = &[self.vulkan_application_data.command_buffers[image_index]];
@@ -423,6 +427,7 @@ impl VulkanApplication {
         self.destroy_swapchain();
         create_swapchain(user_window, &self.vulkan_instance, &self.device, &mut self.vulkan_application_data)?;
         create_swapchain_image_views(&self.device, &mut self.vulkan_application_data)?;
+        create_depth_image(&self.device, &self.vulkan_instance, &mut self.vulkan_application_data)?;
         create_render_pass(&self.vulkan_instance, &self.device, &mut self.vulkan_application_data)?;
         create_pipeline(&self.device, &mut self.vulkan_application_data)?;
         create_frame_buffers(&self.device, &mut self.vulkan_application_data)?;
@@ -457,6 +462,7 @@ impl VulkanApplication {
         self.device.destroy_pipeline(self.vulkan_application_data.pipeline, None);
         self.device.destroy_pipeline_layout(self.vulkan_application_data.pipeline_layout, None);
         self.device.destroy_render_pass(self.vulkan_application_data.render_pass, None);
+        destroy_depth_image(&self.device, &mut self.vulkan_application_data);
         self.vulkan_application_data
             .swapchain_image_views
             .iter()
@@ -561,7 +567,7 @@ impl VulkanApplication {
             .expect("Presenting the image to the swapchain resulted in an error!");
     }
 
-    unsafe fn synchronize_renderer(&mut self) -> anyhow::Result<()> {
+    unsafe fn synchronize_renderer(&mut self, window: &Window) -> anyhow::Result<()> {
         self.device
             .wait_for_fences(&[self.vulkan_application_data.in_flight_fences[self.frame]], true, u64::MAX)?;
 
