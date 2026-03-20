@@ -158,6 +158,7 @@ fn create_and_fill_staging_buffer(
             vulkan_logical_device,
             instance,
             vulkan_application_data,
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
         )?
     };
     Ok(staging_buffer)
@@ -488,9 +489,8 @@ fn create_sampler(device: &Device) -> anyhow::Result<vk::Sampler> {
 /// Defines the structure of descriptor sets: what resources shaders can access.
 ///
 /// # Layout Structure
-/// - **Binding 0**: One combined image sampler (image view + sampler in one)
-/// - **Shader Stage**: Fragment shader only
-/// - **Descriptor Count**: 1
+/// - **Binding 0**: Combined image sampler (fragment shader)
+/// - **Binding 1**: Uniform buffer for camera matrices (vertex shader)
 ///
 /// # Parameters
 /// - `device`: The logical device to create the layout with
@@ -499,12 +499,21 @@ fn create_sampler(device: &Device) -> anyhow::Result<vk::Sampler> {
 /// # Errors
 /// Returns an error if layout creation fails.
 pub fn create_descriptor_set_layout(device: &Device, vulkan_application_data: &mut VulkanApplicationData) -> anyhow::Result<()> {
-    let layout_info = vk::DescriptorSetLayoutBinding::builder()
+    let sampler_binding = vk::DescriptorSetLayoutBinding::builder()
         .binding(0)
         .descriptor_count(1)
         .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
         .stage_flags(vk::ShaderStageFlags::FRAGMENT);
-    let create_info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&[layout_info]).build();
+
+    let ubo_binding = vk::DescriptorSetLayoutBinding::builder()
+        .binding(1)
+        .descriptor_count(1)
+        .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+        .stage_flags(vk::ShaderStageFlags::VERTEX);
+
+    let create_info = vk::DescriptorSetLayoutCreateInfo::builder()
+        .bindings(&[sampler_binding, ubo_binding])
+        .build();
     vulkan_application_data.descriptor_set_layout = unsafe { device.create_descriptor_set_layout(&create_info, None)? };
     Ok(())
 }
@@ -513,7 +522,7 @@ pub fn create_descriptor_set_layout(device: &Device, vulkan_application_data: &m
 ///
 /// # Pool Configuration
 /// - **Max Sets**: 1
-/// - **Pool Sizes**: 1 combined image sampler
+/// - **Pool Sizes**: 1 combined image sampler + 1 uniform buffer
 ///
 /// # Parameters
 /// - `device`: The logical device to create the pool with
@@ -521,14 +530,18 @@ pub fn create_descriptor_set_layout(device: &Device, vulkan_application_data: &m
 /// # Errors
 /// Returns an error if pool creation fails.
 pub fn create_descriptor_pool(device: &Device, vulkan_application_data: &mut VulkanApplicationData) -> anyhow::Result<()> {
-    let descriptor_pool_size = vk::DescriptorPoolSize::builder()
+    let sampler_pool_size = vk::DescriptorPoolSize::builder()
         .descriptor_count(1)
         .type_(vk::DescriptorType::COMBINED_IMAGE_SAMPLER);
+
+    let ubo_pool_size = vk::DescriptorPoolSize::builder()
+        .descriptor_count(1)
+        .type_(vk::DescriptorType::UNIFORM_BUFFER);
 
     let pool_info = vk::DescriptorPoolCreateInfo::builder()
         .flags(vk::DescriptorPoolCreateFlags::empty())
         .max_sets(1)
-        .pool_sizes(&[descriptor_pool_size])
+        .pool_sizes(&[sampler_pool_size, ubo_pool_size])
         .build();
 
     vulkan_application_data.descriptor_pool = unsafe { device.create_descriptor_pool(&pool_info, None)? };
@@ -558,27 +571,55 @@ pub fn allocate_descriptor_set(device: &Device, descriptor_pool: DescriptorPool,
     Ok(unsafe { device.allocate_descriptor_sets(&allocate_info)? })
 }
 
-/// Writes actual texture resources (image view + sampler) into a descriptor set.
+/// Writes actual resources (texture sampler + UBO) into a descriptor set.
 ///
 /// # Parameters
 /// - `device`: The logical device to execute the write with
 /// - `descriptor_set`: The descriptor set to write into
 /// - `image_view`: The texture image view to bind
 /// - `sampler`: The sampler to bind
-pub fn update_descriptor_set(device: &Device, descriptor_set: DescriptorSet, image_view: ImageView, sampler: Sampler) {
+/// - `uniform_buffer`: The uniform buffer containing camera matrices
+pub fn update_descriptor_set(
+    device: &Device,
+    descriptor_set: DescriptorSet,
+    image_view: ImageView,
+    sampler: Sampler,
+    uniform_buffer: vk::Buffer,
+) {
     let image_info = vk::DescriptorImageInfo::builder()
         .image_view(image_view)
         .sampler(sampler)
         .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
-    let descriptor_writes = vk::WriteDescriptorSet::builder()
+    let sampler_write = vk::WriteDescriptorSet::builder()
         .dst_set(descriptor_set)
         .dst_binding(0)
         .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
         .image_info(&[image_info])
         .build();
 
+    let buffer_info = vk::DescriptorBufferInfo::builder()
+        .buffer(uniform_buffer)
+        .offset(0)
+        .range(std::mem::size_of::<crate::graphical_core::camera::UniformBufferObject>() as u64);
+
+    let ubo_write = vk::WriteDescriptorSet::builder()
+        .dst_set(descriptor_set)
+        .dst_binding(1)
+        .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+        .buffer_info(&[buffer_info])
+        .build();
+
     unsafe {
-        device.update_descriptor_sets(&[descriptor_writes], &[] as &[CopyDescriptorSet]);
+        device.update_descriptor_sets(&[sampler_write, ubo_write], &[] as &[CopyDescriptorSet]);
+    }
+}
+
+pub fn destroy_textures(device: &vulkanalia::Device, vulkan_application_data: &mut VulkanApplicationData) {
+    unsafe {
+        device.destroy_sampler(vulkan_application_data.texture_sampler, None);
+        device.destroy_image_view(vulkan_application_data.texture_image_view, None);
+        device.destroy_image(vulkan_application_data.texture_image, None);
+        device.free_memory(vulkan_application_data.texture_memory, None);
     }
 }
