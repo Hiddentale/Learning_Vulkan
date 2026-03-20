@@ -3,10 +3,9 @@
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec2 inTexCoord;
 
-layout(binding = 0) uniform UniformBufferObject {
-    mat4 model;
-    mat4 view;
-    mat4 projection;
+layout(binding = 1) uniform UniformBufferObject {
+    mat4 model_matrix;
+    mat4 view_projection_matrix;
 } ubo;
 
 layout(location = 0) out vec2 fragTexCoord;
