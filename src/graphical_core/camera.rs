@@ -18,16 +18,10 @@ pub struct UniformBufferObject {
     view_projection_matrix: [[f32; 4]; 4],
 }
 
-pub fn create_uniform_buffer(
-    device: &Device,
-    instance: &Instance,
-    vulkan_application_data: &mut VulkanApplicationData,
-) -> anyhow::Result<()> {
+pub fn create_uniform_buffer(device: &Device, instance: &Instance, vulkan_application_data: &mut VulkanApplicationData) -> anyhow::Result<()> {
     let buffer_size_in_bytes = std::mem::size_of::<UniformBufferObject>() as u64;
     let buffer_usage_flags = vk::BufferUsageFlags::UNIFORM_BUFFER;
-    let properties = vk::MemoryPropertyFlags::HOST_VISIBLE
-        | vk::MemoryPropertyFlags::HOST_COHERENT
-        | vk::MemoryPropertyFlags::DEVICE_LOCAL;
+    let properties = vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT | vk::MemoryPropertyFlags::DEVICE_LOCAL;
 
     let (uniform_buffer, uniform_memory, uniform_ptr) = unsafe {
         allocate_buffer::<UniformBufferObject>(
@@ -54,8 +48,7 @@ pub fn update_uniform_buffer(vulkan_application_data: &VulkanApplicationData) ->
     let view = compute_view_matrix(CAMERA_POSITION, CAMERA_TARGET, UP)?;
     let view_projection = projection * view;
 
-    let rotation = Quat::from_rotation_y(30.0_f32.to_radians())
-        * Quat::from_rotation_x(-20.0_f32.to_radians());
+    let rotation = Quat::from_rotation_y(30.0_f32.to_radians()) * Quat::from_rotation_x(-20.0_f32.to_radians());
     let model = compute_model_matrix(Vec3::ONE, rotation, Vec3::ZERO)?;
 
     let ubo = UniformBufferObject {

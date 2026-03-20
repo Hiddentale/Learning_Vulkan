@@ -9,11 +9,7 @@ pub fn depth_format() -> vk::Format {
     DEPTH_FORMAT
 }
 
-pub unsafe fn create_depth_image(
-    device: &Device,
-    instance: &Instance,
-    data: &mut VulkanApplicationData,
-) -> anyhow::Result<()> {
+pub unsafe fn create_depth_image(device: &Device, instance: &Instance, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
     let extent = data.swapchain_accepted_images_width_and_height;
 
     let image_info = vk::ImageCreateInfo::builder()
@@ -36,11 +32,7 @@ pub unsafe fn create_depth_image(
 
     let mem_requirements = device.get_image_memory_requirements(data.depth_image);
     let mem_properties = instance.get_physical_device_memory_properties(data.physical_device);
-    let mem_type_index = find_memory_type(
-        &mem_properties,
-        mem_requirements.memory_type_bits,
-        vk::MemoryPropertyFlags::DEVICE_LOCAL,
-    )?;
+    let mem_type_index = find_memory_type(&mem_properties, mem_requirements.memory_type_bits, vk::MemoryPropertyFlags::DEVICE_LOCAL)?;
 
     let alloc_info = vk::MemoryAllocateInfo::builder()
         .allocation_size(mem_requirements.size)

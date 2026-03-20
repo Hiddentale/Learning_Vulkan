@@ -1,11 +1,11 @@
-use std::collections::HashSet;
+use crate::graphical_core::{queue_families::RequiredQueueFamilies, vulkan_object::VulkanApplicationData};
+use crate::DEVICE_EXTENSIONS;
 use anyhow::anyhow;
 use log::{info, warn};
+use std::collections::HashSet;
 use thiserror::Error;
-use vulkanalia::Instance;
 use vulkanalia::vk::{InstanceV1_0, PhysicalDevice, PhysicalDeviceProperties};
-use crate::DEVICE_EXTENSIONS;
-use crate::graphical_core::{vulkan_object::VulkanApplicationData, queue_families::RequiredQueueFamilies};
+use vulkanalia::Instance;
 
 #[derive(Debug, Error)]
 #[error("Missing {0}.")]
@@ -34,7 +34,11 @@ pub unsafe fn check_gpu(current_system: &Instance, vulkan_application_data: &Vul
     Ok(())
 }
 pub unsafe fn check_gpu_extensions(instance: &Instance, physical_device: PhysicalDevice) -> anyhow::Result<()> {
-    let extensions = instance.enumerate_device_extension_properties(physical_device, None)?.iter().map(|e| e.extension_name).collect::<HashSet<_>>();
+    let extensions = instance
+        .enumerate_device_extension_properties(physical_device, None)?
+        .iter()
+        .map(|e| e.extension_name)
+        .collect::<HashSet<_>>();
     if DEVICE_EXTENSIONS.iter().all(|e| extensions.contains(e)) {
         Ok(())
     } else {
@@ -47,11 +51,10 @@ unsafe fn all_available_gpus(current_system: &Instance) -> crate::VkResult<Vec<P
 unsafe fn get_gpu_properties(current_system: &Instance, gpu: PhysicalDevice) -> PhysicalDeviceProperties {
     current_system.get_physical_device_properties(gpu)
 }
-unsafe fn gpu_not_have_required_properties(current_system: &Instance, vulkan_application_data: &VulkanApplicationData, gpu: PhysicalDevice) -> bool  {
+unsafe fn gpu_not_have_required_properties(current_system: &Instance, vulkan_application_data: &VulkanApplicationData, gpu: PhysicalDevice) -> bool {
     if let Err(_) = check_gpu(current_system, vulkan_application_data, gpu) {
         true
-    }
-    else {
+    } else {
         false
     }
 }

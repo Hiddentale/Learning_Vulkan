@@ -62,10 +62,7 @@ pub unsafe fn create_command_buffers(device: &Device, data: &mut VulkanApplicati
             },
         };
         let depth_clear_value = vk::ClearValue {
-            depth_stencil: vk::ClearDepthStencilValue {
-                depth: 1.0,
-                stencil: 0,
-            },
+            depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 },
         };
         let clear_values = &[color_clear_value, depth_clear_value];
         let info = vk::RenderPassBeginInfo::builder()

@@ -1,5 +1,16 @@
 use crate::graphical_core::{
-    MAX_FRAMES_IN_FLIGHT, buffers::allocate_and_fill_buffer, camera::{UniformBufferObject, create_uniform_buffer, destroy_uniform_buffer, update_uniform_buffer}, depth::{create_depth_image, destroy_depth_image}, extra::{create_command_buffers, create_command_pool, create_frame_buffers, create_instance, create_logical_device, create_sync_objects}, gpu::choose_gpu, pipeline::create_pipeline, render_pass::create_render_pass, swapchain::{create_swapchain, create_swapchain_image_views}, texture_mapping::{allocate_descriptor_set, create_descriptor_pool, create_descriptor_set_layout, create_texture_image, destroy_textures, update_descriptor_set}
+    buffers::allocate_and_fill_buffer,
+    camera::{create_uniform_buffer, destroy_uniform_buffer, update_uniform_buffer, UniformBufferObject},
+    depth::{create_depth_image, destroy_depth_image},
+    extra::{create_command_buffers, create_command_pool, create_frame_buffers, create_instance, create_logical_device, create_sync_objects},
+    gpu::choose_gpu,
+    pipeline::create_pipeline,
+    render_pass::create_render_pass,
+    swapchain::{create_swapchain, create_swapchain_image_views},
+    texture_mapping::{
+        allocate_descriptor_set, create_descriptor_pool, create_descriptor_set_layout, create_texture_image, destroy_textures, update_descriptor_set,
+    },
+    MAX_FRAMES_IN_FLIGHT,
 };
 use crate::VALIDATION_ENABLED;
 use anyhow::anyhow;
@@ -67,41 +78,113 @@ pub struct Vertex {
 }
 const VERTICES: [Vertex; 24] = [
     // Front face (z = -0.5)
-    Vertex { position: [-0.5, -0.5, -0.5], uv_coordinate: [0.0, 1.0] },
-    Vertex { position: [ 0.5, -0.5, -0.5], uv_coordinate: [1.0, 1.0] },
-    Vertex { position: [ 0.5,  0.5, -0.5], uv_coordinate: [1.0, 0.0] },
-    Vertex { position: [-0.5,  0.5, -0.5], uv_coordinate: [0.0, 0.0] },
+    Vertex {
+        position: [-0.5, -0.5, -0.5],
+        uv_coordinate: [0.0, 1.0],
+    },
+    Vertex {
+        position: [0.5, -0.5, -0.5],
+        uv_coordinate: [1.0, 1.0],
+    },
+    Vertex {
+        position: [0.5, 0.5, -0.5],
+        uv_coordinate: [1.0, 0.0],
+    },
+    Vertex {
+        position: [-0.5, 0.5, -0.5],
+        uv_coordinate: [0.0, 0.0],
+    },
     // Back face (z = 0.5)
-    Vertex { position: [ 0.5, -0.5,  0.5], uv_coordinate: [0.0, 1.0] },
-    Vertex { position: [-0.5, -0.5,  0.5], uv_coordinate: [1.0, 1.0] },
-    Vertex { position: [-0.5,  0.5,  0.5], uv_coordinate: [1.0, 0.0] },
-    Vertex { position: [ 0.5,  0.5,  0.5], uv_coordinate: [0.0, 0.0] },
+    Vertex {
+        position: [0.5, -0.5, 0.5],
+        uv_coordinate: [0.0, 1.0],
+    },
+    Vertex {
+        position: [-0.5, -0.5, 0.5],
+        uv_coordinate: [1.0, 1.0],
+    },
+    Vertex {
+        position: [-0.5, 0.5, 0.5],
+        uv_coordinate: [1.0, 0.0],
+    },
+    Vertex {
+        position: [0.5, 0.5, 0.5],
+        uv_coordinate: [0.0, 0.0],
+    },
     // Right face (x = 0.5)
-    Vertex { position: [ 0.5, -0.5, -0.5], uv_coordinate: [0.0, 1.0] },
-    Vertex { position: [ 0.5, -0.5,  0.5], uv_coordinate: [1.0, 1.0] },
-    Vertex { position: [ 0.5,  0.5,  0.5], uv_coordinate: [1.0, 0.0] },
-    Vertex { position: [ 0.5,  0.5, -0.5], uv_coordinate: [0.0, 0.0] },
+    Vertex {
+        position: [0.5, -0.5, -0.5],
+        uv_coordinate: [0.0, 1.0],
+    },
+    Vertex {
+        position: [0.5, -0.5, 0.5],
+        uv_coordinate: [1.0, 1.0],
+    },
+    Vertex {
+        position: [0.5, 0.5, 0.5],
+        uv_coordinate: [1.0, 0.0],
+    },
+    Vertex {
+        position: [0.5, 0.5, -0.5],
+        uv_coordinate: [0.0, 0.0],
+    },
     // Left face (x = -0.5)
-    Vertex { position: [-0.5, -0.5,  0.5], uv_coordinate: [0.0, 1.0] },
-    Vertex { position: [-0.5, -0.5, -0.5], uv_coordinate: [1.0, 1.0] },
-    Vertex { position: [-0.5,  0.5, -0.5], uv_coordinate: [1.0, 0.0] },
-    Vertex { position: [-0.5,  0.5,  0.5], uv_coordinate: [0.0, 0.0] },
+    Vertex {
+        position: [-0.5, -0.5, 0.5],
+        uv_coordinate: [0.0, 1.0],
+    },
+    Vertex {
+        position: [-0.5, -0.5, -0.5],
+        uv_coordinate: [1.0, 1.0],
+    },
+    Vertex {
+        position: [-0.5, 0.5, -0.5],
+        uv_coordinate: [1.0, 0.0],
+    },
+    Vertex {
+        position: [-0.5, 0.5, 0.5],
+        uv_coordinate: [0.0, 0.0],
+    },
     // Top face (y = 0.5)
-    Vertex { position: [-0.5,  0.5, -0.5], uv_coordinate: [0.0, 1.0] },
-    Vertex { position: [ 0.5,  0.5, -0.5], uv_coordinate: [1.0, 1.0] },
-    Vertex { position: [ 0.5,  0.5,  0.5], uv_coordinate: [1.0, 0.0] },
-    Vertex { position: [-0.5,  0.5,  0.5], uv_coordinate: [0.0, 0.0] },
+    Vertex {
+        position: [-0.5, 0.5, -0.5],
+        uv_coordinate: [0.0, 1.0],
+    },
+    Vertex {
+        position: [0.5, 0.5, -0.5],
+        uv_coordinate: [1.0, 1.0],
+    },
+    Vertex {
+        position: [0.5, 0.5, 0.5],
+        uv_coordinate: [1.0, 0.0],
+    },
+    Vertex {
+        position: [-0.5, 0.5, 0.5],
+        uv_coordinate: [0.0, 0.0],
+    },
     // Bottom face (y = -0.5)
-    Vertex { position: [-0.5, -0.5,  0.5], uv_coordinate: [0.0, 1.0] },
-    Vertex { position: [ 0.5, -0.5,  0.5], uv_coordinate: [1.0, 1.0] },
-    Vertex { position: [ 0.5, -0.5, -0.5], uv_coordinate: [1.0, 0.0] },
-    Vertex { position: [-0.5, -0.5, -0.5], uv_coordinate: [0.0, 0.0] },
+    Vertex {
+        position: [-0.5, -0.5, 0.5],
+        uv_coordinate: [0.0, 1.0],
+    },
+    Vertex {
+        position: [0.5, -0.5, 0.5],
+        uv_coordinate: [1.0, 1.0],
+    },
+    Vertex {
+        position: [0.5, -0.5, -0.5],
+        uv_coordinate: [1.0, 0.0],
+    },
+    Vertex {
+        position: [-0.5, -0.5, -0.5],
+        uv_coordinate: [0.0, 0.0],
+    },
 ];
 
 const INDICES: [u16; 36] = [
-     0,  1,  2,  0,  2,  3, // Front
-     4,  5,  6,  4,  6,  7, // Back
-     8,  9, 10,  8, 10, 11, // Right
+    0, 1, 2, 0, 2, 3, // Front
+    4, 5, 6, 4, 6, 7, // Back
+    8, 9, 10, 8, 10, 11, // Right
     12, 13, 14, 12, 14, 15, // Left
     16, 17, 18, 16, 18, 19, // Top
     20, 21, 22, 20, 22, 23, // Bottom
@@ -219,7 +302,13 @@ impl VulkanApplication {
             .copied()
             .ok_or_else(|| anyhow::anyhow!("Failed to allocate descriptor set"))?;
 
-        update_descriptor_set(&device, descriptor_set, texture_image_view, texture_sampler, vulkan_application_data.uniform_buffer);
+        update_descriptor_set(
+            &device,
+            descriptor_set,
+            texture_image_view,
+            texture_sampler,
+            vulkan_application_data.uniform_buffer,
+        );
 
         vulkan_application_data.texture_image = texture_image;
         vulkan_application_data.texture_memory = texture_memory;
@@ -235,7 +324,7 @@ impl VulkanApplication {
             &device,
             &instance,
             &mut vulkan_application_data,
-            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
         )?;
 
         let index_buffer_size_in_bytes = (INDICES.len() * 2) as u64;
@@ -246,7 +335,7 @@ impl VulkanApplication {
             &device,
             &instance,
             &mut vulkan_application_data,
-            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
         )?;
 
         vulkan_application_data.vertex_buffer = vertex_buffer;

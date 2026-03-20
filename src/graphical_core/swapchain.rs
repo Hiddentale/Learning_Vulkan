@@ -94,7 +94,7 @@ fn get_swapchain_extent(window: &Window, capabilities: vk::SurfaceCapabilitiesKH
 }
 pub unsafe fn create_swapchain_image_views(device: &Device, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
     let normal_rgba_values = vk::ComponentSwizzle::IDENTITY;
-    
+
     data.swapchain_image_views = data
         .swapchain_images
         .iter()

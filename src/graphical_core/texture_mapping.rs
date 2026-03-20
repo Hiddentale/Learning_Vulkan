@@ -579,13 +579,7 @@ pub fn allocate_descriptor_set(device: &Device, descriptor_pool: DescriptorPool,
 /// - `image_view`: The texture image view to bind
 /// - `sampler`: The sampler to bind
 /// - `uniform_buffer`: The uniform buffer containing camera matrices
-pub fn update_descriptor_set(
-    device: &Device,
-    descriptor_set: DescriptorSet,
-    image_view: ImageView,
-    sampler: Sampler,
-    uniform_buffer: vk::Buffer,
-) {
+pub fn update_descriptor_set(device: &Device, descriptor_set: DescriptorSet, image_view: ImageView, sampler: Sampler, uniform_buffer: vk::Buffer) {
     let image_info = vk::DescriptorImageInfo::builder()
         .image_view(image_view)
         .sampler(sampler)
