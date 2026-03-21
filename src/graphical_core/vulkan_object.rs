@@ -74,74 +74,11 @@ pub struct VulkanApplication {
     pub(crate) resized: bool,
 }
 impl VulkanApplication {
-    /// Initializes the complete Vulkan rendering pipeline and all required resources.
-    ///
-    /// # Process Overview - Initialization Phases
-    ///
-    /// **Phase 1: Core Infrastructure**
-    /// 1. Load Vulkan library and create entry point
-    /// 2. Create Vulkan instance (validation layers if debug build)
-    /// 3. Create window surface (OS-specific rendering target)
-    /// 4. Choose physical GPU
-    /// 5. Create logical device and retrieve queue handles
-    ///
-    /// **Phase 2: Presentation Setup**
-    ///
-    /// 6. Create swapchain (double/triple buffering for smooth presentation)
-    /// 7. Create image views for swapchain images
-    ///
-    /// **Phase 3: Rendering Pipeline**
-    ///
-    /// 8. Create render pass (defines rendering structure)
-    /// 9. Create descriptor set layout (shader resource interface)
-    /// 10. Create graphics pipeline (vertex processing + fragment shading)
-    ///
-    /// **Phase 4: Command Infrastructure**
-    ///
-    /// 11. Create framebuffers (attachments for rendering)
-    /// 12. Create command pool (allocator for command buffers)
-    ///
-    /// **Phase 5: Texture Resources**
-    ///
-    /// 13. Load texture from disk
-    /// 14. Create staging buffer, GPU image, transfer data
-    /// 15. Create image view and sampler
-    /// 16. Create descriptor pool
-    /// 17. Allocate and update descriptor set with texture
-    ///
-    /// **Phase 6: Geometry Buffers**
-    ///
-    /// 18. Create and fill vertex buffer (cube vertices)
-    /// 19. Create and fill index buffer (cube triangles)
-    ///
-    /// **Phase 7: Command Recording & Synchronization**
-    ///
-    /// 20. Record command buffers (rendering commands for each swapchain image)
-    /// 21. Create synchronization objects (semaphores and fences)
-    ///
-    /// # Parameters
-    /// - `user_window`: The OS window to render into
-    ///
-    /// # Returns
-    /// A fully initialized `VulkanApplication` ready to render frames
+    /// Creates a fully initialized Vulkan renderer for the given window.
     ///
     /// # Safety
-    /// This function is marked `unsafe` because it:
-    /// - Calls many unsafe Vulkan API functions
-    /// - Creates resources that must be properly cleaned up
-    /// - Initializes GPU state that could crash if misused
-    ///
-    /// # Errors
-    /// Returns an error if any initialization step fails:
-    /// - Vulkan library cannot be loaded
-    /// - No suitable GPU found
-    /// - Out of GPU memory
-    /// - Shader compilation fails
-    /// - Texture file not found
-    ///
-    /// # Note
-    /// All created resources are stored in `VulkanApplicationData` and must be
-    /// destroyed via `destroy_vulkan_application()` before the application exits.
+    /// Calls unsafe Vulkan APIs. The caller must call [`destroy_vulkan_application`]
+    /// before dropping the returned value or closing the window.
     pub unsafe fn create_vulkan_application(user_window: &Window) -> anyhow::Result<Self> {
         let (entry, instance, device, mut data) = create_core_infrastructure(user_window)?;
         create_presentation_pipeline(user_window, &instance, &device, &mut data)?;
@@ -237,52 +174,10 @@ unsafe fn create_resources(device: &Device, instance: &Instance, data: &mut Vulk
 }
 
 impl VulkanApplication {
-    /// Renders a single frame to the screen using the Vulkan rendering pipeline.
-    ///
-    /// # Process Overview - Frame Rendering Cycle
-    ///
-    /// **Phase 1: Synchronization**
-    /// 1. Wait for the current frame's fence (ensure GPU isn't still using resources)
-    /// 2. Acquire next swapchain image (which backbuffer to render to)
-    /// 3. Wait if that image is still being presented
-    ///
-    /// **Phase 2: Command Submission**
-    ///
-    /// 4. Reset the fence for this frame
-    /// 5. Submit pre-recorded command buffer to graphics queue:
-    ///    - Wait for image available semaphore
-    ///    - Execute: begin render pass → bind pipeline → bind buffers → draw → end
-    ///    - Signal render finished semaphore
-    /// 6. Wait for fence to track completion
-    ///
-    /// **Phase 3: Presentation**
-    ///
-    /// 7. Present rendered image to screen:
-    ///    - Wait for render finished semaphore
-    ///    - Display image in window
-    /// 8. Handle swapchain recreation if needed (window resized or suboptimal)
-    ///
-    /// **Phase 4: Frame Pacing**
-    ///
-    /// 9. Advance frame counter (for double/triple buffering)
-    ///
-    /// # Parameters
-    /// - `window`: The window to render into (needed for swapchain recreation)
+    /// Acquires a swapchain image, submits the command buffer, and presents the result.
     ///
     /// # Safety
-    /// This function is marked `unsafe` because it calls many unsafe Vulkan functions
-    /// for queue operations and synchronization.
-    ///
-    /// # Errors
-    /// Returns an error if:
-    /// - Fence wait times out
-    /// - Queue submission fails
-    /// - Swapchain recreation fails
-    /// - Presentation fails (except OUT_OF_DATE, which triggers recreation)
-    ///
-    /// # Performance Note
-    /// This function blocks on fences, which stalls the CPU until GPU work completes.
-    /// For optimal performance, we'd want triple buffering with async submission.
+    /// Calls unsafe Vulkan queue and synchronization APIs.
     pub unsafe fn render_frame(&mut self, window: &Window) -> anyhow::Result<()> {
         let image_index = match self.acquire_next_image(window)? {
             Some(index) => index,
@@ -359,47 +254,13 @@ impl VulkanApplication {
         Ok(())
     }
 
-    /// Recreates the swapchain and all dependent resources after window resize or invalidation.
+    /// Destroys and rebuilds the swapchain and all dependent resources.
     ///
-    /// # Why Swapchain Recreation is Needed
-    /// The swapchain is tied to window dimensions. When the window resizes, minimizes,
-    /// or becomes suboptimal (e.g., moved to different monitor), the swapchain must be
-    /// recreated with new dimensions.
-    ///
-    /// # Process Overview
-    /// 1. Wait for all GPU work to finish (`device_wait_idle`)
-    /// 2. Destroy old swapchain and dependent resources:
-    ///    - Framebuffers
-    ///    - Command buffers
-    ///    - Graphics pipeline
-    ///    - Pipeline layout
-    ///    - Render pass
-    ///    - Swapchain image views
-    ///    - Swapchain
-    /// 3. Recreate everything with new window dimensions:
-    ///    - New swapchain matching current window size
-    ///    - New image views for new swapchain images
-    ///    - New render pass (references new format/dimensions)
-    ///    - New pipeline (references new render pass)
-    ///    - New framebuffers (references new image views)
-    ///    - New command buffers (references new framebuffers)
-    /// 4. Resize in-flight fence tracking
-    ///
-    /// # Parameters
-    /// - `user_window`: The window (queried for new dimensions)
+    /// Required when the window resizes or the swapchain becomes suboptimal,
+    /// because most pipeline resources reference swapchain dimensions or format.
     ///
     /// # Safety
-    /// This function is marked `unsafe` because it calls many unsafe Vulkan destruction
-    /// and creation functions.
-    ///
-    /// # Why Destroy So Much?
-    /// Many Vulkan resources reference each other. The pipeline references the render
-    /// pass, which references the swapchain format. Framebuffers reference image views.
-    /// Rather than track dependencies, it's simpler to destroy and recreate the entire
-    /// chain.
-    ///
-    /// # Errors
-    /// Returns an error if any recreation step fails (usually out of memory).
+    /// Calls unsafe Vulkan destruction and creation APIs.
     pub unsafe fn recreate_swapchain(&mut self, user_window: &Window) -> anyhow::Result<()> {
         self.device.device_wait_idle()?;
         self.destroy_swapchain();
@@ -418,18 +279,8 @@ impl VulkanApplication {
 
     /// Destroys the swapchain and all resources that depend on it.
     ///
-    /// # Resources Destroyed
-    /// In reverse order of creation (children before parents):
-    /// 1. Framebuffers (reference image views)
-    /// 2. Command buffers (freed back to pool)
-    /// 3. Graphics pipeline (references pipeline layout and render pass)
-    /// 4. Pipeline layout
-    /// 5. Render pass (references swapchain format)
-    /// 6. Swapchain image views (reference swapchain images)
-    /// 7. Swapchain itself
-    ///
     /// # Safety
-    /// This function is marked `unsafe` because it calls unsafe Vulkan destruction functions.
+    /// Calls unsafe Vulkan destruction APIs. The GPU must be idle before calling.
     pub unsafe fn destroy_swapchain(&mut self) {
         self.vulkan_application_data
             .framebuffers
@@ -448,40 +299,11 @@ impl VulkanApplication {
         self.device.destroy_swapchain_khr(self.vulkan_application_data.swapchain, None);
     }
 
-    /// Destroys all Vulkan resources and shuts down the rendering system.
-    ///
-    /// # Cleanup Order
-    /// Resources must be destroyed in reverse order of creation to satisfy Vulkan's
-    /// dependency requirements:
-    ///
-    /// 1. **Swapchain resources** (via `destroy_swapchain()`)
-    /// 2. **Synchronization objects**: Fences, semaphores
-    /// 3. **Command pool** (automatically frees command buffers)
-    /// 4. **Geometry buffers**: Vertex buffer, index buffer, and their memory
-    /// 5. **Texture resources**: Sampler, image view, image, memory
-    /// 6. **Descriptor resources**: Pool (auto-frees sets), layout
-    /// 7. **Logical device** (must be destroyed before instance)
-    /// 8. **Surface** (OS window integration)
-    /// 9. **Debug messenger** (if validation layers enabled)
-    /// 10. **Instance** (last - owns all handles)
+    /// Destroys all Vulkan resources. Must be called exactly once before the
+    /// window closes, because `Drop` cannot guarantee the required destruction order.
     ///
     /// # Safety
-    /// This function is marked `unsafe` because it calls many unsafe Vulkan destruction
-    /// functions and must be called exactly once before application exit.
-    ///
-    /// # Critical Requirements
-    /// - Must be called before the window closes
-    /// - Must be called before VulkanApplication is dropped
-    /// - Cannot render after calling this (all resources are gone)
-    /// - Missing any cleanup causes Vulkan validation errors and potential driver leaks
-    ///
-    /// # Why Manual Cleanup?
-    /// Rust's Drop trait doesn't work well with Vulkan because:
-    /// - Destruction order matters (Drop order isn't guaranteed)
-    /// - Many operations need &mut self (Drop only gives self)
-    /// - GPU operations may still be in flight (need explicit wait)
-    ///
-    /// Manual cleanup with `destroy_vulkan_application()` gives us full control.
+    /// Calls unsafe Vulkan destruction APIs. No rendering is possible after this call.
     pub unsafe fn destroy_vulkan_application(&mut self) {
         self.device.device_wait_idle().unwrap();
         self.destroy_resources();
