@@ -484,14 +484,25 @@ impl VulkanApplication {
     /// Manual cleanup with `destroy_vulkan_application()` gives us full control.
     pub unsafe fn destroy_vulkan_application(&mut self) {
         self.device.device_wait_idle().unwrap();
+        self.destroy_resources();
+        self.destroy_swapchain();
+        self.destroy_sync_objects();
+        self.destroy_core_infrastructure();
+    }
+
+    unsafe fn destroy_resources(&mut self) {
         destroy_textures(&self.device, &mut self.vulkan_application_data);
         destroy_uniform_buffer(&self.device, &mut self.vulkan_application_data);
-
         self.device.destroy_descriptor_pool(self.vulkan_application_data.descriptor_pool, None);
         self.device
             .destroy_descriptor_set_layout(self.vulkan_application_data.descriptor_set_layout, None);
+        self.device.destroy_buffer(self.vulkan_application_data.vertex_buffer, None);
+        self.device.free_memory(self.vulkan_application_data.vertex_buffer_memory, None);
+        self.device.destroy_buffer(self.vulkan_application_data.index_buffer, None);
+        self.device.free_memory(self.vulkan_application_data.index_buffer_memory, None);
+    }
 
-        self.destroy_swapchain();
+    unsafe fn destroy_sync_objects(&self) {
         self.vulkan_application_data
             .in_flight_fences
             .iter()
@@ -505,10 +516,9 @@ impl VulkanApplication {
             .iter()
             .for_each(|s| self.device.destroy_semaphore(*s, None));
         self.device.destroy_command_pool(self.vulkan_application_data.command_pool, None);
-        self.device.destroy_buffer(self.vulkan_application_data.vertex_buffer, None);
-        self.device.free_memory(self.vulkan_application_data.vertex_buffer_memory, None);
-        self.device.destroy_buffer(self.vulkan_application_data.index_buffer, None);
-        self.device.free_memory(self.vulkan_application_data.index_buffer_memory, None);
+    }
+
+    unsafe fn destroy_core_infrastructure(&mut self) {
         self.device.destroy_device(None);
         self.vulkan_instance.destroy_surface_khr(self.vulkan_application_data.surface, None);
         if VALIDATION_ENABLED {
