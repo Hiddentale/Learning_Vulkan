@@ -10,34 +10,21 @@
 use std::path::PathBuf;
 
 fn main() -> anyhow::Result<()> {
-    // Rebuild if this build script changes
     println!("cargo:rerun-if-changed=build.rs");
 
-    validate_glsl_compiler()?;
+    if !is_glsl_compiler_available() {
+        println!("cargo:warning=glslc not found — skipping shader compilation. Using pre-compiled .spv files.");
+        return Ok(());
+    }
+
     let all_shader_source_files = discover_shader_files()?;
     process_shaders(all_shader_source_files)?;
 
     Ok(())
 }
 
-/// Validates that the GLSL compiler (glslc) is available.
-///
-/// This checks if `glslc` is in the system PATH by attempting to run it
-/// with the `--version` flag. If the compiler is not found, the build fails
-/// with a helpful error message.
-///
-/// # Errors
-///
-/// Returns an error if glslc cannot be found or executed.
-fn validate_glsl_compiler() -> anyhow::Result<()> {
-    let compiler_exists = std::process::Command::new("glslc").arg("--version").output().is_ok();
-    if !compiler_exists {
-        anyhow::bail!(
-            "glslc not found in PATH. Please install the Vulkan SDK.\n\
-             Download from: https://vulkan.lunarg.com/"
-        );
-    }
-    Ok(())
+fn is_glsl_compiler_available() -> bool {
+    std::process::Command::new("glslc").arg("--version").output().is_ok()
 }
 
 /// Discovers all shader source files in the `src/shaders/` directory.

@@ -143,93 +143,100 @@ impl VulkanApplication {
     /// All created resources are stored in `VulkanApplicationData` and must be
     /// destroyed via `destroy_vulkan_application()` before the application exits.
     pub unsafe fn create_vulkan_application(user_window: &Window) -> anyhow::Result<Self> {
-        let platform_specific_vulkan_api = LibloadingLoader::new(LIBRARY)?;
-        let vulkan_api_entry_point = Entry::new(platform_specific_vulkan_api).map_err(|b| anyhow!("{}", b))?;
-        let mut vulkan_application_data = VulkanApplicationData::default();
-        let instance = create_instance(user_window, &vulkan_api_entry_point, &mut vulkan_application_data)?;
-        vulkan_application_data.surface = vulkan_window::create_surface(&instance, &user_window, &user_window)?;
-
-        choose_gpu(&instance, &mut vulkan_application_data)?;
-        let device = create_logical_device(&vulkan_api_entry_point, &instance, &mut vulkan_application_data)?;
-        create_swapchain(user_window, &instance, &device, &mut vulkan_application_data)?;
-        create_swapchain_image_views(&device, &mut vulkan_application_data)?;
-        create_depth_image(&device, &instance, &mut vulkan_application_data)?;
-        create_render_pass(&instance, &device, &mut vulkan_application_data)?;
-        descriptors::create_layout(&device, &mut vulkan_application_data)?;
-        create_pipeline(&device, &mut vulkan_application_data)?;
-
-        create_frame_buffers(&device, &mut vulkan_application_data)?;
-        create_command_pool(&instance, &device, &mut vulkan_application_data)?;
-        create_uniform_buffer(&device, &instance, &mut vulkan_application_data)?;
-
-        let (texture_image, texture_memory, texture_image_view, texture_sampler) =
-            create_texture_image(&device, &instance, &mut vulkan_application_data)?;
-
-        descriptors::create_pool(&device, &mut vulkan_application_data)?;
-        let descriptor_sets = descriptors::allocate_set(
-            &device,
-            vulkan_application_data.descriptor_pool,
-            vulkan_application_data.descriptor_set_layout,
-        )?;
-        let descriptor_set = descriptor_sets
-            .first()
-            .copied()
-            .ok_or_else(|| anyhow::anyhow!("Failed to allocate descriptor set"))?;
-
-        descriptors::update_set(
-            &device,
-            descriptor_set,
-            texture_image_view,
-            texture_sampler,
-            vulkan_application_data.uniform_buffer,
-        );
-
-        vulkan_application_data.texture_image = texture_image;
-        vulkan_application_data.texture_memory = texture_memory;
-        vulkan_application_data.texture_image_view = texture_image_view;
-        vulkan_application_data.texture_sampler = texture_sampler;
-        vulkan_application_data.descriptor_set = descriptor_set;
-
-        let vertex_buffer_size_in_bytes = (CUBE_VERTICES.len() * size_of::<Vertex>()) as u64;
-        let (vertex_buffer, vertex_buffer_memory) = allocate_and_fill_buffer(
-            &CUBE_VERTICES,
-            vertex_buffer_size_in_bytes,
-            vk::BufferUsageFlags::VERTEX_BUFFER,
-            &device,
-            &instance,
-            &mut vulkan_application_data,
-            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-        )?;
-
-        let index_buffer_size_in_bytes = (CUBE_INDICES.len() * size_of::<u16>()) as u64;
-        let (index_buffer, index_buffer_memory) = allocate_and_fill_buffer(
-            &CUBE_INDICES,
-            index_buffer_size_in_bytes,
-            vk::BufferUsageFlags::INDEX_BUFFER,
-            &device,
-            &instance,
-            &mut vulkan_application_data,
-            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-        )?;
-
-        vulkan_application_data.vertex_buffer = vertex_buffer;
-        vulkan_application_data.index_buffer = index_buffer;
-        vulkan_application_data.vertex_buffer_memory = vertex_buffer_memory;
-        vulkan_application_data.index_buffer_memory = index_buffer_memory;
-
-        create_command_buffers(&device, &mut vulkan_application_data)?;
-        create_sync_objects(&device, &mut vulkan_application_data)?;
+        let (entry, instance, device, mut data) = create_core_infrastructure(user_window)?;
+        create_presentation_pipeline(user_window, &instance, &device, &mut data)?;
+        create_resources(&device, &instance, &mut data)?;
+        create_command_buffers(&device, &mut data)?;
+        create_sync_objects(&device, &mut data)?;
 
         Ok(Self {
-            _vulkan_entry_point: vulkan_api_entry_point,
+            _vulkan_entry_point: entry,
             vulkan_instance: instance,
-            vulkan_application_data,
+            vulkan_application_data: data,
             device,
             frame: 0,
             resized: false,
         })
     }
+}
 
+unsafe fn create_core_infrastructure(window: &Window) -> anyhow::Result<(Entry, Instance, Device, VulkanApplicationData)> {
+    let loader = LibloadingLoader::new(LIBRARY)?;
+    let entry = Entry::new(loader).map_err(|b| anyhow!("{}", b))?;
+    let mut data = VulkanApplicationData::default();
+    let instance = create_instance(window, &entry, &mut data)?;
+    data.surface = vulkan_window::create_surface(&instance, &window, &window)?;
+    choose_gpu(&instance, &mut data)?;
+    let device = create_logical_device(&entry, &instance, &mut data)?;
+    Ok((entry, instance, device, data))
+}
+
+unsafe fn create_presentation_pipeline(
+    window: &Window,
+    instance: &Instance,
+    device: &Device,
+    data: &mut VulkanApplicationData,
+) -> anyhow::Result<()> {
+    create_swapchain(window, instance, device, data)?;
+    create_swapchain_image_views(device, data)?;
+    create_depth_image(device, instance, data)?;
+    create_render_pass(instance, device, data)?;
+    descriptors::create_layout(device, data)?;
+    create_pipeline(device, data)?;
+    create_frame_buffers(device, data)?;
+    Ok(())
+}
+
+unsafe fn create_resources(device: &Device, instance: &Instance, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
+    create_command_pool(instance, device, data)?;
+    create_uniform_buffer(device, instance, data)?;
+
+    let (texture_image, texture_memory, texture_image_view, texture_sampler) = create_texture_image(device, instance, data)?;
+
+    descriptors::create_pool(device, data)?;
+    let descriptor_sets = descriptors::allocate_set(device, data.descriptor_pool, data.descriptor_set_layout)?;
+    let descriptor_set = descriptor_sets
+        .first()
+        .copied()
+        .ok_or_else(|| anyhow!("Failed to allocate descriptor set"))?;
+    descriptors::update_set(device, descriptor_set, texture_image_view, texture_sampler, data.uniform_buffer);
+
+    data.texture_image = texture_image;
+    data.texture_memory = texture_memory;
+    data.texture_image_view = texture_image_view;
+    data.texture_sampler = texture_sampler;
+    data.descriptor_set = descriptor_set;
+
+    let vertex_buffer_size = (CUBE_VERTICES.len() * size_of::<Vertex>()) as u64;
+    let (vertex_buffer, vertex_buffer_memory) = allocate_and_fill_buffer(
+        &CUBE_VERTICES,
+        vertex_buffer_size,
+        vk::BufferUsageFlags::VERTEX_BUFFER,
+        device,
+        instance,
+        data,
+        vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+    )?;
+
+    let index_buffer_size = (CUBE_INDICES.len() * size_of::<u16>()) as u64;
+    let (index_buffer, index_buffer_memory) = allocate_and_fill_buffer(
+        &CUBE_INDICES,
+        index_buffer_size,
+        vk::BufferUsageFlags::INDEX_BUFFER,
+        device,
+        instance,
+        data,
+        vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+    )?;
+
+    data.vertex_buffer = vertex_buffer;
+    data.index_buffer = index_buffer;
+    data.vertex_buffer_memory = vertex_buffer_memory;
+    data.index_buffer_memory = index_buffer_memory;
+    Ok(())
+}
+
+impl VulkanApplication {
     /// Renders a single frame to the screen using the Vulkan rendering pipeline.
     ///
     /// # Process Overview - Frame Rendering Cycle
