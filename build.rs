@@ -71,7 +71,7 @@ fn discover_shader_files() -> anyhow::Result<Vec<PathBuf>> {
     if shader_paths.is_empty() {
         anyhow::bail!("No shaders found!")
     } else {
-        return Ok(shader_paths);
+        Ok(shader_paths)
     }
 }
 
