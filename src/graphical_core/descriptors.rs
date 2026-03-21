@@ -1,9 +1,6 @@
 use crate::graphical_core::vulkan_object::VulkanApplicationData;
 use vulkanalia::vk;
-use vulkanalia::vk::{
-    CopyDescriptorSet, DescriptorPool, DescriptorSet, DescriptorSetLayout, DeviceV1_0,
-    HasBuilder, ImageView, Sampler,
-};
+use vulkanalia::vk::{CopyDescriptorSet, DescriptorPool, DescriptorSet, DescriptorSetLayout, DeviceV1_0, HasBuilder, ImageView, Sampler};
 use vulkanalia::Device;
 
 /// Defines the structure of descriptor sets: what resources shaders can access.
@@ -56,11 +53,7 @@ pub fn create_pool(device: &Device, data: &mut VulkanApplicationData) -> anyhow:
 }
 
 /// Allocates a descriptor set from a pool, matching the provided layout.
-pub fn allocate_set(
-    device: &Device,
-    descriptor_pool: DescriptorPool,
-    layout: DescriptorSetLayout,
-) -> anyhow::Result<Vec<DescriptorSet>> {
+pub fn allocate_set(device: &Device, descriptor_pool: DescriptorPool, layout: DescriptorSetLayout) -> anyhow::Result<Vec<DescriptorSet>> {
     let allocate_info = vk::DescriptorSetAllocateInfo::builder()
         .descriptor_pool(descriptor_pool)
         .set_layouts(&[layout])
@@ -69,13 +62,7 @@ pub fn allocate_set(
 }
 
 /// Writes actual resources (texture sampler + UBO) into a descriptor set.
-pub fn update_set(
-    device: &Device,
-    descriptor_set: DescriptorSet,
-    image_view: ImageView,
-    sampler: Sampler,
-    uniform_buffer: vk::Buffer,
-) {
+pub fn update_set(device: &Device, descriptor_set: DescriptorSet, image_view: ImageView, sampler: Sampler, uniform_buffer: vk::Buffer) {
     let image_info = vk::DescriptorImageInfo::builder()
         .image_view(image_view)
         .sampler(sampler)

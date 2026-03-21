@@ -1,9 +1,10 @@
 pub mod buffers;
 pub mod camera;
+pub mod commands;
 pub mod depth;
 pub mod descriptors;
-pub mod extra;
 pub mod gpu;
+pub mod instance;
 pub mod memory;
 pub mod mesh;
 pub mod pipeline;

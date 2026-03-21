@@ -1,14 +1,15 @@
 use crate::graphical_core::{
     buffers::allocate_and_fill_buffer,
     camera::{create_uniform_buffer, destroy_uniform_buffer, update_uniform_buffer, UniformBufferObject},
+    commands::{create_command_buffers, create_command_pool, create_frame_buffers, create_sync_objects},
     depth::{create_depth_image, destroy_depth_image},
-    extra::{create_command_buffers, create_command_pool, create_frame_buffers, create_instance, create_logical_device, create_sync_objects},
+    descriptors,
     gpu::choose_gpu,
-    mesh::{Vertex, CUBE_VERTICES, CUBE_INDICES},
+    instance::{create_instance, create_logical_device},
+    mesh::{Vertex, CUBE_INDICES, CUBE_VERTICES},
     pipeline::create_pipeline,
     render_pass::create_render_pass,
     swapchain::{create_swapchain, create_swapchain_image_views},
-    descriptors,
     texture_mapping::{create_texture_image, destroy_textures},
     MAX_FRAMES_IN_FLIGHT,
 };
@@ -498,5 +499,4 @@ impl VulkanApplication {
         }
         self.vulkan_instance.destroy_instance(None);
     }
-
 }

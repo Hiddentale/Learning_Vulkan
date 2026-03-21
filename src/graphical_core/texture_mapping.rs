@@ -1,10 +1,10 @@
 use crate::graphical_core::{buffers::allocate_and_fill_buffer, memory::find_memory_type, vulkan_object::VulkanApplicationData};
 use vulkanalia::vk;
-use vulkanalia::vk::{
-    BufferUsageFlags, DeviceMemory, DeviceV1_0, Handle, HasBuilder, Image,
-    ImageView, InstanceV1_0, Sampler,
-};
+use vulkanalia::vk::{BufferUsageFlags, DeviceMemory, DeviceV1_0, Handle, HasBuilder, Image, ImageView, InstanceV1_0, Sampler};
 use vulkanalia::{Device, Instance};
+
+const TEXTURE_FORMAT: vk::Format = vk::Format::R8G8B8A8_SRGB;
+const BYTES_PER_PIXEL: u32 = 4;
 
 /// Resolves a texture filename to an absolute path at compile time.
 fn get_texture_path(texture_name: &str) -> String {
@@ -24,7 +24,7 @@ pub fn create_texture_image(
         create_and_fill_staging_buffer(image_bytes, width, height, device, instance, vulkan_application_data)?;
     let image = create_image(device, width, height)?;
     let device_memory = allocate_and_bind_image_device_memory(device, image, instance, vulkan_application_data)?;
-    transfer_image_data(device, image, width, height, staging_buffer, instance, vulkan_application_data)?;
+    transfer_image_data(device, image, width, height, staging_buffer, vulkan_application_data)?;
     let image_view = create_image_view(device, image)?;
     let sampler = create_sampler(device)?;
     unsafe {
@@ -50,7 +50,7 @@ fn create_and_fill_staging_buffer(
     instance: &Instance,
     vulkan_application_data: &mut VulkanApplicationData,
 ) -> anyhow::Result<(vk::Buffer, vk::DeviceMemory)> {
-    let staging_buffer_size_in_bytes = (image_width * image_height * 4) as u64;
+    let staging_buffer_size_in_bytes = (image_width * image_height * BYTES_PER_PIXEL) as u64;
     let staging_buffer = unsafe {
         allocate_and_fill_buffer(
             &image_bytes,
@@ -68,7 +68,7 @@ fn create_and_fill_staging_buffer(
 fn create_image(device: &Device, width: u32, height: u32) -> anyhow::Result<vk::Image> {
     let image_info = vk::ImageCreateInfo::builder()
         .image_type(vk::ImageType::_2D)
-        .format(vk::Format::R8G8B8A8_SRGB)
+        .format(TEXTURE_FORMAT)
         .extent(vk::Extent3D { width, height, depth: 1 })
         .mip_levels(1)
         .array_layers(1)
@@ -89,11 +89,7 @@ fn allocate_and_bind_image_device_memory(
 ) -> anyhow::Result<vk::DeviceMemory> {
     let mem_requirements = unsafe { device.get_image_memory_requirements(image) };
     let mem_properties = unsafe { instance.get_physical_device_memory_properties(vulkan_application_data.physical_device) };
-    let mem_type_index = find_memory_type(
-        &mem_properties,
-        mem_requirements.memory_type_bits,
-        vk::MemoryPropertyFlags::DEVICE_LOCAL,
-    )?;
+    let mem_type_index = find_memory_type(&mem_properties, mem_requirements.memory_type_bits, vk::MemoryPropertyFlags::DEVICE_LOCAL)?;
 
     let alloc_info = vk::MemoryAllocateInfo::builder()
         .allocation_size(mem_requirements.size)
@@ -110,18 +106,67 @@ fn transfer_image_data(
     image_width: u32,
     image_height: u32,
     staging_buffer: vk::Buffer,
-    _instance: &Instance,
-    vulkan_application_data: &mut VulkanApplicationData,
+    data: &mut VulkanApplicationData,
 ) -> anyhow::Result<()> {
-    let allocate_info = vk::CommandBufferAllocateInfo::builder()
+    let alloc_info = vk::CommandBufferAllocateInfo::builder()
         .command_buffer_count(1)
-        .command_pool(vulkan_application_data.command_pool)
+        .command_pool(data.command_pool)
         .level(vk::CommandBufferLevel::PRIMARY);
 
-    let command_buffer = unsafe { device.allocate_command_buffers(&allocate_info)? };
+    let cmd = unsafe { device.allocate_command_buffers(&alloc_info)? }[0];
 
     let begin_info = vk::CommandBufferBeginInfo::builder().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
-    unsafe { device.begin_command_buffer(command_buffer[0], &begin_info)? };
+    unsafe { device.begin_command_buffer(cmd, &begin_info)? };
+
+    unsafe {
+        transition_image_layout(device, cmd, image, vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
+        copy_buffer_to_image(device, cmd, staging_buffer, image, image_width, image_height);
+        transition_image_layout(
+            device,
+            cmd,
+            image,
+            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        );
+    }
+
+    unsafe { device.end_command_buffer(cmd)? }
+
+    let command_buffers = [cmd];
+    let submit_info = vk::SubmitInfo::builder()
+        .command_buffers(&command_buffers)
+        .wait_semaphores(&[])
+        .signal_semaphores(&[])
+        .wait_dst_stage_mask(&[]);
+
+    unsafe { device.queue_submit(data.graphics_queue, &[submit_info], vk::Fence::null())? }
+    unsafe { device.queue_wait_idle(data.graphics_queue)? }
+    unsafe { device.free_command_buffers(data.command_pool, &[cmd]) }
+    Ok(())
+}
+
+unsafe fn transition_image_layout(
+    device: &Device,
+    cmd: vk::CommandBuffer,
+    image: vk::Image,
+    old_layout: vk::ImageLayout,
+    new_layout: vk::ImageLayout,
+) {
+    let (src_access, dst_access, src_stage, dst_stage) = match (old_layout, new_layout) {
+        (vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL) => (
+            vk::AccessFlags::empty(),
+            vk::AccessFlags::TRANSFER_WRITE,
+            vk::PipelineStageFlags::TOP_OF_PIPE,
+            vk::PipelineStageFlags::TRANSFER,
+        ),
+        (vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL) => (
+            vk::AccessFlags::TRANSFER_WRITE,
+            vk::AccessFlags::SHADER_READ,
+            vk::PipelineStageFlags::TRANSFER,
+            vk::PipelineStageFlags::FRAGMENT_SHADER,
+        ),
+        _ => panic!("Unsupported layout transition: {:?} -> {:?}", old_layout, new_layout),
+    };
 
     let subresource_range = vk::ImageSubresourceRange::builder()
         .aspect_mask(vk::ImageAspectFlags::COLOR)
@@ -130,29 +175,29 @@ fn transfer_image_data(
         .level_count(1)
         .layer_count(1);
 
-    let barrier_to_transfer = vk::ImageMemoryBarrier::builder()
-        .src_access_mask(vk::AccessFlags::empty())
-        .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-        .old_layout(vk::ImageLayout::UNDEFINED)
-        .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+    let barrier = vk::ImageMemoryBarrier::builder()
+        .src_access_mask(src_access)
+        .dst_access_mask(dst_access)
+        .old_layout(old_layout)
+        .new_layout(new_layout)
         .image(image)
         .subresource_range(subresource_range)
         .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
         .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED);
 
-    unsafe {
-        device.cmd_pipeline_barrier(
-            command_buffer[0],
-            vk::PipelineStageFlags::TOP_OF_PIPE,
-            vk::PipelineStageFlags::TRANSFER,
-            vk::DependencyFlags::empty(),
-            &[] as &[vk::MemoryBarrier],
-            &[] as &[vk::BufferMemoryBarrier],
-            &[barrier_to_transfer],
-        );
-    }
+    device.cmd_pipeline_barrier(
+        cmd,
+        src_stage,
+        dst_stage,
+        vk::DependencyFlags::empty(),
+        &[] as &[vk::MemoryBarrier],
+        &[] as &[vk::BufferMemoryBarrier],
+        &[barrier],
+    );
+}
 
-    let image_subresource = vk::ImageSubresourceLayers::builder()
+unsafe fn copy_buffer_to_image(device: &Device, cmd: vk::CommandBuffer, buffer: vk::Buffer, image: vk::Image, width: u32, height: u32) {
+    let subresource = vk::ImageSubresourceLayers::builder()
         .aspect_mask(vk::ImageAspectFlags::COLOR)
         .mip_level(0)
         .base_array_layer(0)
@@ -162,55 +207,11 @@ fn transfer_image_data(
         .buffer_offset(0)
         .buffer_row_length(0)
         .buffer_image_height(0)
-        .image_subresource(image_subresource)
+        .image_subresource(subresource)
         .image_offset(vk::Offset3D::builder().x(0).y(0).z(0))
-        .image_extent(vk::Extent3D::builder().width(image_width).height(image_height).depth(1));
+        .image_extent(vk::Extent3D::builder().width(width).height(height).depth(1));
 
-    unsafe {
-        device.cmd_copy_buffer_to_image(
-            command_buffer[0],
-            staging_buffer,
-            image,
-            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            &[region],
-        );
-    }
-
-    let barrier_to_shader = vk::ImageMemoryBarrier::builder()
-        .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-        .dst_access_mask(vk::AccessFlags::SHADER_READ)
-        .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-        .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-        .image(image)
-        .subresource_range(subresource_range)
-        .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED);
-
-    unsafe {
-        device.cmd_pipeline_barrier(
-            command_buffer[0],
-            vk::PipelineStageFlags::TRANSFER,
-            vk::PipelineStageFlags::FRAGMENT_SHADER,
-            vk::DependencyFlags::empty(),
-            &[] as &[vk::MemoryBarrier],
-            &[] as &[vk::BufferMemoryBarrier],
-            &[barrier_to_shader],
-        );
-    }
-
-    unsafe { device.end_command_buffer(command_buffer[0])? }
-
-    let command_buffers = [command_buffer[0]];
-    let submit_info = vk::SubmitInfo::builder()
-        .command_buffers(&command_buffers)
-        .wait_semaphores(&[])
-        .signal_semaphores(&[])
-        .wait_dst_stage_mask(&[]);
-
-    unsafe { device.queue_submit(vulkan_application_data.graphics_queue, &[submit_info], vk::Fence::null())? }
-    unsafe { device.queue_wait_idle(vulkan_application_data.graphics_queue)? }
-    unsafe { device.free_command_buffers(vulkan_application_data.command_pool, &[command_buffer[0]]) }
-    Ok(())
+    device.cmd_copy_buffer_to_image(cmd, buffer, image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[region]);
 }
 
 fn create_image_view(device: &Device, image: vk::Image) -> anyhow::Result<vk::ImageView> {
@@ -225,7 +226,7 @@ fn create_image_view(device: &Device, image: vk::Image) -> anyhow::Result<vk::Im
 
     let view_info = vk::ImageViewCreateInfo::builder()
         .image(image)
-        .format(vk::Format::R8G8B8A8_SRGB)
+        .format(TEXTURE_FORMAT)
         .view_type(vk::ImageViewType::_2D)
         .components(components)
         .subresource_range(subresource_range);
