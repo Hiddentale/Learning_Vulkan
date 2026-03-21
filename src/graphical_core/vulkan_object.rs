@@ -284,19 +284,32 @@ impl VulkanApplication {
     /// This function blocks on fences, which stalls the CPU until GPU work completes.
     /// For optimal performance, we'd want triple buffering with async submission.
     pub unsafe fn render_frame(&mut self, window: &Window) -> anyhow::Result<()> {
-        // Change this with uncommented function below
-        self.device
-            .wait_for_fences(&[self.vulkan_application_data.in_flight_fences[self.frame]], true, u64::MAX)?;
+        let image_index = match self.acquire_next_image(window)? {
+            Some(index) => index,
+            None => return Ok(()), // swapchain was recreated, skip this frame
+        };
+        update_uniform_buffer(&self.vulkan_application_data)?;
+        self.submit_command_buffer(image_index)?;
+        self.present_frame(image_index, window)?;
+        self.frame = (self.frame + 1) % MAX_FRAMES_IN_FLIGHT;
+        Ok(())
+    }
 
-        let result = self.device.acquire_next_image_khr(
-            self.vulkan_application_data.swapchain,
-            u64::MAX,
-            self.vulkan_application_data.image_available_semaphores[self.frame],
-            vk::Fence::null(),
-        );
+    /// Waits for the current frame's fence, then acquires the next swapchain image.
+    /// Returns `None` if the swapchain was out of date and had to be recreated.
+    unsafe fn acquire_next_image(&mut self, window: &Window) -> anyhow::Result<Option<usize>> {
+        let data = &self.vulkan_application_data;
+        self.device.wait_for_fences(&[data.in_flight_fences[self.frame]], true, u64::MAX)?;
+
+        let result = self
+            .device
+            .acquire_next_image_khr(data.swapchain, u64::MAX, data.image_available_semaphores[self.frame], vk::Fence::null());
         let image_index = match result {
-            Ok((image_index, _)) => image_index as usize,
-            Err(vk::ErrorCode::OUT_OF_DATE_KHR) => return self.recreate_swapchain(window),
+            Ok((index, _)) => index as usize,
+            Err(vk::ErrorCode::OUT_OF_DATE_KHR) => {
+                self.recreate_swapchain(window)?;
+                return Ok(None);
+            }
             Err(e) => return Err(anyhow!(e)),
         };
 
@@ -306,45 +319,43 @@ impl VulkanApplication {
         }
         self.vulkan_application_data.images_in_flight[image_index] = self.vulkan_application_data.in_flight_fences[self.frame];
 
-        update_uniform_buffer(&self.vulkan_application_data)?;
+        Ok(Some(image_index))
+    }
 
-        let wait_semaphores = &[self.vulkan_application_data.image_available_semaphores[self.frame]];
+    unsafe fn submit_command_buffer(&self, image_index: usize) -> anyhow::Result<()> {
+        let data = &self.vulkan_application_data;
+        let wait_semaphores = &[data.image_available_semaphores[self.frame]];
         let wait_stages = &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
-        let command_buffers = &[self.vulkan_application_data.command_buffers[image_index]];
-        let signal_semaphores = &[self.vulkan_application_data.render_finished_semaphores[self.frame]];
+        let command_buffers = &[data.command_buffers[image_index]];
+        let signal_semaphores = &[data.render_finished_semaphores[self.frame]];
         let submit_info = vk::SubmitInfo::builder()
             .wait_semaphores(wait_semaphores)
             .wait_dst_stage_mask(wait_stages)
             .command_buffers(command_buffers)
             .signal_semaphores(signal_semaphores);
 
-        self.device.reset_fences(&[self.vulkan_application_data.in_flight_fences[self.frame]])?;
+        self.device.reset_fences(&[data.in_flight_fences[self.frame]])?;
+        self.device
+            .queue_submit(data.graphics_queue, &[submit_info], data.in_flight_fences[self.frame])?;
+        Ok(())
+    }
 
-        self.device.queue_submit(
-            self.vulkan_application_data.graphics_queue,
-            &[submit_info],
-            self.vulkan_application_data.in_flight_fences[self.frame],
-        )?;
-
-        let swapchains = &[self.vulkan_application_data.swapchain];
+    unsafe fn present_frame(&mut self, image_index: usize, window: &Window) -> anyhow::Result<()> {
+        let data = &self.vulkan_application_data;
+        let signal_semaphores = &[data.render_finished_semaphores[self.frame]];
+        let swapchains = &[data.swapchain];
         let image_indices = &[image_index as u32];
         let present_info = vk::PresentInfoKHR::builder()
             .wait_semaphores(signal_semaphores)
             .swapchains(swapchains)
             .image_indices(image_indices);
 
-        self.device.queue_wait_idle(self.vulkan_application_data.presentation_queue)?;
-        let result = self
-            .device
-            .queue_present_khr(self.vulkan_application_data.presentation_queue, &present_info);
+        self.device.queue_wait_idle(data.presentation_queue)?;
+        let result = self.device.queue_present_khr(data.presentation_queue, &present_info);
 
-        let changed = result == Err(vk::ErrorCode::OUT_OF_DATE_KHR);
-
-        if changed {
+        if result == Err(vk::ErrorCode::OUT_OF_DATE_KHR) {
             self.recreate_swapchain(window)?;
         }
-        self.frame = (self.frame + 1) % MAX_FRAMES_IN_FLIGHT;
-
         Ok(())
     }
 
