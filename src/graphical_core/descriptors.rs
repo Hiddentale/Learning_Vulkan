@@ -3,11 +3,7 @@ use vulkanalia::vk;
 use vulkanalia::vk::{CopyDescriptorSet, DescriptorPool, DescriptorSet, DescriptorSetLayout, DeviceV1_0, HasBuilder, ImageView, Sampler};
 use vulkanalia::Device;
 
-/// Defines the structure of descriptor sets: what resources shaders can access.
-///
-/// # Layout Structure
-/// - **Binding 0**: Combined image sampler (fragment shader)
-/// - **Binding 1**: Uniform buffer for camera matrices (vertex shader)
+/// Defines the descriptor set layout: what resources shaders can access.
 pub fn create_layout(device: &Device, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
     let sampler_binding = vk::DescriptorSetLayoutBinding::builder()
         .binding(0)
@@ -28,11 +24,7 @@ pub fn create_layout(device: &Device, data: &mut VulkanApplicationData) -> anyho
     Ok(())
 }
 
-/// Creates a pool that can allocate descriptor sets.
-///
-/// # Pool Configuration
-/// - **Max Sets**: 1
-/// - **Pool Sizes**: 1 combined image sampler + 1 uniform buffer
+/// Creates a descriptor pool sized for one set with a sampler and a uniform buffer.
 pub fn create_pool(device: &Device, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
     let sampler_pool_size = vk::DescriptorPoolSize::builder()
         .descriptor_count(1)

@@ -5,10 +5,12 @@ use vulkanalia::{vk, Device, Instance};
 
 const DEPTH_FORMAT: vk::Format = vk::Format::D32_SFLOAT;
 
+/// Returns the depth buffer format used across the pipeline.
 pub fn depth_format() -> vk::Format {
     DEPTH_FORMAT
 }
 
+/// Creates a depth image, allocates device memory, and creates its image view.
 pub unsafe fn create_depth_image(device: &Device, instance: &Instance, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
     let extent = data.swapchain_extent;
 
@@ -59,6 +61,7 @@ pub unsafe fn create_depth_image(device: &Device, instance: &Instance, data: &mu
     Ok(())
 }
 
+/// Destroys the depth image view, image, and frees its device memory.
 pub unsafe fn destroy_depth_image(device: &Device, data: &mut VulkanApplicationData) {
     device.destroy_image_view(data.depth_image_view, None);
     device.destroy_image(data.depth_image, None);

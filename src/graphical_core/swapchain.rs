@@ -4,6 +4,7 @@ use vulkanalia::vk::{DeviceV1_0, Handle, HasBuilder, KhrSurfaceExtension, KhrSwa
 use vulkanalia::{vk, Device, Instance};
 use winit::window::Window;
 
+/// Selects the best surface format, presentation mode, and extent, then creates the swapchain.
 pub unsafe fn create_swapchain(
     user_window: &Window,
     current_system: &Instance,
@@ -20,7 +21,8 @@ pub unsafe fn create_swapchain(
     vulkan_application_data.swapchain_format = surface_format.format;
     vulkan_application_data.swapchain_extent = swapchain_image_resolution;
 
-    let mut image_count = current_swapchain_capabilities.capabilities.min_image_count + 1; //We add one more image to the image count to make sure we never have to wait for an image.
+    // Avoids stalling when the driver is using the only available image.
+    let mut image_count = current_swapchain_capabilities.capabilities.min_image_count + 1;
     if current_swapchain_capabilities.capabilities.max_image_count != 0 && image_count > current_swapchain_capabilities.capabilities.max_image_count {
         image_count = current_swapchain_capabilities.capabilities.max_image_count;
     }
@@ -92,6 +94,7 @@ fn get_swapchain_extent(window: &Window, capabilities: vk::SurfaceCapabilitiesKH
             .build()
     }
 }
+/// Creates a 2D image view for each swapchain image.
 pub unsafe fn create_swapchain_image_views(device: &Device, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
     let normal_rgba_values = vk::ComponentSwizzle::IDENTITY;
 
@@ -129,6 +132,7 @@ pub struct SwapchainSupport {
     pub present_modes: Vec<vk::PresentModeKHR>,
 }
 impl SwapchainSupport {
+    /// Queries the GPU's surface capabilities, formats, and presentation modes.
     pub unsafe fn get(instance: &Instance, data: &VulkanApplicationData, physical_device: vk::PhysicalDevice) -> anyhow::Result<Self> {
         Ok(Self {
             capabilities: instance.get_physical_device_surface_capabilities_khr(physical_device, data.surface)?,

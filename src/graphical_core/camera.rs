@@ -20,6 +20,7 @@ pub struct UniformBufferObject {
     view_projection_matrix: [[f32; 4]; 4],
 }
 
+/// Allocates a persistently mapped uniform buffer for camera matrices.
 pub fn create_uniform_buffer(device: &Device, instance: &Instance, vulkan_application_data: &mut VulkanApplicationData) -> anyhow::Result<()> {
     let buffer_size_in_bytes = std::mem::size_of::<UniformBufferObject>() as u64;
     let buffer_usage_flags = vk::BufferUsageFlags::UNIFORM_BUFFER;
@@ -41,6 +42,7 @@ pub fn create_uniform_buffer(device: &Device, instance: &Instance, vulkan_applic
     Ok(())
 }
 
+/// Computes model/view/projection matrices and writes them to the mapped UBO.
 pub fn update_uniform_buffer(vulkan_application_data: &VulkanApplicationData) -> anyhow::Result<()> {
     let extent = vulkan_application_data.swapchain_extent;
     let width = extent.width as f32;
@@ -64,6 +66,7 @@ pub fn update_uniform_buffer(vulkan_application_data: &VulkanApplicationData) ->
     Ok(())
 }
 
+/// Unmaps, destroys, and frees the uniform buffer and its memory.
 pub fn destroy_uniform_buffer(device: &vulkanalia::Device, vulkan_application_data: &mut VulkanApplicationData) {
     unsafe {
         device.unmap_memory(vulkan_application_data.uniform_buffer_memory);

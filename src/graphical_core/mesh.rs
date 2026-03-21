@@ -1,6 +1,4 @@
-/// Represents a single vertex with position and texture coordinate data.
-///
-/// `#[repr(C)]` ensures the struct has a predictable memory layout matching C/Vulkan expectations.
+/// `#[repr(C)]` ensures a predictable memory layout matching Vulkan's expectations.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Vertex {

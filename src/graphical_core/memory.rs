@@ -1,17 +1,7 @@
 use anyhow;
 use vulkanalia::vk;
 
-/// Finds a memory type that satisfies both hardware requirements and desired properties.
-/// # Parameters
-/// - `memory_properties`: The GPU's available memory types and their properties
-/// - `allowed_memory_types`: Bitmask of which memory types the buffer supports
-/// - `desired_properties`: The properties we need
-///
-/// # Returns
-/// The index of the first suitable memory type found.
-///
-/// # Errors
-/// Returns an error if no memory type satisfies both requirements.
+/// Finds a memory type index that satisfies both hardware requirements and desired properties.
 pub fn find_memory_type(
     memory_properties: &vk::PhysicalDeviceMemoryProperties,
     allowed_memory_types: u32,

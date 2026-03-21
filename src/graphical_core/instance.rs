@@ -10,6 +10,7 @@ use vulkanalia::window as vk_window;
 use vulkanalia::{vk, Device, Entry, Instance};
 use winit::window::Window;
 
+/// Creates a Vulkan instance with validation layers and debug messaging if enabled.
 pub unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut VulkanApplicationData) -> anyhow::Result<Instance> {
     let application_info = vk::ApplicationInfo::builder()
         .application_name(b"Vulkan Tutorial\0")
@@ -74,6 +75,7 @@ pub unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut VulkanA
     Ok(instance)
 }
 
+/// Creates a logical device with graphics and presentation queues.
 pub unsafe fn create_logical_device(entry: &Entry, instance: &Instance, data: &mut VulkanApplicationData) -> anyhow::Result<Device> {
     let indices = graphical_core::queue_families::RequiredQueueFamilies::get(instance, data, data.physical_device)?;
     let mut unique_indices = HashSet::new();

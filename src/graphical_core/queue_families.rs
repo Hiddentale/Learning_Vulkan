@@ -11,6 +11,7 @@ pub struct RequiredQueueFamilies {
 }
 
 impl RequiredQueueFamilies {
+    /// Returns the graphics and presentation queue family indices for the given GPU.
     pub unsafe fn get(instance: &Instance, data: &VulkanApplicationData, gpu: vk::PhysicalDevice) -> anyhow::Result<Self> {
         let queue_families = instance.get_physical_device_queue_family_properties(gpu);
 

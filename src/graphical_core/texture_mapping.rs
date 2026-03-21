@@ -6,13 +6,12 @@ use vulkanalia::{Device, Instance};
 const TEXTURE_FORMAT: vk::Format = vk::Format::R8G8B8A8_SRGB;
 const BYTES_PER_PIXEL: u32 = 4;
 
-/// Resolves a texture filename to an absolute path at compile time.
 fn get_texture_path(texture_name: &str) -> String {
     let project_root = env!("CARGO_MANIFEST_DIR");
     format!("{}/textures/{}", project_root, texture_name)
 }
 
-/// Orchestrates the complete texture loading pipeline from disk to GPU.
+/// Loads a texture from disk and returns the GPU image, memory, view, and sampler.
 pub fn create_texture_image(
     device: &Device,
     instance: &Instance,
@@ -117,19 +116,7 @@ fn transfer_image_data(
 
     let begin_info = vk::CommandBufferBeginInfo::builder().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
     unsafe { device.begin_command_buffer(cmd, &begin_info)? };
-
-    unsafe {
-        transition_image_layout(device, cmd, image, vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
-        copy_buffer_to_image(device, cmd, staging_buffer, image, image_width, image_height);
-        transition_image_layout(
-            device,
-            cmd,
-            image,
-            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-        );
-    }
-
+    unsafe { record_image_transfer(device, cmd, image, image_width, image_height, staging_buffer) };
     unsafe { device.end_command_buffer(cmd)? }
 
     let command_buffers = [cmd];
@@ -143,6 +130,18 @@ fn transfer_image_data(
     unsafe { device.queue_wait_idle(data.graphics_queue)? }
     unsafe { device.free_command_buffers(data.command_pool, &[cmd]) }
     Ok(())
+}
+
+unsafe fn record_image_transfer(device: &Device, cmd: vk::CommandBuffer, image: vk::Image, width: u32, height: u32, staging_buffer: vk::Buffer) {
+    transition_image_layout(device, cmd, image, vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
+    copy_buffer_to_image(device, cmd, staging_buffer, image, width, height);
+    transition_image_layout(
+        device,
+        cmd,
+        image,
+        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+    );
 }
 
 unsafe fn transition_image_layout(
@@ -251,6 +250,7 @@ fn create_sampler(device: &Device) -> anyhow::Result<vk::Sampler> {
     Ok(unsafe { device.create_sampler(&sampler_info, None)? })
 }
 
+/// Destroys the texture sampler, image view, image, and frees its device memory.
 pub fn destroy_textures(device: &vulkanalia::Device, data: &mut VulkanApplicationData) {
     unsafe {
         device.destroy_sampler(data.texture_sampler, None);

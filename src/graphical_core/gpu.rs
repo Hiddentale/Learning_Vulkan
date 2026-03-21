@@ -11,6 +11,7 @@ use vulkanalia::Instance;
 #[error("Missing {0}.")]
 pub struct SuitabilityError(pub &'static str);
 
+/// Selects the first suitable physical device that supports required queues, extensions, and swapchain.
 pub unsafe fn choose_gpu(instance: &Instance, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
     for gpu in instance.enumerate_physical_devices()? {
         let properties = instance.get_physical_device_properties(gpu);
@@ -25,6 +26,7 @@ pub unsafe fn choose_gpu(instance: &Instance, data: &mut VulkanApplicationData) 
     Err(anyhow!("Failed to find suitable GPU."))
 }
 
+/// Validates that a GPU has the required queue families, extensions, and swapchain support.
 pub unsafe fn check_gpu(instance: &Instance, data: &VulkanApplicationData, gpu: PhysicalDevice) -> anyhow::Result<()> {
     RequiredQueueFamilies::get(instance, data, gpu)?;
     check_gpu_extensions(instance, gpu)?;
