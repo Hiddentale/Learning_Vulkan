@@ -1,9 +1,12 @@
-use vulkanalia::{Device, vk};
 use vulkanalia::bytecode::Bytecode;
 use vulkanalia::vk::{DeviceV1_0, HasBuilder};
+use vulkanalia::{vk, Device};
 
+/// Wraps raw SPIR-V bytecode in a Vulkan shader module.
 pub unsafe fn create_shader_module(device: &Device, bytecode: &[u8]) -> anyhow::Result<vk::ShaderModule> {
-    let bytecode = Bytecode::new(bytecode).unwrap();
-    let info = vk::ShaderModuleCreateInfo::builder().code_size(bytecode.code_size()).code(bytecode.code());
+    let bytecode = Bytecode::new(bytecode).map_err(|e| anyhow::anyhow!("Invalid shader bytecode: {}", e))?;
+    let info = vk::ShaderModuleCreateInfo::builder()
+        .code_size(bytecode.code_size())
+        .code(bytecode.code());
     Ok(device.create_shader_module(&info, None)?)
 }

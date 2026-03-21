@@ -1,0 +1,20 @@
+# Auto-detect text files and normalize line endings
+* text=auto
+
+# Rust sources
+*.rs text diff=rust
+*.toml text
+*.lock text -diff
+
+# Shaders
+*.vert text
+*.frag text
+*.spv binary
+
+# Images and textures
+*.png binary
+*.jpg binary
+*.bmp binary
+
+# Documentation
+*.md text diff=markdown

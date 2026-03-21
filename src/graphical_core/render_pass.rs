@@ -3,7 +3,8 @@ use crate::graphical_core::vulkan_object::VulkanApplicationData;
 use vulkanalia::vk::{DeviceV1_0, HasBuilder};
 use vulkanalia::{vk, Device, Instance};
 
-pub unsafe fn create_render_pass(instance: &Instance, device: &Device, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
+/// Creates a render pass with color and depth attachments matching the swapchain format.
+pub unsafe fn create_render_pass(_instance: &Instance, device: &Device, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
     let color_attachment = vk::AttachmentDescription::builder()
         .format(data.swapchain_format)
         .samples(vk::SampleCountFlags::_1)
@@ -41,19 +42,10 @@ pub unsafe fn create_render_pass(instance: &Instance, device: &Device, data: &mu
     let dependency = vk::SubpassDependency::builder()
         .src_subpass(vk::SUBPASS_EXTERNAL)
         .dst_subpass(0)
-        .src_stage_mask(
-            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
-                | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
-        )
+        .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS)
         .src_access_mask(vk::AccessFlags::empty())
-        .dst_stage_mask(
-            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
-                | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
-        )
-        .dst_access_mask(
-            vk::AccessFlags::COLOR_ATTACHMENT_WRITE
-                | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
-        );
+        .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS)
+        .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE);
 
     let attachments = &[color_attachment, depth_attachment];
     let subpasses = &[subpass];

@@ -1,57 +1,55 @@
-use std::collections::HashSet;
+use crate::graphical_core::{queue_families::RequiredQueueFamilies, vulkan_object::VulkanApplicationData};
+use crate::DEVICE_EXTENSIONS;
 use anyhow::anyhow;
 use log::{info, warn};
+use std::collections::HashSet;
 use thiserror::Error;
+use vulkanalia::vk::{InstanceV1_0, PhysicalDevice};
 use vulkanalia::Instance;
-use vulkanalia::vk::{InstanceV1_0, PhysicalDevice, PhysicalDeviceProperties};
-use crate::DEVICE_EXTENSIONS;
-use crate::graphical_core::{vulkan_object::VulkanApplicationData, queue_families::RequiredQueueFamilies};
 
 #[derive(Debug, Error)]
 #[error("Missing {0}.")]
 pub struct SuitabilityError(pub &'static str);
 
-pub unsafe fn choose_gpu(current_system: &Instance, vulkan_application_data: &mut VulkanApplicationData) -> anyhow::Result<()> {
-    for gpu in all_available_gpus(current_system)? {
-        let gpu_properties = get_gpu_properties(current_system, gpu);
-        if gpu_not_have_required_properties(current_system, vulkan_application_data, gpu) {
-            warn!("Skipping GPU (`{}.`)", gpu_properties.device_name);
-        } else {
-            info!("Selected GPU (`{}`).", gpu_properties.device_name);
-            vulkan_application_data.physical_device = gpu;
+/// Selects the first suitable physical device that supports required queues, extensions, and swapchain.
+pub unsafe fn choose_gpu(instance: &Instance, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
+    for gpu in instance.enumerate_physical_devices()? {
+        let properties = instance.get_physical_device_properties(gpu);
+        if is_gpu_suitable(instance, data, gpu) {
+            info!("Selected GPU (`{}`).", properties.device_name);
+            data.physical_device = gpu;
             return Ok(());
+        } else {
+            warn!("Skipping GPU (`{}.`)", properties.device_name);
         }
     }
     Err(anyhow!("Failed to find suitable GPU."))
 }
-pub unsafe fn check_gpu(current_system: &Instance, vulkan_application_data: &VulkanApplicationData, gpu: PhysicalDevice) -> anyhow::Result<()> {
-    RequiredQueueFamilies::get(current_system, vulkan_application_data, gpu)?;
-    check_gpu_extensions(current_system, gpu)?;
-    let support = crate::graphical_core::swapchain::SwapchainSupport::get(current_system, vulkan_application_data, gpu)?;
+
+/// Validates that a GPU has the required queue families, extensions, and swapchain support.
+pub unsafe fn check_gpu(instance: &Instance, data: &VulkanApplicationData, gpu: PhysicalDevice) -> anyhow::Result<()> {
+    RequiredQueueFamilies::get(instance, data, gpu)?;
+    check_gpu_extensions(instance, gpu)?;
+    let support = crate::graphical_core::swapchain::SwapchainSupport::get(instance, data, gpu)?;
     if support.formats.is_empty() || support.present_modes.is_empty() {
         return Err(anyhow!(SuitabilityError("Insufficient swapchain support.")));
     }
     Ok(())
 }
-pub unsafe fn check_gpu_extensions(instance: &Instance, physical_device: PhysicalDevice) -> anyhow::Result<()> {
-    let extensions = instance.enumerate_device_extension_properties(physical_device, None)?.iter().map(|e| e.extension_name).collect::<HashSet<_>>();
+
+unsafe fn check_gpu_extensions(instance: &Instance, gpu: PhysicalDevice) -> anyhow::Result<()> {
+    let extensions = instance
+        .enumerate_device_extension_properties(gpu, None)?
+        .iter()
+        .map(|e| e.extension_name)
+        .collect::<HashSet<_>>();
     if DEVICE_EXTENSIONS.iter().all(|e| extensions.contains(e)) {
         Ok(())
     } else {
         Err(anyhow!(SuitabilityError("Missing required GPU extensions.")))
     }
 }
-unsafe fn all_available_gpus(current_system: &Instance) -> crate::VkResult<Vec<PhysicalDevice>> {
-    current_system.enumerate_physical_devices()
-}
-unsafe fn get_gpu_properties(current_system: &Instance, gpu: PhysicalDevice) -> PhysicalDeviceProperties {
-    current_system.get_physical_device_properties(gpu)
-}
-unsafe fn gpu_not_have_required_properties(current_system: &Instance, vulkan_application_data: &VulkanApplicationData, gpu: PhysicalDevice) -> bool  {
-    if let Err(_) = check_gpu(current_system, vulkan_application_data, gpu) {
-        true
-    }
-    else {
-        false
-    }
+
+unsafe fn is_gpu_suitable(instance: &Instance, data: &VulkanApplicationData, gpu: PhysicalDevice) -> bool {
+    check_gpu(instance, data, gpu).is_ok()
 }

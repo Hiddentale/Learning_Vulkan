@@ -10,6 +10,8 @@ const FAR_PLANE: f32 = 100.0;
 const CAMERA_POSITION: Vec3 = Vec3::new(0.0, 0.0, 2.0);
 const CAMERA_TARGET: Vec3 = Vec3::ZERO;
 const UP: Vec3 = Vec3::Y;
+const MODEL_ROTATION_Y_DEGREES: f32 = 30.0;
+const MODEL_ROTATION_X_DEGREES: f32 = -20.0;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
@@ -18,16 +20,11 @@ pub struct UniformBufferObject {
     view_projection_matrix: [[f32; 4]; 4],
 }
 
-pub fn create_uniform_buffer(
-    device: &Device,
-    instance: &Instance,
-    vulkan_application_data: &mut VulkanApplicationData,
-) -> anyhow::Result<()> {
+/// Allocates a persistently mapped uniform buffer for camera matrices.
+pub fn create_uniform_buffer(device: &Device, instance: &Instance, vulkan_application_data: &mut VulkanApplicationData) -> anyhow::Result<()> {
     let buffer_size_in_bytes = std::mem::size_of::<UniformBufferObject>() as u64;
     let buffer_usage_flags = vk::BufferUsageFlags::UNIFORM_BUFFER;
-    let properties = vk::MemoryPropertyFlags::HOST_VISIBLE
-        | vk::MemoryPropertyFlags::HOST_COHERENT
-        | vk::MemoryPropertyFlags::DEVICE_LOCAL;
+    let properties = vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT | vk::MemoryPropertyFlags::DEVICE_LOCAL;
 
     let (uniform_buffer, uniform_memory, uniform_ptr) = unsafe {
         allocate_buffer::<UniformBufferObject>(
@@ -45,18 +42,18 @@ pub fn create_uniform_buffer(
     Ok(())
 }
 
+/// Computes model/view/projection matrices and writes them to the mapped UBO.
 pub fn update_uniform_buffer(vulkan_application_data: &VulkanApplicationData) -> anyhow::Result<()> {
-    let extent = vulkan_application_data.swapchain_accepted_images_width_and_height;
+    let extent = vulkan_application_data.swapchain_extent;
     let width = extent.width as f32;
     let height = extent.height as f32;
 
-    let projection = compute_projection_matrix(FOV_DEGREES, NEAR_PLANE, FAR_PLANE, width, height)?;
-    let view = compute_view_matrix(CAMERA_POSITION, CAMERA_TARGET, UP)?;
+    let projection = compute_projection_matrix(FOV_DEGREES, NEAR_PLANE, FAR_PLANE, width, height);
+    let view = compute_view_matrix(CAMERA_POSITION, CAMERA_TARGET, UP);
     let view_projection = projection * view;
 
-    let rotation = Quat::from_rotation_y(30.0_f32.to_radians())
-        * Quat::from_rotation_x(-20.0_f32.to_radians());
-    let model = compute_model_matrix(Vec3::ONE, rotation, Vec3::ZERO)?;
+    let rotation = Quat::from_rotation_y(MODEL_ROTATION_Y_DEGREES.to_radians()) * Quat::from_rotation_x(MODEL_ROTATION_X_DEGREES.to_radians());
+    let model = compute_model_matrix(Vec3::ONE, rotation, Vec3::ZERO);
 
     let ubo = UniformBufferObject {
         model_matrix: model.to_cols_array_2d(),
@@ -69,6 +66,7 @@ pub fn update_uniform_buffer(vulkan_application_data: &VulkanApplicationData) ->
     Ok(())
 }
 
+/// Unmaps, destroys, and frees the uniform buffer and its memory.
 pub fn destroy_uniform_buffer(device: &vulkanalia::Device, vulkan_application_data: &mut VulkanApplicationData) {
     unsafe {
         device.unmap_memory(vulkan_application_data.uniform_buffer_memory);
@@ -77,19 +75,16 @@ pub fn destroy_uniform_buffer(device: &vulkanalia::Device, vulkan_application_da
     }
 }
 
-fn compute_projection_matrix(fov_degrees: f32, near: f32, far: f32, width: f32, height: f32) -> anyhow::Result<Mat4> {
+fn compute_projection_matrix(fov_degrees: f32, near: f32, far: f32, width: f32, height: f32) -> Mat4 {
     let fov_radians = fov_degrees.to_radians();
     let aspect_ratio = width / height;
-    let projection_matrix = Mat4::perspective_rh(fov_radians, aspect_ratio, near, far);
-    Ok(projection_matrix)
+    Mat4::perspective_rh(fov_radians, aspect_ratio, near, far)
 }
 
-fn compute_view_matrix(camera_position: Vec3, camera_target: Vec3, up: Vec3) -> anyhow::Result<Mat4> {
-    let view_matrix = Mat4::look_at_rh(camera_position, camera_target, up);
-    Ok(view_matrix)
+fn compute_view_matrix(camera_position: Vec3, camera_target: Vec3, up: Vec3) -> Mat4 {
+    Mat4::look_at_rh(camera_position, camera_target, up)
 }
 
-fn compute_model_matrix(object_scale: Vec3, object_rotation: Quat, object_position: Vec3) -> anyhow::Result<Mat4> {
-    let model_matrix = Mat4::from_scale_rotation_translation(object_scale, object_rotation, object_position);
-    Ok(model_matrix)
+fn compute_model_matrix(object_scale: Vec3, object_rotation: Quat, object_position: Vec3) -> Mat4 {
+    Mat4::from_scale_rotation_translation(object_scale, object_rotation, object_position)
 }

@@ -1,5 +1,17 @@
 use crate::graphical_core::{
-    MAX_FRAMES_IN_FLIGHT, buffers::allocate_and_fill_buffer, camera::{UniformBufferObject, create_uniform_buffer, destroy_uniform_buffer, update_uniform_buffer}, depth::{create_depth_image, destroy_depth_image}, extra::{create_command_buffers, create_command_pool, create_frame_buffers, create_instance, create_logical_device, create_sync_objects}, gpu::choose_gpu, pipeline::create_pipeline, render_pass::create_render_pass, swapchain::{create_swapchain, create_swapchain_image_views}, texture_mapping::{allocate_descriptor_set, create_descriptor_pool, create_descriptor_set_layout, create_texture_image, destroy_textures, update_descriptor_set}
+    buffers::allocate_and_fill_buffer,
+    camera::{create_uniform_buffer, destroy_uniform_buffer, update_uniform_buffer, UniformBufferObject},
+    commands::{create_command_buffers, create_command_pool, create_frame_buffers, create_sync_objects},
+    depth::{create_depth_image, destroy_depth_image},
+    descriptors,
+    gpu::choose_gpu,
+    instance::{create_instance, create_logical_device},
+    mesh::{Vertex, CUBE_INDICES, CUBE_VERTICES},
+    pipeline::create_pipeline,
+    render_pass::create_render_pass,
+    swapchain::{create_swapchain, create_swapchain_image_views},
+    texture_mapping::{create_texture_image, destroy_textures},
+    MAX_FRAMES_IN_FLIGHT,
 };
 use crate::VALIDATION_ENABLED;
 use anyhow::anyhow;
@@ -19,7 +31,7 @@ pub struct VulkanApplicationData {
     pub graphics_queue: vk::Queue,
     pub presentation_queue: vk::Queue,
     pub swapchain_format: vk::Format,
-    pub swapchain_accepted_images_width_and_height: vk::Extent2D,
+    pub swapchain_extent: vk::Extent2D,
     pub swapchain: vk::SwapchainKHR,
     pub swapchain_images: Vec<vk::Image>,
     pub swapchain_image_views: Vec<vk::ImageView>,
@@ -29,8 +41,6 @@ pub struct VulkanApplicationData {
     pub framebuffers: Vec<vk::Framebuffer>,
     pub command_pool: vk::CommandPool,
     pub command_buffers: Vec<vk::CommandBuffer>,
-    pub image_available_semaphore: vk::Semaphore,
-    pub render_finished_semaphore: vk::Semaphore,
     pub image_available_semaphores: Vec<vk::Semaphore>,
     pub render_finished_semaphores: Vec<vk::Semaphore>,
     pub(crate) in_flight_fences: Vec<vk::Fence>,
@@ -54,62 +64,9 @@ pub struct VulkanApplicationData {
     pub depth_image_view: vk::ImageView,
 }
 
-/// Represents a single vertex with position and color data.
-///
-/// # Memory Layout
-/// `#[repr(C)]` ensures the struct has a predictable memory layout matching C/Vulkan expectations.
-/// This is critical because the GPU needs to know exactly where each field is in memory.
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Default)]
-pub struct Vertex {
-    position: [f32; 3],
-    uv_coordinate: [f32; 2],
-}
-const VERTICES: [Vertex; 24] = [
-    // Front face (z = -0.5)
-    Vertex { position: [-0.5, -0.5, -0.5], uv_coordinate: [0.0, 1.0] },
-    Vertex { position: [ 0.5, -0.5, -0.5], uv_coordinate: [1.0, 1.0] },
-    Vertex { position: [ 0.5,  0.5, -0.5], uv_coordinate: [1.0, 0.0] },
-    Vertex { position: [-0.5,  0.5, -0.5], uv_coordinate: [0.0, 0.0] },
-    // Back face (z = 0.5)
-    Vertex { position: [ 0.5, -0.5,  0.5], uv_coordinate: [0.0, 1.0] },
-    Vertex { position: [-0.5, -0.5,  0.5], uv_coordinate: [1.0, 1.0] },
-    Vertex { position: [-0.5,  0.5,  0.5], uv_coordinate: [1.0, 0.0] },
-    Vertex { position: [ 0.5,  0.5,  0.5], uv_coordinate: [0.0, 0.0] },
-    // Right face (x = 0.5)
-    Vertex { position: [ 0.5, -0.5, -0.5], uv_coordinate: [0.0, 1.0] },
-    Vertex { position: [ 0.5, -0.5,  0.5], uv_coordinate: [1.0, 1.0] },
-    Vertex { position: [ 0.5,  0.5,  0.5], uv_coordinate: [1.0, 0.0] },
-    Vertex { position: [ 0.5,  0.5, -0.5], uv_coordinate: [0.0, 0.0] },
-    // Left face (x = -0.5)
-    Vertex { position: [-0.5, -0.5,  0.5], uv_coordinate: [0.0, 1.0] },
-    Vertex { position: [-0.5, -0.5, -0.5], uv_coordinate: [1.0, 1.0] },
-    Vertex { position: [-0.5,  0.5, -0.5], uv_coordinate: [1.0, 0.0] },
-    Vertex { position: [-0.5,  0.5,  0.5], uv_coordinate: [0.0, 0.0] },
-    // Top face (y = 0.5)
-    Vertex { position: [-0.5,  0.5, -0.5], uv_coordinate: [0.0, 1.0] },
-    Vertex { position: [ 0.5,  0.5, -0.5], uv_coordinate: [1.0, 1.0] },
-    Vertex { position: [ 0.5,  0.5,  0.5], uv_coordinate: [1.0, 0.0] },
-    Vertex { position: [-0.5,  0.5,  0.5], uv_coordinate: [0.0, 0.0] },
-    // Bottom face (y = -0.5)
-    Vertex { position: [-0.5, -0.5,  0.5], uv_coordinate: [0.0, 1.0] },
-    Vertex { position: [ 0.5, -0.5,  0.5], uv_coordinate: [1.0, 1.0] },
-    Vertex { position: [ 0.5, -0.5, -0.5], uv_coordinate: [1.0, 0.0] },
-    Vertex { position: [-0.5, -0.5, -0.5], uv_coordinate: [0.0, 0.0] },
-];
-
-const INDICES: [u16; 36] = [
-     0,  1,  2,  0,  2,  3, // Front
-     4,  5,  6,  4,  6,  7, // Back
-     8,  9, 10,  8, 10, 11, // Right
-    12, 13, 14, 12, 14, 15, // Left
-    16, 17, 18, 16, 18, 19, // Top
-    20, 21, 22, 20, 22, 23, // Bottom
-];
-
 #[derive(Clone, Debug)]
 pub struct VulkanApplication {
-    vulkan_entry_point: Entry,
+    _vulkan_entry_point: Entry,
     vulkan_instance: Instance,
     vulkan_application_data: VulkanApplicationData,
     device: Device,
@@ -117,216 +74,137 @@ pub struct VulkanApplication {
     pub(crate) resized: bool,
 }
 impl VulkanApplication {
-    /// Initializes the complete Vulkan rendering pipeline and all required resources.
-    ///
-    /// # Process Overview - Initialization Phases
-    ///
-    /// **Phase 1: Core Infrastructure**
-    /// 1. Load Vulkan library and create entry point
-    /// 2. Create Vulkan instance (validation layers if debug build)
-    /// 3. Create window surface (OS-specific rendering target)
-    /// 4. Choose physical GPU
-    /// 5. Create logical device and retrieve queue handles
-    ///
-    /// **Phase 2: Presentation Setup**
-    ///
-    /// 6. Create swapchain (double/triple buffering for smooth presentation)
-    /// 7. Create image views for swapchain images
-    ///
-    /// **Phase 3: Rendering Pipeline**
-    ///
-    /// 8. Create render pass (defines rendering structure)
-    /// 9. Create descriptor set layout (shader resource interface)
-    /// 10. Create graphics pipeline (vertex processing + fragment shading)
-    ///
-    /// **Phase 4: Command Infrastructure**
-    ///
-    /// 11. Create framebuffers (attachments for rendering)
-    /// 12. Create command pool (allocator for command buffers)
-    ///
-    /// **Phase 5: Texture Resources**
-    ///
-    /// 13. Load texture from disk
-    /// 14. Create staging buffer, GPU image, transfer data
-    /// 15. Create image view and sampler
-    /// 16. Create descriptor pool
-    /// 17. Allocate and update descriptor set with texture
-    ///
-    /// **Phase 6: Geometry Buffers**
-    ///
-    /// 18. Create and fill vertex buffer (cube vertices)
-    /// 19. Create and fill index buffer (cube triangles)
-    ///
-    /// **Phase 7: Command Recording & Synchronization**
-    ///
-    /// 20. Record command buffers (rendering commands for each swapchain image)
-    /// 21. Create synchronization objects (semaphores and fences)
-    ///
-    /// # Parameters
-    /// - `user_window`: The OS window to render into
-    ///
-    /// # Returns
-    /// A fully initialized `VulkanApplication` ready to render frames
+    /// Creates a fully initialized Vulkan renderer for the given window.
     ///
     /// # Safety
-    /// This function is marked `unsafe` because it:
-    /// - Calls many unsafe Vulkan API functions
-    /// - Creates resources that must be properly cleaned up
-    /// - Initializes GPU state that could crash if misused
-    ///
-    /// # Errors
-    /// Returns an error if any initialization step fails:
-    /// - Vulkan library cannot be loaded
-    /// - No suitable GPU found
-    /// - Out of GPU memory
-    /// - Shader compilation fails
-    /// - Texture file not found
-    ///
-    /// # Note
-    /// All created resources are stored in `VulkanApplicationData` and must be
-    /// destroyed via `destroy_vulkan_application()` before the application exits.
+    /// Calls unsafe Vulkan APIs. The caller must call [`destroy_vulkan_application`]
+    /// before dropping the returned value or closing the window.
     pub unsafe fn create_vulkan_application(user_window: &Window) -> anyhow::Result<Self> {
-        let platform_specific_vulkan_api = LibloadingLoader::new(LIBRARY)?;
-        let vulkan_api_entry_point = Entry::new(platform_specific_vulkan_api).map_err(|b| anyhow!("{}", b))?;
-        let mut vulkan_application_data = VulkanApplicationData::default();
-        let instance = create_instance(user_window, &vulkan_api_entry_point, &mut vulkan_application_data)?;
-        vulkan_application_data.surface = vulkan_window::create_surface(&instance, &user_window, &user_window)?;
-
-        choose_gpu(&instance, &mut vulkan_application_data)?;
-        let device = create_logical_device(&vulkan_api_entry_point, &instance, &mut vulkan_application_data)?;
-        create_swapchain(user_window, &instance, &device, &mut vulkan_application_data)?;
-        create_swapchain_image_views(&device, &mut vulkan_application_data)?;
-        create_depth_image(&device, &instance, &mut vulkan_application_data)?;
-        create_render_pass(&instance, &device, &mut vulkan_application_data)?;
-        create_descriptor_set_layout(&device, &mut vulkan_application_data)?;
-        create_pipeline(&device, &mut vulkan_application_data)?;
-
-        create_frame_buffers(&device, &mut vulkan_application_data)?;
-        create_command_pool(&instance, &device, &mut vulkan_application_data)?;
-        create_uniform_buffer(&device, &instance, &mut vulkan_application_data)?;
-
-        let (texture_image, texture_memory, texture_image_view, texture_sampler) =
-            create_texture_image(&device, &instance, &mut vulkan_application_data)?;
-
-        create_descriptor_pool(&device, &mut vulkan_application_data)?;
-        let descriptor_sets = allocate_descriptor_set(
-            &device,
-            vulkan_application_data.descriptor_pool,
-            vulkan_application_data.descriptor_set_layout,
-        )?;
-        let descriptor_set = descriptor_sets
-            .first()
-            .copied()
-            .ok_or_else(|| anyhow::anyhow!("Failed to allocate descriptor set"))?;
-
-        update_descriptor_set(&device, descriptor_set, texture_image_view, texture_sampler, vulkan_application_data.uniform_buffer);
-
-        vulkan_application_data.texture_image = texture_image;
-        vulkan_application_data.texture_memory = texture_memory;
-        vulkan_application_data.texture_image_view = texture_image_view;
-        vulkan_application_data.texture_sampler = texture_sampler;
-        vulkan_application_data.descriptor_set = descriptor_set;
-
-        let vertex_buffer_size_in_bytes = (VERTICES.len() * size_of::<Vertex>()) as u64;
-        let (vertex_buffer, vertex_buffer_memory) = allocate_and_fill_buffer(
-            &VERTICES,
-            vertex_buffer_size_in_bytes,
-            vk::BufferUsageFlags::VERTEX_BUFFER,
-            &device,
-            &instance,
-            &mut vulkan_application_data,
-            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT
-        )?;
-
-        let index_buffer_size_in_bytes = (INDICES.len() * 2) as u64;
-        let (index_buffer, index_buffer_memory) = allocate_and_fill_buffer(
-            &INDICES,
-            index_buffer_size_in_bytes,
-            vk::BufferUsageFlags::INDEX_BUFFER,
-            &device,
-            &instance,
-            &mut vulkan_application_data,
-            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT
-        )?;
-
-        vulkan_application_data.vertex_buffer = vertex_buffer;
-        vulkan_application_data.index_buffer = index_buffer;
-        vulkan_application_data.vertex_buffer_memory = vertex_buffer_memory;
-        vulkan_application_data.index_buffer_memory = index_buffer_memory;
-
-        create_command_buffers(&device, &mut vulkan_application_data)?;
-        create_sync_objects(&device, &mut vulkan_application_data)?;
+        let (entry, instance, device, mut data) = create_core_infrastructure(user_window)?;
+        create_presentation_pipeline(user_window, &instance, &device, &mut data)?;
+        create_resources(&device, &instance, &mut data)?;
+        create_command_buffers(&device, &mut data)?;
+        create_sync_objects(&device, &mut data)?;
 
         Ok(Self {
-            vulkan_entry_point: vulkan_api_entry_point,
+            _vulkan_entry_point: entry,
             vulkan_instance: instance,
-            vulkan_application_data,
+            vulkan_application_data: data,
             device,
             frame: 0,
             resized: false,
         })
     }
+}
 
-    /// Renders a single frame to the screen using the Vulkan rendering pipeline.
-    ///
-    /// # Process Overview - Frame Rendering Cycle
-    ///
-    /// **Phase 1: Synchronization**
-    /// 1. Wait for the current frame's fence (ensure GPU isn't still using resources)
-    /// 2. Acquire next swapchain image (which backbuffer to render to)
-    /// 3. Wait if that image is still being presented
-    ///
-    /// **Phase 2: Command Submission**
-    ///
-    /// 4. Reset the fence for this frame
-    /// 5. Submit pre-recorded command buffer to graphics queue:
-    ///    - Wait for image available semaphore
-    ///    - Execute: begin render pass → bind pipeline → bind buffers → draw → end
-    ///    - Signal render finished semaphore
-    /// 6. Wait for fence to track completion
-    ///
-    /// **Phase 3: Presentation**
-    ///
-    /// 7. Present rendered image to screen:
-    ///    - Wait for render finished semaphore
-    ///    - Display image in window
-    /// 8. Handle swapchain recreation if needed (window resized or suboptimal)
-    ///
-    /// **Phase 4: Frame Pacing**
-    ///
-    /// 9. Advance frame counter (for double/triple buffering)
-    ///
-    /// # Parameters
-    /// - `window`: The window to render into (needed for swapchain recreation)
+unsafe fn create_core_infrastructure(window: &Window) -> anyhow::Result<(Entry, Instance, Device, VulkanApplicationData)> {
+    let loader = LibloadingLoader::new(LIBRARY)?;
+    let entry = Entry::new(loader).map_err(|b| anyhow!("{}", b))?;
+    let mut data = VulkanApplicationData::default();
+    let instance = create_instance(window, &entry, &mut data)?;
+    data.surface = vulkan_window::create_surface(&instance, &window, &window)?;
+    choose_gpu(&instance, &mut data)?;
+    let device = create_logical_device(&entry, &instance, &mut data)?;
+    Ok((entry, instance, device, data))
+}
+
+unsafe fn create_presentation_pipeline(
+    window: &Window,
+    instance: &Instance,
+    device: &Device,
+    data: &mut VulkanApplicationData,
+) -> anyhow::Result<()> {
+    create_swapchain(window, instance, device, data)?;
+    create_swapchain_image_views(device, data)?;
+    create_depth_image(device, instance, data)?;
+    create_render_pass(instance, device, data)?;
+    descriptors::create_layout(device, data)?;
+    create_pipeline(device, data)?;
+    create_frame_buffers(device, data)?;
+    Ok(())
+}
+
+unsafe fn create_resources(device: &Device, instance: &Instance, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
+    create_command_pool(instance, device, data)?;
+    create_uniform_buffer(device, instance, data)?;
+
+    let (texture_image, texture_memory, texture_image_view, texture_sampler) = create_texture_image(device, instance, data)?;
+
+    descriptors::create_pool(device, data)?;
+    let descriptor_sets = descriptors::allocate_set(device, data.descriptor_pool, data.descriptor_set_layout)?;
+    let descriptor_set = descriptor_sets
+        .first()
+        .copied()
+        .ok_or_else(|| anyhow!("Failed to allocate descriptor set"))?;
+    descriptors::update_set(device, descriptor_set, texture_image_view, texture_sampler, data.uniform_buffer);
+
+    data.texture_image = texture_image;
+    data.texture_memory = texture_memory;
+    data.texture_image_view = texture_image_view;
+    data.texture_sampler = texture_sampler;
+    data.descriptor_set = descriptor_set;
+
+    let vertex_buffer_size = (CUBE_VERTICES.len() * size_of::<Vertex>()) as u64;
+    let (vertex_buffer, vertex_buffer_memory) = allocate_and_fill_buffer(
+        &CUBE_VERTICES,
+        vertex_buffer_size,
+        vk::BufferUsageFlags::VERTEX_BUFFER,
+        device,
+        instance,
+        data,
+        vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+    )?;
+
+    let index_buffer_size = (CUBE_INDICES.len() * size_of::<u16>()) as u64;
+    let (index_buffer, index_buffer_memory) = allocate_and_fill_buffer(
+        &CUBE_INDICES,
+        index_buffer_size,
+        vk::BufferUsageFlags::INDEX_BUFFER,
+        device,
+        instance,
+        data,
+        vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+    )?;
+
+    data.vertex_buffer = vertex_buffer;
+    data.index_buffer = index_buffer;
+    data.vertex_buffer_memory = vertex_buffer_memory;
+    data.index_buffer_memory = index_buffer_memory;
+    Ok(())
+}
+
+impl VulkanApplication {
+    /// Acquires a swapchain image, submits the command buffer, and presents the result.
     ///
     /// # Safety
-    /// This function is marked `unsafe` because it calls many unsafe Vulkan functions
-    /// for queue operations and synchronization.
-    ///
-    /// # Errors
-    /// Returns an error if:
-    /// - Fence wait times out
-    /// - Queue submission fails
-    /// - Swapchain recreation fails
-    /// - Presentation fails (except OUT_OF_DATE, which triggers recreation)
-    ///
-    /// # Performance Note
-    /// This function blocks on fences, which stalls the CPU until GPU work completes.
-    /// For optimal performance, we'd want triple buffering with async submission.
+    /// Calls unsafe Vulkan queue and synchronization APIs.
     pub unsafe fn render_frame(&mut self, window: &Window) -> anyhow::Result<()> {
-        // Change this with uncommented function below
-        self.device
-            .wait_for_fences(&[self.vulkan_application_data.in_flight_fences[self.frame]], true, u64::MAX)?;
+        let image_index = match self.acquire_next_image(window)? {
+            Some(index) => index,
+            None => return Ok(()), // swapchain was recreated, skip this frame
+        };
+        update_uniform_buffer(&self.vulkan_application_data)?;
+        self.submit_command_buffer(image_index)?;
+        self.present_frame(image_index, window)?;
+        self.frame = (self.frame + 1) % MAX_FRAMES_IN_FLIGHT;
+        Ok(())
+    }
 
-        let result = self.device.acquire_next_image_khr(
-            self.vulkan_application_data.swapchain,
-            u64::MAX,
-            self.vulkan_application_data.image_available_semaphores[self.frame],
-            vk::Fence::null(),
-        );
+    /// Waits for the current frame's fence, then acquires the next swapchain image.
+    /// Returns `None` if the swapchain was out of date and had to be recreated.
+    unsafe fn acquire_next_image(&mut self, window: &Window) -> anyhow::Result<Option<usize>> {
+        let data = &self.vulkan_application_data;
+        self.device.wait_for_fences(&[data.in_flight_fences[self.frame]], true, u64::MAX)?;
+
+        let result = self
+            .device
+            .acquire_next_image_khr(data.swapchain, u64::MAX, data.image_available_semaphores[self.frame], vk::Fence::null());
         let image_index = match result {
-            Ok((image_index, _)) => image_index as usize,
-            Err(vk::ErrorCode::OUT_OF_DATE_KHR) => return self.recreate_swapchain(window),
+            Ok((index, _)) => index as usize,
+            Err(vk::ErrorCode::OUT_OF_DATE_KHR) => {
+                self.recreate_swapchain(window)?;
+                return Ok(None);
+            }
             Err(e) => return Err(anyhow!(e)),
         };
 
@@ -334,94 +212,55 @@ impl VulkanApplication {
             self.device
                 .wait_for_fences(&[self.vulkan_application_data.images_in_flight[image_index]], true, u64::MAX)?;
         }
-        // ---------------------------------------------------------------------------------
-        //self.synchronize_renderer();
-
         self.vulkan_application_data.images_in_flight[image_index] = self.vulkan_application_data.in_flight_fences[self.frame];
 
-        update_uniform_buffer(&self.vulkan_application_data)?;
+        Ok(Some(image_index))
+    }
 
-        let semaphore_to_wait_on_before_execution = &[self.vulkan_application_data.image_available_semaphores[self.frame]];
-        let stage_of_pipeline_to_wait_on_before_execution = &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
-        let command_buffer_to_use_at_execution = &[self.vulkan_application_data.command_buffers[image_index]];
-        let semaphores_to_signal_after_command_buffer_finished_executing = &[self.vulkan_application_data.render_finished_semaphores[self.frame]];
-        let info_to_submit_to_queue = vk::SubmitInfo::builder()
-            .wait_semaphores(semaphore_to_wait_on_before_execution)
-            .wait_dst_stage_mask(stage_of_pipeline_to_wait_on_before_execution)
-            .command_buffers(command_buffer_to_use_at_execution)
-            .signal_semaphores(semaphores_to_signal_after_command_buffer_finished_executing);
+    unsafe fn submit_command_buffer(&self, image_index: usize) -> anyhow::Result<()> {
+        let data = &self.vulkan_application_data;
+        let wait_semaphores = &[data.image_available_semaphores[self.frame]];
+        let wait_stages = &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
+        let command_buffers = &[data.command_buffers[image_index]];
+        let signal_semaphores = &[data.render_finished_semaphores[self.frame]];
+        let submit_info = vk::SubmitInfo::builder()
+            .wait_semaphores(wait_semaphores)
+            .wait_dst_stage_mask(wait_stages)
+            .command_buffers(command_buffers)
+            .signal_semaphores(signal_semaphores);
 
-        self.device.reset_fences(&[self.vulkan_application_data.in_flight_fences[self.frame]])?;
-
-        self.device.queue_submit(
-            self.vulkan_application_data.graphics_queue,
-            &[info_to_submit_to_queue],
-            self.vulkan_application_data.in_flight_fences[self.frame],
-        )?;
-
-        let swapchains_to_present_images_to = &[self.vulkan_application_data.swapchain];
-        let image_index_in_swapchain = &[image_index as u32];
-        let image_presentation_configuration = vk::PresentInfoKHR::builder()
-            .wait_semaphores(semaphores_to_signal_after_command_buffer_finished_executing)
-            .swapchains(swapchains_to_present_images_to)
-            .image_indices(image_index_in_swapchain);
-
-        self.device.queue_wait_idle(self.vulkan_application_data.presentation_queue)?;
-        let result = self
-            .device
-            .queue_present_khr(self.vulkan_application_data.presentation_queue, &image_presentation_configuration);
-
-        let changed = result == Err(vk::ErrorCode::OUT_OF_DATE_KHR);
-
-        if changed {
-            self.recreate_swapchain(window)?;
-        }
-        self.frame = (self.frame + 1) % MAX_FRAMES_IN_FLIGHT;
-
+        self.device.reset_fences(&[data.in_flight_fences[self.frame]])?;
+        self.device
+            .queue_submit(data.graphics_queue, &[submit_info], data.in_flight_fences[self.frame])?;
         Ok(())
     }
 
-    /// Recreates the swapchain and all dependent resources after window resize or invalidation.
+    unsafe fn present_frame(&mut self, image_index: usize, window: &Window) -> anyhow::Result<()> {
+        let data = &self.vulkan_application_data;
+        let signal_semaphores = &[data.render_finished_semaphores[self.frame]];
+        let swapchains = &[data.swapchain];
+        let image_indices = &[image_index as u32];
+        let present_info = vk::PresentInfoKHR::builder()
+            .wait_semaphores(signal_semaphores)
+            .swapchains(swapchains)
+            .image_indices(image_indices);
+
+        self.device.queue_wait_idle(data.presentation_queue)?;
+        let result = self.device.queue_present_khr(data.presentation_queue, &present_info);
+
+        if result == Err(vk::ErrorCode::OUT_OF_DATE_KHR) {
+            self.recreate_swapchain(window)?;
+        }
+        Ok(())
+    }
+
+    /// Destroys and rebuilds the swapchain and all dependent resources.
     ///
-    /// # Why Swapchain Recreation is Needed
-    /// The swapchain is tied to window dimensions. When the window resizes, minimizes,
-    /// or becomes suboptimal (e.g., moved to different monitor), the swapchain must be
-    /// recreated with new dimensions.
-    ///
-    /// # Process Overview
-    /// 1. Wait for all GPU work to finish (`device_wait_idle`)
-    /// 2. Destroy old swapchain and dependent resources:
-    ///    - Framebuffers
-    ///    - Command buffers
-    ///    - Graphics pipeline
-    ///    - Pipeline layout
-    ///    - Render pass
-    ///    - Swapchain image views
-    ///    - Swapchain
-    /// 3. Recreate everything with new window dimensions:
-    ///    - New swapchain matching current window size
-    ///    - New image views for new swapchain images
-    ///    - New render pass (references new format/dimensions)
-    ///    - New pipeline (references new render pass)
-    ///    - New framebuffers (references new image views)
-    ///    - New command buffers (references new framebuffers)
-    /// 4. Resize in-flight fence tracking
-    ///
-    /// # Parameters
-    /// - `user_window`: The window (queried for new dimensions)
+    /// Required when the window resizes or the swapchain becomes suboptimal,
+    /// because most pipeline resources reference swapchain dimensions or format.
     ///
     /// # Safety
-    /// This function is marked `unsafe` because it calls many unsafe Vulkan destruction
-    /// and creation functions.
-    ///
-    /// # Why Destroy So Much?
-    /// Many Vulkan resources reference each other. The pipeline references the render
-    /// pass, which references the swapchain format. Framebuffers reference image views.
-    /// Rather than track dependencies, it's simpler to destroy and recreate the entire
-    /// chain.
-    ///
-    /// # Errors
-    /// Returns an error if any recreation step fails (usually out of memory).
+    /// Calls unsafe Vulkan destruction and creation APIs.
     pub unsafe fn recreate_swapchain(&mut self, user_window: &Window) -> anyhow::Result<()> {
         self.device.device_wait_idle()?;
         self.destroy_swapchain();
@@ -440,18 +279,8 @@ impl VulkanApplication {
 
     /// Destroys the swapchain and all resources that depend on it.
     ///
-    /// # Resources Destroyed
-    /// In reverse order of creation (children before parents):
-    /// 1. Framebuffers (reference image views)
-    /// 2. Command buffers (freed back to pool)
-    /// 3. Graphics pipeline (references pipeline layout and render pass)
-    /// 4. Pipeline layout
-    /// 5. Render pass (references swapchain format)
-    /// 6. Swapchain image views (reference swapchain images)
-    /// 7. Swapchain itself
-    ///
     /// # Safety
-    /// This function is marked `unsafe` because it calls unsafe Vulkan destruction functions.
+    /// Calls unsafe Vulkan destruction APIs. The GPU must be idle before calling.
     pub unsafe fn destroy_swapchain(&mut self) {
         self.vulkan_application_data
             .framebuffers
@@ -470,49 +299,32 @@ impl VulkanApplication {
         self.device.destroy_swapchain_khr(self.vulkan_application_data.swapchain, None);
     }
 
-    /// Destroys all Vulkan resources and shuts down the rendering system.
-    ///
-    /// # Cleanup Order
-    /// Resources must be destroyed in reverse order of creation to satisfy Vulkan's
-    /// dependency requirements:
-    ///
-    /// 1. **Swapchain resources** (via `destroy_swapchain()`)
-    /// 2. **Synchronization objects**: Fences, semaphores
-    /// 3. **Command pool** (automatically frees command buffers)
-    /// 4. **Geometry buffers**: Vertex buffer, index buffer, and their memory
-    /// 5. **Texture resources**: Sampler, image view, image, memory
-    /// 6. **Descriptor resources**: Pool (auto-frees sets), layout
-    /// 7. **Logical device** (must be destroyed before instance)
-    /// 8. **Surface** (OS window integration)
-    /// 9. **Debug messenger** (if validation layers enabled)
-    /// 10. **Instance** (last - owns all handles)
+    /// Destroys all Vulkan resources. Must be called exactly once before the
+    /// window closes, because `Drop` cannot guarantee the required destruction order.
     ///
     /// # Safety
-    /// This function is marked `unsafe` because it calls many unsafe Vulkan destruction
-    /// functions and must be called exactly once before application exit.
-    ///
-    /// # Critical Requirements
-    /// - Must be called before the window closes
-    /// - Must be called before VulkanApplication is dropped
-    /// - Cannot render after calling this (all resources are gone)
-    /// - Missing any cleanup causes Vulkan validation errors and potential driver leaks
-    ///
-    /// # Why Manual Cleanup?
-    /// Rust's Drop trait doesn't work well with Vulkan because:
-    /// - Destruction order matters (Drop order isn't guaranteed)
-    /// - Many operations need &mut self (Drop only gives self)
-    /// - GPU operations may still be in flight (need explicit wait)
-    ///
-    /// Manual cleanup with `destroy_vulkan_application()` gives us full control.
+    /// Calls unsafe Vulkan destruction APIs. No rendering is possible after this call.
     pub unsafe fn destroy_vulkan_application(&mut self) {
+        self.device.device_wait_idle().unwrap();
+        self.destroy_resources();
+        self.destroy_swapchain();
+        self.destroy_sync_objects();
+        self.destroy_core_infrastructure();
+    }
+
+    unsafe fn destroy_resources(&mut self) {
         destroy_textures(&self.device, &mut self.vulkan_application_data);
         destroy_uniform_buffer(&self.device, &mut self.vulkan_application_data);
-
         self.device.destroy_descriptor_pool(self.vulkan_application_data.descriptor_pool, None);
         self.device
             .destroy_descriptor_set_layout(self.vulkan_application_data.descriptor_set_layout, None);
+        self.device.destroy_buffer(self.vulkan_application_data.vertex_buffer, None);
+        self.device.free_memory(self.vulkan_application_data.vertex_buffer_memory, None);
+        self.device.destroy_buffer(self.vulkan_application_data.index_buffer, None);
+        self.device.free_memory(self.vulkan_application_data.index_buffer_memory, None);
+    }
 
-        self.destroy_swapchain();
+    unsafe fn destroy_sync_objects(&self) {
         self.vulkan_application_data
             .in_flight_fences
             .iter()
@@ -526,10 +338,9 @@ impl VulkanApplication {
             .iter()
             .for_each(|s| self.device.destroy_semaphore(*s, None));
         self.device.destroy_command_pool(self.vulkan_application_data.command_pool, None);
-        self.device.destroy_buffer(self.vulkan_application_data.vertex_buffer, None);
-        self.device.free_memory(self.vulkan_application_data.vertex_buffer_memory, None);
-        self.device.destroy_buffer(self.vulkan_application_data.index_buffer, None);
-        self.device.free_memory(self.vulkan_application_data.index_buffer_memory, None);
+    }
+
+    unsafe fn destroy_core_infrastructure(&mut self) {
         self.device.destroy_device(None);
         self.vulkan_instance.destroy_surface_khr(self.vulkan_application_data.surface, None);
         if VALIDATION_ENABLED {
@@ -537,56 +348,5 @@ impl VulkanApplication {
                 .destroy_debug_utils_messenger_ext(self.vulkan_application_data.debug_messenger, None);
         }
         self.vulkan_instance.destroy_instance(None);
-    }
-
-    /// Presents a rendered image to the swapchain for display on screen.
-    ///
-    /// # Purpose
-    /// After the GPU finishes rendering to a swapchain image, this function tells
-    /// the presentation engine: "Display this image in the window now."
-    ///
-    /// # Parameters
-    /// - `present_info`: Configuration specifying:
-    ///   - Which swapchain to present to
-    ///   - Which image index to present
-    ///   - Which semaphores to wait on (ensures rendering finished)
-    ///
-    /// # Safety
-    /// This function is marked `unsafe` because it calls the unsafe Vulkan function
-    /// `queue_present_khr`.
-    ///
-    /// # Errors
-    /// Panics if presentation fails. This function expects the error to be handled
-    /// by the caller.
-    ///
-    /// # Note
-    /// This function is currently unused
-    unsafe fn present_image_to_swapchain(&mut self, present_info: vk::PresentInfoKHRBuilder) {
-        self.device
-            .queue_present_khr(self.vulkan_application_data.presentation_queue, &present_info)
-            .expect("Presenting the image to the swapchain resulted in an error!");
-    }
-
-    unsafe fn synchronize_renderer(&mut self, window: &Window) -> anyhow::Result<()> {
-        self.device
-            .wait_for_fences(&[self.vulkan_application_data.in_flight_fences[self.frame]], true, u64::MAX)?;
-
-        let result = self.device.acquire_next_image_khr(
-            self.vulkan_application_data.swapchain,
-            u64::MAX,
-            self.vulkan_application_data.image_available_semaphores[self.frame],
-            vk::Fence::null(),
-        );
-        let image_index = match result {
-            Ok((image_index, _)) => image_index as usize,
-            Err(vk::ErrorCode::OUT_OF_DATE_KHR) => return self.recreate_swapchain(window),
-            Err(e) => return Err(anyhow!(e)),
-        };
-
-        if !self.vulkan_application_data.images_in_flight[image_index].is_null() {
-            self.device
-                .wait_for_fences(&[self.vulkan_application_data.images_in_flight[image_index]], true, u64::MAX)?;
-        }
-        Ok(())
     }
 }
