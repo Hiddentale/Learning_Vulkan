@@ -193,7 +193,6 @@ fn build_demo_scene() -> Vec<SceneObject> {
                 position: Vec3::new(0.0, 2.0, -1.0),
                 rotation: Quat::from_rotation_y(-45.0_f32.to_radians()) * Quat::from_rotation_x(20.0_f32.to_radians()),
                 scale: Vec3::splat(1.5),
-                ..Default::default()
             },
             mesh_index: CUBE_MESH,
         },
@@ -203,7 +202,6 @@ fn build_demo_scene() -> Vec<SceneObject> {
                 position: Vec3::new(1.5, -0.5, 1.5),
                 rotation: Quat::from_rotation_y(90.0_f32.to_radians()),
                 scale: Vec3::splat(0.75),
-                ..Default::default()
             },
             mesh_index: PYRAMID_MESH,
         },

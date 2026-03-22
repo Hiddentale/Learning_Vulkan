@@ -31,7 +31,7 @@ pub unsafe fn create_mesh(
 ) -> anyhow::Result<Mesh> {
     let host_visible = vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT;
 
-    let vertex_size = (vertices.len() * std::mem::size_of::<Vertex>()) as u64;
+    let vertex_size = std::mem::size_of_val(vertices) as u64;
     let (vertex_buffer, vertex_buffer_memory) = allocate_and_fill_buffer(
         vertices,
         vertex_size,
@@ -42,7 +42,7 @@ pub unsafe fn create_mesh(
         host_visible,
     )?;
 
-    let index_size = (indices.len() * std::mem::size_of::<u32>()) as u64;
+    let index_size = std::mem::size_of_val(indices) as u64;
     let (index_buffer, index_buffer_memory) = allocate_and_fill_buffer(
         indices,
         index_size,
