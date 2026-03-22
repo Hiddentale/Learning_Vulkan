@@ -155,7 +155,7 @@ unsafe fn create_resources(device: &Device, instance: &Instance, data: &mut Vulk
         vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
     )?;
 
-    let index_buffer_size = (CUBE_INDICES.len() * size_of::<u16>()) as u64;
+    let index_buffer_size = (CUBE_INDICES.len() * size_of::<u32>()) as u64;
     let (index_buffer, index_buffer_memory) = allocate_and_fill_buffer(
         &CUBE_INDICES,
         index_buffer_size,

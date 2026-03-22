@@ -84,7 +84,7 @@ unsafe fn record_draw_commands(device: &Device, cmd: vk::CommandBuffer, data: &V
     device.cmd_begin_render_pass(cmd, &info, vk::SubpassContents::INLINE);
     device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, data.pipeline);
     device.cmd_bind_vertex_buffers(cmd, 0, &[data.vertex_buffer], &[0]);
-    device.cmd_bind_index_buffer(cmd, data.index_buffer, 0, vk::IndexType::UINT16);
+    device.cmd_bind_index_buffer(cmd, data.index_buffer, 0, vk::IndexType::UINT32);
     device.cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::GRAPHICS, data.pipeline_layout, 0, &[data.descriptor_set], &[]);
 
     let model_matrix = Mat4::IDENTITY;
