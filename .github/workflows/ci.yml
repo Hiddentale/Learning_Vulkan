@@ -24,7 +24,7 @@ jobs:
           PATTERN="^(${VALID_TYPES})(\(.+\))?\!?: .+"
           ERRORS=0
 
-          for COMMIT in $(git log origin/${{ github.base_ref }}..HEAD --format='%H'); do
+          for COMMIT in $(git log --no-merges origin/${{ github.base_ref }}..HEAD --format='%H'); do
             MSG=$(git log --format='%s' -n 1 "$COMMIT")
             if ! echo "$MSG" | grep -qE "$PATTERN"; then
               echo "::error::Bad commit message: '$MSG'"
