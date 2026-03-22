@@ -52,12 +52,7 @@ pub unsafe fn allocate_command_buffers(device: &Device, data: &mut VulkanApplica
 ///
 /// Called once per frame. The command buffer must have been allocated and
 /// must not be in use by the GPU (caller ensures this via fence waits).
-pub unsafe fn record_command_buffer(
-    device: &Device,
-    data: &VulkanApplicationData,
-    image_index: usize,
-    scene: &[SceneObject],
-) -> anyhow::Result<()> {
+pub unsafe fn record_command_buffer(device: &Device, data: &VulkanApplicationData, image_index: usize, scene: &[SceneObject]) -> anyhow::Result<()> {
     let cmd = data.command_buffers[image_index];
     device.reset_command_buffer(cmd, vk::CommandBufferResetFlags::empty())?;
 

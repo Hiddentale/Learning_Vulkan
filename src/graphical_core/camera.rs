@@ -111,4 +111,3 @@ fn compute_projection_matrix(fov_degrees: f32, near: f32, far: f32, width: f32, 
     let aspect_ratio = width / height;
     Mat4::perspective_rh(fov_radians, aspect_ratio, near, far)
 }
-

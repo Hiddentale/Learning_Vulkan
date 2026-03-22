@@ -32,12 +32,26 @@ pub unsafe fn create_mesh(
     let host_visible = vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT;
 
     let vertex_size = (vertices.len() * std::mem::size_of::<Vertex>()) as u64;
-    let (vertex_buffer, vertex_buffer_memory) =
-        allocate_and_fill_buffer(vertices, vertex_size, vk::BufferUsageFlags::VERTEX_BUFFER, device, instance, data, host_visible)?;
+    let (vertex_buffer, vertex_buffer_memory) = allocate_and_fill_buffer(
+        vertices,
+        vertex_size,
+        vk::BufferUsageFlags::VERTEX_BUFFER,
+        device,
+        instance,
+        data,
+        host_visible,
+    )?;
 
     let index_size = (indices.len() * std::mem::size_of::<u32>()) as u64;
-    let (index_buffer, index_buffer_memory) =
-        allocate_and_fill_buffer(indices, index_size, vk::BufferUsageFlags::INDEX_BUFFER, device, instance, data, host_visible)?;
+    let (index_buffer, index_buffer_memory) = allocate_and_fill_buffer(
+        indices,
+        index_size,
+        vk::BufferUsageFlags::INDEX_BUFFER,
+        device,
+        instance,
+        data,
+        host_visible,
+    )?;
 
     Ok(Mesh {
         vertex_buffer,
