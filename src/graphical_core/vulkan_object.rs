@@ -6,6 +6,7 @@ use crate::graphical_core::{
     gpu::choose_gpu,
     instance::{create_instance, create_logical_device},
     mesh::{create_cube, destroy_mesh, Mesh},
+    model_loading::load_obj,
     pipeline::create_pipeline,
     render_pass::create_render_pass,
     scene::{SceneObject, Transform},
@@ -147,36 +148,46 @@ unsafe fn create_resources(device: &Device, instance: &Instance, data: &mut Vulk
 
     let cube = create_cube(device, instance, data)?;
     data.meshes.push(cube);
+
+    let pyramid = load_obj("assets/models/pyramid.obj", device, instance, data)?;
+    data.meshes.push(pyramid);
+
     Ok(())
 }
 
+const CUBE_MESH: usize = 0;
+const PYRAMID_MESH: usize = 1;
+
 fn build_demo_scene() -> Vec<SceneObject> {
     vec![
+        // Center cube, slightly rotated
         SceneObject {
             transform: Transform {
                 position: Vec3::new(0.0, 0.0, 0.0),
                 rotation: Quat::from_rotation_y(30.0_f32.to_radians()),
                 ..Default::default()
             },
-            mesh_index: 0,
+            mesh_index: CUBE_MESH,
         },
+        // Right cube, tilted
         SceneObject {
             transform: Transform {
                 position: Vec3::new(2.5, 0.0, 0.0),
                 rotation: Quat::from_rotation_x(45.0_f32.to_radians()),
                 ..Default::default()
             },
-            mesh_index: 0,
+            mesh_index: CUBE_MESH,
         },
+        // Left pyramid
         SceneObject {
             transform: Transform {
                 position: Vec3::new(-2.5, 0.0, 0.0),
-                rotation: Quat::from_rotation_z(60.0_f32.to_radians()),
-                scale: Vec3::splat(0.75),
+                scale: Vec3::splat(1.5),
                 ..Default::default()
             },
-            mesh_index: 0,
+            mesh_index: PYRAMID_MESH,
         },
+        // Large cube above
         SceneObject {
             transform: Transform {
                 position: Vec3::new(0.0, 2.0, -1.0),
@@ -184,7 +195,17 @@ fn build_demo_scene() -> Vec<SceneObject> {
                 scale: Vec3::splat(1.5),
                 ..Default::default()
             },
-            mesh_index: 0,
+            mesh_index: CUBE_MESH,
+        },
+        // Small pyramid on the right
+        SceneObject {
+            transform: Transform {
+                position: Vec3::new(1.5, -0.5, 1.5),
+                rotation: Quat::from_rotation_y(90.0_f32.to_radians()),
+                scale: Vec3::splat(0.75),
+                ..Default::default()
+            },
+            mesh_index: PYRAMID_MESH,
         },
     ]
 }
