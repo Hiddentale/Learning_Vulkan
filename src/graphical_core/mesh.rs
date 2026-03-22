@@ -12,6 +12,7 @@ pub struct Vertex {
 }
 
 /// A GPU-uploaded mesh: vertex and index buffers with their backing memory.
+#[derive(Clone, Debug, Default)]
 pub struct Mesh {
     pub vertex_buffer: vk::Buffer,
     pub vertex_buffer_memory: vk::DeviceMemory,

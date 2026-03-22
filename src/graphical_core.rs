@@ -11,6 +11,7 @@ pub mod mesh;
 pub mod pipeline;
 pub mod queue_families;
 pub mod render_pass;
+pub mod scene;
 mod shaders;
 pub mod swapchain;
 pub mod texture_mapping;
