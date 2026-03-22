@@ -1,20 +1,22 @@
 use crate::graphical_core::{
-    buffers::allocate_and_fill_buffer,
     camera::{create_uniform_buffer, destroy_uniform_buffer, update_uniform_buffer, Camera, UniformBufferObject},
-    commands::{create_command_buffers, create_command_pool, create_frame_buffers, create_sync_objects},
+    commands::{allocate_command_buffers, create_command_pool, create_frame_buffers, create_sync_objects, record_command_buffer},
     depth::{create_depth_image, destroy_depth_image},
     descriptors,
     gpu::choose_gpu,
     instance::{create_instance, create_logical_device},
-    mesh::{Vertex, CUBE_INDICES, CUBE_VERTICES},
+    mesh::{create_cube, destroy_mesh, Mesh},
+    model_loading::load_obj,
     pipeline::create_pipeline,
     render_pass::create_render_pass,
+    scene::{SceneObject, Transform},
     swapchain::{create_swapchain, create_swapchain_image_views},
     texture_mapping::{create_texture_image, destroy_textures},
     MAX_FRAMES_IN_FLIGHT,
 };
 use crate::VALIDATION_ENABLED;
 use anyhow::anyhow;
+use glam::{Quat, Vec3};
 use vulkanalia::{
     loader::{LibloadingLoader, LIBRARY},
     prelude::v1_0::*,
@@ -45,10 +47,7 @@ pub struct VulkanApplicationData {
     pub render_finished_semaphores: Vec<vk::Semaphore>,
     pub(crate) in_flight_fences: Vec<vk::Fence>,
     pub(crate) images_in_flight: Vec<vk::Fence>,
-    pub vertex_buffer: vk::Buffer,
-    pub vertex_buffer_memory: vk::DeviceMemory,
-    pub index_buffer: vk::Buffer,
-    pub index_buffer_memory: vk::DeviceMemory,
+    pub meshes: Vec<Mesh>,
     pub descriptor_set_layout: vk::DescriptorSetLayout,
     pub descriptor_pool: vk::DescriptorPool,
     pub texture_image: vk::Image,
@@ -64,7 +63,6 @@ pub struct VulkanApplicationData {
     pub depth_image_view: vk::ImageView,
 }
 
-#[derive(Clone, Debug)]
 pub struct VulkanApplication {
     _vulkan_entry_point: Entry,
     vulkan_instance: Instance,
@@ -72,6 +70,7 @@ pub struct VulkanApplication {
     device: Device,
     frame: usize,
     pub(crate) resized: bool,
+    scene: Vec<SceneObject>,
 }
 impl VulkanApplication {
     /// Creates a fully initialized Vulkan renderer for the given window.
@@ -83,8 +82,10 @@ impl VulkanApplication {
         let (entry, instance, device, mut data) = create_core_infrastructure(user_window)?;
         create_presentation_pipeline(user_window, &instance, &device, &mut data)?;
         create_resources(&device, &instance, &mut data)?;
-        create_command_buffers(&device, &mut data)?;
+        allocate_command_buffers(&device, &mut data)?;
         create_sync_objects(&device, &mut data)?;
+
+        let scene = build_demo_scene();
 
         Ok(Self {
             _vulkan_entry_point: entry,
@@ -93,6 +94,7 @@ impl VulkanApplication {
             device,
             frame: 0,
             resized: false,
+            scene,
         })
     }
 }
@@ -144,33 +146,66 @@ unsafe fn create_resources(device: &Device, instance: &Instance, data: &mut Vulk
     data.texture_sampler = texture_sampler;
     data.descriptor_set = descriptor_set;
 
-    let vertex_buffer_size = (CUBE_VERTICES.len() * size_of::<Vertex>()) as u64;
-    let (vertex_buffer, vertex_buffer_memory) = allocate_and_fill_buffer(
-        &CUBE_VERTICES,
-        vertex_buffer_size,
-        vk::BufferUsageFlags::VERTEX_BUFFER,
-        device,
-        instance,
-        data,
-        vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-    )?;
+    let cube = create_cube(device, instance, data)?;
+    data.meshes.push(cube);
 
-    let index_buffer_size = (CUBE_INDICES.len() * size_of::<u16>()) as u64;
-    let (index_buffer, index_buffer_memory) = allocate_and_fill_buffer(
-        &CUBE_INDICES,
-        index_buffer_size,
-        vk::BufferUsageFlags::INDEX_BUFFER,
-        device,
-        instance,
-        data,
-        vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-    )?;
+    let pyramid = load_obj("assets/models/pyramid.obj", device, instance, data)?;
+    data.meshes.push(pyramid);
 
-    data.vertex_buffer = vertex_buffer;
-    data.index_buffer = index_buffer;
-    data.vertex_buffer_memory = vertex_buffer_memory;
-    data.index_buffer_memory = index_buffer_memory;
     Ok(())
+}
+
+const CUBE_MESH: usize = 0;
+const PYRAMID_MESH: usize = 1;
+
+fn build_demo_scene() -> Vec<SceneObject> {
+    vec![
+        // Center cube, slightly rotated
+        SceneObject {
+            transform: Transform {
+                position: Vec3::new(0.0, 0.0, 0.0),
+                rotation: Quat::from_rotation_y(30.0_f32.to_radians()),
+                ..Default::default()
+            },
+            mesh_index: CUBE_MESH,
+        },
+        // Right cube, tilted
+        SceneObject {
+            transform: Transform {
+                position: Vec3::new(2.5, 0.0, 0.0),
+                rotation: Quat::from_rotation_x(45.0_f32.to_radians()),
+                ..Default::default()
+            },
+            mesh_index: CUBE_MESH,
+        },
+        // Left pyramid
+        SceneObject {
+            transform: Transform {
+                position: Vec3::new(-2.5, 0.0, 0.0),
+                scale: Vec3::splat(1.5),
+                ..Default::default()
+            },
+            mesh_index: PYRAMID_MESH,
+        },
+        // Large cube above
+        SceneObject {
+            transform: Transform {
+                position: Vec3::new(0.0, 2.0, -1.0),
+                rotation: Quat::from_rotation_y(-45.0_f32.to_radians()) * Quat::from_rotation_x(20.0_f32.to_radians()),
+                scale: Vec3::splat(1.5),
+            },
+            mesh_index: CUBE_MESH,
+        },
+        // Small pyramid on the right
+        SceneObject {
+            transform: Transform {
+                position: Vec3::new(1.5, -0.5, 1.5),
+                rotation: Quat::from_rotation_y(90.0_f32.to_radians()),
+                scale: Vec3::splat(0.75),
+            },
+            mesh_index: PYRAMID_MESH,
+        },
+    ]
 }
 
 impl VulkanApplication {
@@ -184,6 +219,7 @@ impl VulkanApplication {
             None => return Ok(()), // swapchain was recreated, skip this frame
         };
         update_uniform_buffer(&self.vulkan_application_data, camera)?;
+        record_command_buffer(&self.device, &self.vulkan_application_data, image_index, &self.scene)?;
         self.submit_command_buffer(image_index)?;
         self.present_frame(image_index, window)?;
         self.frame = (self.frame + 1) % MAX_FRAMES_IN_FLIGHT;
@@ -270,7 +306,7 @@ impl VulkanApplication {
         create_render_pass(&self.vulkan_instance, &self.device, &mut self.vulkan_application_data)?;
         create_pipeline(&self.device, &mut self.vulkan_application_data)?;
         create_frame_buffers(&self.device, &mut self.vulkan_application_data)?;
-        create_command_buffers(&self.device, &mut self.vulkan_application_data)?;
+        allocate_command_buffers(&self.device, &mut self.vulkan_application_data)?;
         self.vulkan_application_data
             .images_in_flight
             .resize(self.vulkan_application_data.swapchain_images.len(), vk::Fence::null());
@@ -318,10 +354,9 @@ impl VulkanApplication {
         self.device.destroy_descriptor_pool(self.vulkan_application_data.descriptor_pool, None);
         self.device
             .destroy_descriptor_set_layout(self.vulkan_application_data.descriptor_set_layout, None);
-        self.device.destroy_buffer(self.vulkan_application_data.vertex_buffer, None);
-        self.device.free_memory(self.vulkan_application_data.vertex_buffer_memory, None);
-        self.device.destroy_buffer(self.vulkan_application_data.index_buffer, None);
-        self.device.free_memory(self.vulkan_application_data.index_buffer_memory, None);
+        for mesh in &self.vulkan_application_data.meshes {
+            destroy_mesh(&self.device, mesh);
+        }
     }
 
     unsafe fn destroy_sync_objects(&self) {

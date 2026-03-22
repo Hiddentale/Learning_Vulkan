@@ -1,4 +1,4 @@
-use crate::graphical_core::mesh::CUBE_INDICES;
+use crate::graphical_core::scene::SceneObject;
 use crate::graphical_core::{vulkan_object::VulkanApplicationData, MAX_FRAMES_IN_FLIGHT};
 use vulkanalia::vk::{DeviceV1_0, Handle, HasBuilder};
 use vulkanalia::{vk, Device, Instance};
@@ -30,32 +30,46 @@ pub unsafe fn create_frame_buffers(device: &Device, data: &mut VulkanApplication
 pub unsafe fn create_command_pool(instance: &Instance, device: &Device, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
     let indices = graphical_core::queue_families::RequiredQueueFamilies::get(instance, data, data.physical_device)?;
     let info = vk::CommandPoolCreateInfo::builder()
-        .flags(vk::CommandPoolCreateFlags::empty())
+        .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
         .queue_family_index(indices.graphics_queue_index);
 
     data.command_pool = device.create_command_pool(&info, None)?;
     Ok(())
 }
 
-/// Allocates one command buffer per framebuffer and records draw commands into each.
-pub unsafe fn create_command_buffers(device: &Device, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
+/// Allocates one command buffer per framebuffer without recording.
+pub unsafe fn allocate_command_buffers(device: &Device, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
     let allocate_info = vk::CommandBufferAllocateInfo::builder()
         .command_pool(data.command_pool)
         .level(vk::CommandBufferLevel::PRIMARY)
         .command_buffer_count(data.framebuffers.len() as u32);
 
     data.command_buffers = device.allocate_command_buffers(&allocate_info)?;
-
-    for (i, command_buffer) in data.command_buffers.iter().enumerate() {
-        let info = vk::CommandBufferBeginInfo::builder();
-        device.begin_command_buffer(*command_buffer, &info)?;
-        record_draw_commands(device, *command_buffer, data, i);
-        device.end_command_buffer(*command_buffer)?;
-    }
     Ok(())
 }
 
-unsafe fn record_draw_commands(device: &Device, cmd: vk::CommandBuffer, data: &VulkanApplicationData, framebuffer_index: usize) {
+/// Records draw commands into a single command buffer for the given framebuffer index.
+///
+/// Called once per frame. The command buffer must have been allocated and
+/// must not be in use by the GPU (caller ensures this via fence waits).
+pub unsafe fn record_command_buffer(device: &Device, data: &VulkanApplicationData, image_index: usize, scene: &[SceneObject]) -> anyhow::Result<()> {
+    let cmd = data.command_buffers[image_index];
+    device.reset_command_buffer(cmd, vk::CommandBufferResetFlags::empty())?;
+
+    let begin_info = vk::CommandBufferBeginInfo::builder();
+    device.begin_command_buffer(cmd, &begin_info)?;
+    record_draw_commands(device, cmd, data, image_index, scene);
+    device.end_command_buffer(cmd)?;
+    Ok(())
+}
+
+unsafe fn record_draw_commands(
+    device: &Device,
+    cmd: vk::CommandBuffer,
+    data: &VulkanApplicationData,
+    framebuffer_index: usize,
+    scene: &[SceneObject],
+) {
     let render_area = vk::Rect2D::builder().offset(vk::Offset2D::default()).extent(data.swapchain_extent);
     let color_clear_value = vk::ClearValue {
         color: vk::ClearColorValue {
@@ -74,10 +88,21 @@ unsafe fn record_draw_commands(device: &Device, cmd: vk::CommandBuffer, data: &V
 
     device.cmd_begin_render_pass(cmd, &info, vk::SubpassContents::INLINE);
     device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, data.pipeline);
-    device.cmd_bind_vertex_buffers(cmd, 0, &[data.vertex_buffer], &[0]);
-    device.cmd_bind_index_buffer(cmd, data.index_buffer, 0, vk::IndexType::UINT16);
     device.cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::GRAPHICS, data.pipeline_layout, 0, &[data.descriptor_set], &[]);
-    device.cmd_draw_indexed(cmd, CUBE_INDICES.len() as u32, 1, 0, 0, 0);
+
+    for object in scene {
+        let mesh = &data.meshes[object.mesh_index];
+
+        device.cmd_bind_vertex_buffers(cmd, 0, &[mesh.vertex_buffer], &[0]);
+        device.cmd_bind_index_buffer(cmd, mesh.index_buffer, 0, vk::IndexType::UINT32);
+
+        let model_bytes = object.transform.model_matrix().to_cols_array();
+        let byte_slice = std::slice::from_raw_parts(model_bytes.as_ptr() as *const u8, 64);
+        device.cmd_push_constants(cmd, data.pipeline_layout, vk::ShaderStageFlags::VERTEX, 0, byte_slice);
+
+        device.cmd_draw_indexed(cmd, mesh.index_count, 1, 0, 0, 0);
+    }
+
     device.cmd_end_render_pass(cmd);
 }
 
