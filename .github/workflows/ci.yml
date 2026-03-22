@@ -9,6 +9,37 @@ env:
   CARGO_INCREMENTAL: 0
 
 jobs:
+  commit-lint:
+    name: Commit Message Lint
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Validate commit messages
+        run: |
+          VALID_TYPES="feat|fix|refactor|docs|chore|test|style|perf|ci|build|revert"
+          PATTERN="^(${VALID_TYPES})(\(.+\))?\!?: .+"
+          ERRORS=0
+
+          for COMMIT in $(git log origin/${{ github.base_ref }}..HEAD --format='%H'); do
+            MSG=$(git log --format='%s' -n 1 "$COMMIT")
+            if ! echo "$MSG" | grep -qE "$PATTERN"; then
+              echo "::error::Bad commit message: '$MSG'"
+              echo "  Expected format: type(scope): description"
+              echo "  Valid types: feat, fix, refactor, docs, chore, test, style, perf, ci, build, revert"
+              ERRORS=$((ERRORS + 1))
+            fi
+          done
+
+          if [ "$ERRORS" -gt 0 ]; then
+            echo ""
+            echo "::error::$ERRORS commit(s) do not follow Conventional Commits format."
+            exit 1
+          fi
+
   fmt:
     name: Format Check
     runs-on: ubuntu-latest
