@@ -31,28 +31,36 @@ pub unsafe fn create_frame_buffers(device: &Device, data: &mut VulkanApplication
 pub unsafe fn create_command_pool(instance: &Instance, device: &Device, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
     let indices = graphical_core::queue_families::RequiredQueueFamilies::get(instance, data, data.physical_device)?;
     let info = vk::CommandPoolCreateInfo::builder()
-        .flags(vk::CommandPoolCreateFlags::empty())
+        .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
         .queue_family_index(indices.graphics_queue_index);
 
     data.command_pool = device.create_command_pool(&info, None)?;
     Ok(())
 }
 
-/// Allocates one command buffer per framebuffer and records draw commands into each.
-pub unsafe fn create_command_buffers(device: &Device, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
+/// Allocates one command buffer per framebuffer without recording.
+pub unsafe fn allocate_command_buffers(device: &Device, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
     let allocate_info = vk::CommandBufferAllocateInfo::builder()
         .command_pool(data.command_pool)
         .level(vk::CommandBufferLevel::PRIMARY)
         .command_buffer_count(data.framebuffers.len() as u32);
 
     data.command_buffers = device.allocate_command_buffers(&allocate_info)?;
+    Ok(())
+}
 
-    for (i, command_buffer) in data.command_buffers.iter().enumerate() {
-        let info = vk::CommandBufferBeginInfo::builder();
-        device.begin_command_buffer(*command_buffer, &info)?;
-        record_draw_commands(device, *command_buffer, data, i);
-        device.end_command_buffer(*command_buffer)?;
-    }
+/// Records draw commands into a single command buffer for the given framebuffer index.
+///
+/// Called once per frame. The command buffer must have been allocated and
+/// must not be in use by the GPU (caller ensures this via fence waits).
+pub unsafe fn record_command_buffer(device: &Device, data: &VulkanApplicationData, image_index: usize) -> anyhow::Result<()> {
+    let cmd = data.command_buffers[image_index];
+    device.reset_command_buffer(cmd, vk::CommandBufferResetFlags::empty())?;
+
+    let begin_info = vk::CommandBufferBeginInfo::builder();
+    device.begin_command_buffer(cmd, &begin_info)?;
+    record_draw_commands(device, cmd, data, image_index);
+    device.end_command_buffer(cmd)?;
     Ok(())
 }
 

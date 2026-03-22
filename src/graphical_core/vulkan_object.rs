@@ -1,7 +1,7 @@
 use crate::graphical_core::{
     buffers::allocate_and_fill_buffer,
     camera::{create_uniform_buffer, destroy_uniform_buffer, update_uniform_buffer, Camera, UniformBufferObject},
-    commands::{create_command_buffers, create_command_pool, create_frame_buffers, create_sync_objects},
+    commands::{allocate_command_buffers, create_command_pool, create_frame_buffers, create_sync_objects, record_command_buffer},
     depth::{create_depth_image, destroy_depth_image},
     descriptors,
     gpu::choose_gpu,
@@ -83,7 +83,7 @@ impl VulkanApplication {
         let (entry, instance, device, mut data) = create_core_infrastructure(user_window)?;
         create_presentation_pipeline(user_window, &instance, &device, &mut data)?;
         create_resources(&device, &instance, &mut data)?;
-        create_command_buffers(&device, &mut data)?;
+        allocate_command_buffers(&device, &mut data)?;
         create_sync_objects(&device, &mut data)?;
 
         Ok(Self {
@@ -184,6 +184,7 @@ impl VulkanApplication {
             None => return Ok(()), // swapchain was recreated, skip this frame
         };
         update_uniform_buffer(&self.vulkan_application_data, camera)?;
+        record_command_buffer(&self.device, &self.vulkan_application_data, image_index)?;
         self.submit_command_buffer(image_index)?;
         self.present_frame(image_index, window)?;
         self.frame = (self.frame + 1) % MAX_FRAMES_IN_FLIGHT;
@@ -270,7 +271,7 @@ impl VulkanApplication {
         create_render_pass(&self.vulkan_instance, &self.device, &mut self.vulkan_application_data)?;
         create_pipeline(&self.device, &mut self.vulkan_application_data)?;
         create_frame_buffers(&self.device, &mut self.vulkan_application_data)?;
-        create_command_buffers(&self.device, &mut self.vulkan_application_data)?;
+        allocate_command_buffers(&self.device, &mut self.vulkan_application_data)?;
         self.vulkan_application_data
             .images_in_flight
             .resize(self.vulkan_application_data.swapchain_images.len(), vk::Fence::null());
