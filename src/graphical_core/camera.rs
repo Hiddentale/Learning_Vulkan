@@ -1,6 +1,6 @@
 use crate::graphical_core::buffers::allocate_buffer;
 use crate::graphical_core::vulkan_object::VulkanApplicationData;
-use glam::{Mat4, Quat, Vec3};
+use glam::{Mat4, Vec3};
 use vulkanalia::vk::{self, DeviceV1_0};
 use vulkanalia::{Device, Instance};
 
@@ -8,8 +8,6 @@ const FOV_DEGREES: f32 = 90.0;
 const NEAR_PLANE: f32 = 0.1;
 const FAR_PLANE: f32 = 100.0;
 const WORLD_UP: Vec3 = Vec3::Y;
-const MODEL_ROTATION_Y_DEGREES: f32 = 30.0;
-const MODEL_ROTATION_X_DEGREES: f32 = -20.0;
 const MAX_PITCH: f32 = 89.0_f32 * (std::f32::consts::PI / 180.0);
 
 const DEFAULT_POSITION: Vec3 = Vec3::new(0.0, 0.0, 2.0);
@@ -54,7 +52,6 @@ impl Default for Camera {
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct UniformBufferObject {
-    model_matrix: [[f32; 4]; 4],
     view_projection_matrix: [[f32; 4]; 4],
 }
 
@@ -90,11 +87,7 @@ pub fn update_uniform_buffer(vulkan_application_data: &VulkanApplicationData, ca
     let view = camera.view_matrix();
     let view_projection = projection * view;
 
-    let rotation = Quat::from_rotation_y(MODEL_ROTATION_Y_DEGREES.to_radians()) * Quat::from_rotation_x(MODEL_ROTATION_X_DEGREES.to_radians());
-    let model = compute_model_matrix(Vec3::ONE, rotation, Vec3::ZERO);
-
     let ubo = UniformBufferObject {
-        model_matrix: model.to_cols_array_2d(),
         view_projection_matrix: view_projection.to_cols_array_2d(),
     };
 
@@ -119,6 +112,3 @@ fn compute_projection_matrix(fov_degrees: f32, near: f32, far: f32, width: f32, 
     Mat4::perspective_rh(fov_radians, aspect_ratio, near, far)
 }
 
-fn compute_model_matrix(object_scale: Vec3, object_rotation: Quat, object_position: Vec3) -> Mat4 {
-    Mat4::from_scale_rotation_translation(object_scale, object_rotation, object_position)
-}

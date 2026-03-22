@@ -1,5 +1,6 @@
 use crate::graphical_core::mesh::CUBE_INDICES;
 use crate::graphical_core::{vulkan_object::VulkanApplicationData, MAX_FRAMES_IN_FLIGHT};
+use glam::Mat4;
 use vulkanalia::vk::{DeviceV1_0, Handle, HasBuilder};
 use vulkanalia::{vk, Device, Instance};
 
@@ -77,6 +78,12 @@ unsafe fn record_draw_commands(device: &Device, cmd: vk::CommandBuffer, data: &V
     device.cmd_bind_vertex_buffers(cmd, 0, &[data.vertex_buffer], &[0]);
     device.cmd_bind_index_buffer(cmd, data.index_buffer, 0, vk::IndexType::UINT16);
     device.cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::GRAPHICS, data.pipeline_layout, 0, &[data.descriptor_set], &[]);
+
+    let model_matrix = Mat4::IDENTITY;
+    let model_bytes = model_matrix.to_cols_array();
+    let byte_slice = std::slice::from_raw_parts(model_bytes.as_ptr() as *const u8, 64);
+    device.cmd_push_constants(cmd, data.pipeline_layout, vk::ShaderStageFlags::VERTEX, 0, byte_slice);
+
     device.cmd_draw_indexed(cmd, CUBE_INDICES.len() as u32, 1, 0, 0, 0);
     device.cmd_end_render_pass(cmd);
 }
