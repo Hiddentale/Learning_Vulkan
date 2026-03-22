@@ -4,6 +4,7 @@ pub mod commands;
 pub mod depth;
 pub mod descriptors;
 pub mod gpu;
+pub mod input;
 pub mod instance;
 pub mod memory;
 pub mod mesh;

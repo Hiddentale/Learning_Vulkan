@@ -1,6 +1,6 @@
 use crate::graphical_core::{
     buffers::allocate_and_fill_buffer,
-    camera::{create_uniform_buffer, destroy_uniform_buffer, update_uniform_buffer, UniformBufferObject},
+    camera::{create_uniform_buffer, destroy_uniform_buffer, update_uniform_buffer, Camera, UniformBufferObject},
     commands::{create_command_buffers, create_command_pool, create_frame_buffers, create_sync_objects},
     depth::{create_depth_image, destroy_depth_image},
     descriptors,
@@ -178,12 +178,12 @@ impl VulkanApplication {
     ///
     /// # Safety
     /// Calls unsafe Vulkan queue and synchronization APIs.
-    pub unsafe fn render_frame(&mut self, window: &Window) -> anyhow::Result<()> {
+    pub unsafe fn render_frame(&mut self, window: &Window, camera: &Camera) -> anyhow::Result<()> {
         let image_index = match self.acquire_next_image(window)? {
             Some(index) => index,
             None => return Ok(()), // swapchain was recreated, skip this frame
         };
-        update_uniform_buffer(&self.vulkan_application_data)?;
+        update_uniform_buffer(&self.vulkan_application_data, camera)?;
         self.submit_command_buffer(image_index)?;
         self.present_frame(image_index, window)?;
         self.frame = (self.frame + 1) % MAX_FRAMES_IN_FLIGHT;

@@ -7,11 +7,49 @@ use vulkanalia::{Device, Instance};
 const FOV_DEGREES: f32 = 90.0;
 const NEAR_PLANE: f32 = 0.1;
 const FAR_PLANE: f32 = 100.0;
-const CAMERA_POSITION: Vec3 = Vec3::new(0.0, 0.0, 2.0);
-const CAMERA_TARGET: Vec3 = Vec3::ZERO;
-const UP: Vec3 = Vec3::Y;
+const WORLD_UP: Vec3 = Vec3::Y;
 const MODEL_ROTATION_Y_DEGREES: f32 = 30.0;
 const MODEL_ROTATION_X_DEGREES: f32 = -20.0;
+const MAX_PITCH: f32 = 89.0_f32 * (std::f32::consts::PI / 180.0);
+
+const DEFAULT_POSITION: Vec3 = Vec3::new(0.0, 0.0, 2.0);
+const DEFAULT_YAW_DEGREES: f32 = 0.0;
+const DEFAULT_PITCH_DEGREES: f32 = 0.0;
+
+pub struct Camera {
+    pub position: Vec3,
+    pub yaw: f32,
+    pub pitch: f32,
+}
+
+impl Camera {
+    pub fn new(position: Vec3, yaw_degrees: f32, pitch_degrees: f32) -> Self {
+        Self {
+            position,
+            yaw: yaw_degrees.to_radians(),
+            pitch: pitch_degrees.to_radians().clamp(-MAX_PITCH, MAX_PITCH),
+        }
+    }
+
+    pub fn front(&self) -> Vec3 {
+        Vec3::new(self.pitch.cos() * self.yaw.sin(), self.pitch.sin(), -self.pitch.cos() * self.yaw.cos()).normalize()
+    }
+
+    pub fn right(&self) -> Vec3 {
+        self.front().cross(WORLD_UP).normalize()
+    }
+
+    pub fn view_matrix(&self) -> Mat4 {
+        let front = self.front();
+        Mat4::look_at_rh(self.position, self.position + front, WORLD_UP)
+    }
+}
+
+impl Default for Camera {
+    fn default() -> Self {
+        Self::new(DEFAULT_POSITION, DEFAULT_YAW_DEGREES, DEFAULT_PITCH_DEGREES)
+    }
+}
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
@@ -43,13 +81,13 @@ pub fn create_uniform_buffer(device: &Device, instance: &Instance, vulkan_applic
 }
 
 /// Computes model/view/projection matrices and writes them to the mapped UBO.
-pub fn update_uniform_buffer(vulkan_application_data: &VulkanApplicationData) -> anyhow::Result<()> {
+pub fn update_uniform_buffer(vulkan_application_data: &VulkanApplicationData, camera: &Camera) -> anyhow::Result<()> {
     let extent = vulkan_application_data.swapchain_extent;
     let width = extent.width as f32;
     let height = extent.height as f32;
 
     let projection = compute_projection_matrix(FOV_DEGREES, NEAR_PLANE, FAR_PLANE, width, height);
-    let view = compute_view_matrix(CAMERA_POSITION, CAMERA_TARGET, UP);
+    let view = camera.view_matrix();
     let view_projection = projection * view;
 
     let rotation = Quat::from_rotation_y(MODEL_ROTATION_Y_DEGREES.to_radians()) * Quat::from_rotation_x(MODEL_ROTATION_X_DEGREES.to_radians());
@@ -79,10 +117,6 @@ fn compute_projection_matrix(fov_degrees: f32, near: f32, far: f32, width: f32, 
     let fov_radians = fov_degrees.to_radians();
     let aspect_ratio = width / height;
     Mat4::perspective_rh(fov_radians, aspect_ratio, near, far)
-}
-
-fn compute_view_matrix(camera_position: Vec3, camera_target: Vec3, up: Vec3) -> Mat4 {
-    Mat4::look_at_rh(camera_position, camera_target, up)
 }
 
 fn compute_model_matrix(object_scale: Vec3, object_rotation: Quat, object_position: Vec3) -> Mat4 {
