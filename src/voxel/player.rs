@@ -2,6 +2,7 @@ use super::world::World;
 use glam::Vec3;
 
 const GRAVITY: f32 = 20.0;
+const JUMP_VELOCITY: f32 = 8.0;
 const PLAYER_HEIGHT: f32 = 1.7;
 const PLAYER_HALF_WIDTH: f32 = 0.3;
 
@@ -18,6 +19,18 @@ impl Player {
             on_ground: false,
             fly_mode: true,
         }
+    }
+
+    pub fn jump(&mut self) {
+        if self.on_ground && !self.fly_mode {
+            self.velocity.y = JUMP_VELOCITY;
+            self.on_ground = false;
+        }
+    }
+
+    pub fn toggle_fly_mode(&mut self) {
+        self.fly_mode = !self.fly_mode;
+        self.velocity = Vec3::ZERO;
     }
 
     /// Applies gravity and resolves vertical collision against the world.

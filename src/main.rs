@@ -70,6 +70,12 @@ fn main() -> Result<()> {
                             if key_code == KeyCode::Escape {
                                 exit_program(&mut destroy_application, current_window, &mut application);
                             }
+                            if key_code == KeyCode::KeyF && !key_event.repeat {
+                                player.toggle_fly_mode();
+                            }
+                            if key_code == KeyCode::Space {
+                                player.jump();
+                            }
                             input.key_pressed(key_code);
                         }
                         ElementState::Released => input.key_released(key_code),
@@ -88,10 +94,10 @@ fn main() -> Result<()> {
                 last_frame = now;
 
                 let old_position = camera.position;
-                input.update_camera(&mut camera, delta_time);
+                input.update_camera(&mut camera, delta_time, player.fly_mode);
                 let world = application.world();
-                player.apply_physics(&mut camera.position, delta_time, world);
                 player.resolve_horizontal(&mut camera.position, old_position, world);
+                player.apply_physics(&mut camera.position, delta_time, world);
                 user_window.request_redraw();
             }
             Event::WindowEvent {
