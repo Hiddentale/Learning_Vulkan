@@ -109,5 +109,8 @@ pub fn destroy_uniform_buffer(device: &vulkanalia::Device, vulkan_application_da
 fn compute_projection_matrix(fov_degrees: f32, near: f32, far: f32, width: f32, height: f32) -> Mat4 {
     let fov_radians = fov_degrees.to_radians();
     let aspect_ratio = width / height;
-    Mat4::perspective_rh(fov_radians, aspect_ratio, near, far)
+    let mut proj = Mat4::perspective_rh(fov_radians, aspect_ratio, near, far);
+    // Vulkan NDC has Y pointing down; glam's perspective_rh assumes Y up (OpenGL).
+    proj.y_axis.y *= -1.0;
+    proj
 }

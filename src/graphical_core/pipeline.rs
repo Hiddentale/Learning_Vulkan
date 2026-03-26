@@ -47,7 +47,7 @@ pub unsafe fn create_pipeline(vulkan_logical_device: &Device, data: &mut VulkanA
         .polygon_mode(vk::PolygonMode::FILL)
         .line_width(1.0)
         .cull_mode(vk::CullModeFlags::BACK)
-        .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
+        .front_face(vk::FrontFace::CLOCKWISE)
         .depth_bias_enable(false);
     let multisample_state = vk::PipelineMultisampleStateCreateInfo::builder()
         .sample_shading_enable(false)
@@ -100,7 +100,7 @@ pub unsafe fn create_pipeline(vulkan_logical_device: &Device, data: &mut VulkanA
     Ok(())
 }
 
-fn vertex_input_descriptions() -> (vk::VertexInputBindingDescription, [vk::VertexInputAttributeDescription; 2]) {
+fn vertex_input_descriptions() -> (vk::VertexInputBindingDescription, [vk::VertexInputAttributeDescription; 3]) {
     let binding = vk::VertexInputBindingDescription::builder()
         .binding(0)
         .stride(std::mem::size_of::<Vertex>() as u32)
@@ -121,7 +121,14 @@ fn vertex_input_descriptions() -> (vk::VertexInputBindingDescription, [vk::Verte
         .offset(std::mem::size_of::<[f32; 3]>() as u32)
         .build();
 
-    (binding, [position, uv_coordinate])
+    let color = vk::VertexInputAttributeDescription::builder()
+        .binding(0)
+        .location(2)
+        .format(vk::Format::R32G32B32_SFLOAT)
+        .offset(std::mem::size_of::<[f32; 5]>() as u32)
+        .build();
+
+    (binding, [position, uv_coordinate, color])
 }
 
 fn color_blend_attachment() -> vk::PipelineColorBlendAttachmentState {

@@ -49,14 +49,16 @@ pub fn mesh_chunk(chunk: &Chunk) -> (Vec<Vertex>, Vec<u32>) {
     for y in 0..CHUNK_SIZE {
         for z in 0..CHUNK_SIZE {
             for x in 0..CHUNK_SIZE {
-                if !chunk.get(x, y, z).is_opaque() {
+                let block = chunk.get(x, y, z);
+                if !block.is_opaque() {
                     continue;
                 }
+                let color = block.color();
                 for face in &FACES {
                     if !is_face_visible(chunk, x, y, z, face.normal) {
                         continue;
                     }
-                    emit_face(&mut vertices, &mut indices, x, y, z, face);
+                    emit_face(&mut vertices, &mut indices, x, y, z, face, color);
                 }
             }
         }
@@ -84,7 +86,7 @@ fn is_face_visible(chunk: &Chunk, x: usize, y: usize, z: usize, normal: [i32; 3]
 }
 
 /// Emits 4 vertices and 6 indices (2 triangles) for one block face.
-fn emit_face(vertices: &mut Vec<Vertex>, indices: &mut Vec<u32>, x: usize, y: usize, z: usize, face: &Face) {
+fn emit_face(vertices: &mut Vec<Vertex>, indices: &mut Vec<u32>, x: usize, y: usize, z: usize, face: &Face, color: [f32; 3]) {
     let base_index = vertices.len() as u32;
 
     let center = [x as f32 + 0.5, y as f32 + 0.5, z as f32 + 0.5];
@@ -115,7 +117,11 @@ fn emit_face(vertices: &mut Vec<Vertex>, indices: &mut Vec<u32>, x: usize, y: us
             3 => [0.0, 0.0],
             _ => unreachable!(),
         };
-        vertices.push(Vertex { position, uv_coordinate: uv });
+        vertices.push(Vertex {
+            position,
+            uv_coordinate: uv,
+            color,
+        });
     }
 
     // Two triangles: 0-1-2, 0-2-3

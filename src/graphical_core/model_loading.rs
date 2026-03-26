@@ -30,6 +30,7 @@ pub unsafe fn load_obj(path: &str, device: &Device, instance: &Instance, data: &
             vertices.push(Vertex {
                 position: [obj_mesh.positions[i * 3], obj_mesh.positions[i * 3 + 1], obj_mesh.positions[i * 3 + 2]],
                 uv_coordinate: uv,
+                color: [1.0, 1.0, 1.0],
             });
         }
 

@@ -9,6 +9,7 @@ use vulkanalia::{Device, Instance};
 pub struct Vertex {
     pub position: [f32; 3],
     pub uv_coordinate: [f32; 2],
+    pub color: [f32; 3],
 }
 
 /// A GPU-uploaded mesh: vertex and index buffers with their backing memory.
@@ -69,4 +70,3 @@ pub unsafe fn destroy_mesh(device: &Device, mesh: &Mesh) {
     device.destroy_buffer(mesh.index_buffer, None);
     device.free_memory(mesh.index_buffer_memory, None);
 }
-

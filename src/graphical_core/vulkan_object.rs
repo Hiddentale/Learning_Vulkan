@@ -145,12 +145,38 @@ unsafe fn create_resources(device: &Device, instance: &Instance, data: &mut Vulk
     data.texture_sampler = texture_sampler;
     data.descriptor_set = descriptor_set;
 
-    let chunk = Chunk::new(BlockType::Solid);
+    let chunk = build_layered_chunk();
     let (vertices, indices) = meshing::mesh_chunk(&chunk);
     let chunk_mesh = create_mesh(&vertices, &indices, device, instance, data)?;
     data.meshes.push(chunk_mesh);
 
     Ok(())
+}
+
+use crate::voxel::chunk::CHUNK_SIZE;
+
+const STONE_LAYERS: usize = 8;
+const DIRT_LAYERS: usize = 3;
+
+fn build_layered_chunk() -> Chunk {
+    let mut chunk = Chunk::new(BlockType::Air);
+    for y in 0..CHUNK_SIZE {
+        let block = if y < STONE_LAYERS {
+            BlockType::Stone
+        } else if y < STONE_LAYERS + DIRT_LAYERS {
+            BlockType::Dirt
+        } else if y == STONE_LAYERS + DIRT_LAYERS {
+            BlockType::Grass
+        } else {
+            continue;
+        };
+        for z in 0..CHUNK_SIZE {
+            for x in 0..CHUNK_SIZE {
+                chunk.set(x, y, z, block);
+            }
+        }
+    }
+    chunk
 }
 
 const CHUNK_MESH: usize = 0;
