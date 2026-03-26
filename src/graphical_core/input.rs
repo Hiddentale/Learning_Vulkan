@@ -36,9 +36,13 @@ impl InputState {
         self.pressed_keys.contains(&key)
     }
 
-    pub fn update_camera(&mut self, camera: &mut Camera, delta_time: f32) {
+    pub fn update_camera(&mut self, camera: &mut Camera, delta_time: f32, fly_mode: bool) {
         self.apply_mouse_look(camera);
-        self.apply_movement(camera, delta_time);
+        if fly_mode {
+            self.apply_fly_movement(camera, delta_time);
+        } else {
+            self.apply_walk_movement(camera, delta_time);
+        }
     }
 
     fn apply_mouse_look(&mut self, camera: &mut Camera) {
@@ -46,11 +50,11 @@ impl InputState {
         self.mouse_delta = (0.0, 0.0);
 
         camera.yaw += dx as f32 * MOUSE_SENSITIVITY;
-        camera.pitch += dy as f32 * MOUSE_SENSITIVITY;
+        camera.pitch -= dy as f32 * MOUSE_SENSITIVITY;
         camera.pitch = camera.pitch.clamp(-MAX_PITCH, MAX_PITCH);
     }
 
-    fn apply_movement(&self, camera: &mut Camera, delta_time: f32) {
+    fn apply_fly_movement(&self, camera: &mut Camera, delta_time: f32) {
         let speed = MOVE_SPEED * delta_time;
         let front = camera.front();
         let right = camera.right();
@@ -72,6 +76,29 @@ impl InputState {
         }
         if self.is_pressed(KeyCode::KeyE) {
             camera.position += glam::Vec3::Y * speed;
+        }
+    }
+
+    /// Walk movement: WASD moves horizontally (ignoring pitch), no Q/E vertical.
+    fn apply_walk_movement(&self, camera: &mut Camera, delta_time: f32) {
+        let speed = MOVE_SPEED * delta_time;
+        let front = camera.front();
+        let right = camera.right();
+
+        // Flatten front vector to horizontal plane
+        let forward = glam::Vec3::new(front.x, 0.0, front.z).normalize_or_zero();
+
+        if self.is_pressed(KeyCode::KeyW) {
+            camera.position += forward * speed;
+        }
+        if self.is_pressed(KeyCode::KeyS) {
+            camera.position -= forward * speed;
+        }
+        if self.is_pressed(KeyCode::KeyD) {
+            camera.position += right * speed;
+        }
+        if self.is_pressed(KeyCode::KeyA) {
+            camera.position -= right * speed;
         }
     }
 }
