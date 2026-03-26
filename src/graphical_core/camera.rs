@@ -6,13 +6,13 @@ use vulkanalia::{Device, Instance};
 
 const FOV_DEGREES: f32 = 90.0;
 const NEAR_PLANE: f32 = 0.1;
-const FAR_PLANE: f32 = 100.0;
+const FAR_PLANE: f32 = 500.0;
 const WORLD_UP: Vec3 = Vec3::Y;
 const MAX_PITCH: f32 = 89.0_f32 * (std::f32::consts::PI / 180.0);
 
-const DEFAULT_POSITION: Vec3 = Vec3::new(0.0, 0.0, 2.0);
+const DEFAULT_POSITION: Vec3 = Vec3::new(8.0, 20.0, 30.0);
 const DEFAULT_YAW_DEGREES: f32 = 0.0;
-const DEFAULT_PITCH_DEGREES: f32 = 0.0;
+const DEFAULT_PITCH_DEGREES: f32 = -30.0;
 
 pub struct Camera {
     pub position: Vec3,

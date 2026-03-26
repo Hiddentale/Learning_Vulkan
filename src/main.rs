@@ -1,5 +1,6 @@
 #![allow(clippy::too_many_arguments)]
 mod graphical_core;
+mod voxel;
 use anyhow::Result;
 use graphical_core::camera::Camera;
 use graphical_core::input::InputState;
