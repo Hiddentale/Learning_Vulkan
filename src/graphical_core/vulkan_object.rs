@@ -5,8 +5,7 @@ use crate::graphical_core::{
     descriptors,
     gpu::choose_gpu,
     instance::{create_instance, create_logical_device},
-    mesh::{create_cube, destroy_mesh, Mesh},
-    model_loading::load_obj,
+    mesh::{create_mesh, destroy_mesh, Mesh},
     pipeline::create_pipeline,
     render_pass::create_render_pass,
     scene::{SceneObject, Transform},
@@ -14,9 +13,14 @@ use crate::graphical_core::{
     texture_mapping::{create_texture_image, destroy_textures},
     MAX_FRAMES_IN_FLIGHT,
 };
+use crate::voxel::{
+    chunk::CHUNK_SIZE,
+    meshing::{self, ChunkNeighbors},
+    world::World,
+};
 use crate::VALIDATION_ENABLED;
 use anyhow::anyhow;
-use glam::{Quat, Vec3};
+use std::collections::HashMap;
 use vulkanalia::{
     loader::{LibloadingLoader, LIBRARY},
     prelude::v1_0::*,
@@ -63,6 +67,9 @@ pub struct VulkanApplicationData {
     pub depth_image_view: vk::ImageView,
 }
 
+type ChunkMeshMap = HashMap<[i32; 2], usize>;
+const RENDER_DISTANCE: i32 = 5;
+
 pub struct VulkanApplication {
     _vulkan_entry_point: Entry,
     vulkan_instance: Instance,
@@ -71,6 +78,10 @@ pub struct VulkanApplication {
     frame: usize,
     pub(crate) resized: bool,
     scene: Vec<SceneObject>,
+    world: World,
+    /// Maps chunk position → mesh index in VulkanApplicationData::meshes.
+    chunk_meshes: ChunkMeshMap,
+    last_player_chunk: [i32; 2],
 }
 impl VulkanApplication {
     /// Creates a fully initialized Vulkan renderer for the given window.
@@ -85,7 +96,9 @@ impl VulkanApplication {
         allocate_command_buffers(&device, &mut data)?;
         create_sync_objects(&device, &mut data)?;
 
-        let scene = build_demo_scene();
+        let mut world = World::new(RENDER_DISTANCE);
+        world.update(0, 0);
+        let (scene, chunk_meshes) = build_world_meshes(&world, &device, &instance, &mut data)?;
 
         Ok(Self {
             _vulkan_entry_point: entry,
@@ -95,6 +108,9 @@ impl VulkanApplication {
             frame: 0,
             resized: false,
             scene,
+            world,
+            chunk_meshes,
+            last_player_chunk: [0, 0],
         })
     }
 }
@@ -146,66 +162,67 @@ unsafe fn create_resources(device: &Device, instance: &Instance, data: &mut Vulk
     data.texture_sampler = texture_sampler;
     data.descriptor_set = descriptor_set;
 
-    let cube = create_cube(device, instance, data)?;
-    data.meshes.push(cube);
-
-    let pyramid = load_obj("assets/models/pyramid.obj", device, instance, data)?;
-    data.meshes.push(pyramid);
-
     Ok(())
 }
 
-const CUBE_MESH: usize = 0;
-const PYRAMID_MESH: usize = 1;
+unsafe fn build_world_meshes(
+    world: &World,
+    device: &Device,
+    instance: &Instance,
+    data: &mut VulkanApplicationData,
+) -> anyhow::Result<(Vec<SceneObject>, ChunkMeshMap)> {
+    let mut scene = Vec::new();
+    let mut chunk_meshes = HashMap::new();
 
-fn build_demo_scene() -> Vec<SceneObject> {
-    vec![
-        // Center cube, slightly rotated
-        SceneObject {
-            transform: Transform {
-                position: Vec3::new(0.0, 0.0, 0.0),
-                rotation: Quat::from_rotation_y(30.0_f32.to_radians()),
-                ..Default::default()
-            },
-            mesh_index: CUBE_MESH,
-        },
-        // Right cube, tilted
-        SceneObject {
-            transform: Transform {
-                position: Vec3::new(2.5, 0.0, 0.0),
-                rotation: Quat::from_rotation_x(45.0_f32.to_radians()),
-                ..Default::default()
-            },
-            mesh_index: CUBE_MESH,
-        },
-        // Left pyramid
-        SceneObject {
-            transform: Transform {
-                position: Vec3::new(-2.5, 0.0, 0.0),
-                scale: Vec3::splat(1.5),
-                ..Default::default()
-            },
-            mesh_index: PYRAMID_MESH,
-        },
-        // Large cube above
-        SceneObject {
-            transform: Transform {
-                position: Vec3::new(0.0, 2.0, -1.0),
-                rotation: Quat::from_rotation_y(-45.0_f32.to_radians()) * Quat::from_rotation_x(20.0_f32.to_radians()),
-                scale: Vec3::splat(1.5),
-            },
-            mesh_index: CUBE_MESH,
-        },
-        // Small pyramid on the right
-        SceneObject {
-            transform: Transform {
-                position: Vec3::new(1.5, -0.5, 1.5),
-                rotation: Quat::from_rotation_y(90.0_f32.to_radians()),
-                scale: Vec3::splat(0.75),
-            },
-            mesh_index: PYRAMID_MESH,
-        },
-    ]
+    for [cx, cz] in world.chunk_positions() {
+        let mesh_index = upload_chunk_mesh(world, cx, cz, device, instance, data)?;
+        if let Some(mesh_index) = mesh_index {
+            chunk_meshes.insert([cx, cz], mesh_index);
+            scene.push(SceneObject {
+                transform: chunk_transform(cx, cz),
+                mesh_index,
+            });
+        }
+    }
+
+    Ok((scene, chunk_meshes))
+}
+
+unsafe fn upload_chunk_mesh(
+    world: &World,
+    cx: i32,
+    cz: i32,
+    device: &Device,
+    instance: &Instance,
+    data: &mut VulkanApplicationData,
+) -> anyhow::Result<Option<usize>> {
+    let chunk = match world.get_chunk(cx, cz) {
+        Some(c) => c,
+        None => return Ok(None),
+    };
+    let neighbors = ChunkNeighbors {
+        pos_x: world.get_chunk(cx + 1, cz),
+        neg_x: world.get_chunk(cx - 1, cz),
+        pos_z: world.get_chunk(cx, cz + 1),
+        neg_z: world.get_chunk(cx, cz - 1),
+    };
+
+    let (vertices, indices) = meshing::mesh_chunk(chunk, &neighbors);
+    if vertices.is_empty() {
+        return Ok(None);
+    }
+
+    let mesh_index = data.meshes.len();
+    let mesh = create_mesh(&vertices, &indices, device, instance, data)?;
+    data.meshes.push(mesh);
+    Ok(Some(mesh_index))
+}
+
+fn chunk_transform(cx: i32, cz: i32) -> Transform {
+    Transform {
+        position: glam::Vec3::new(cx as f32 * CHUNK_SIZE as f32, 0.0, cz as f32 * CHUNK_SIZE as f32),
+        ..Default::default()
+    }
 }
 
 impl VulkanApplication {
@@ -214,6 +231,8 @@ impl VulkanApplication {
     /// # Safety
     /// Calls unsafe Vulkan queue and synchronization APIs.
     pub unsafe fn render_frame(&mut self, window: &Window, camera: &Camera) -> anyhow::Result<()> {
+        self.update_chunks(camera)?;
+
         let image_index = match self.acquire_next_image(window)? {
             Some(index) => index,
             None => return Ok(()), // swapchain was recreated, skip this frame
@@ -223,6 +242,59 @@ impl VulkanApplication {
         self.submit_command_buffer(image_index)?;
         self.present_frame(image_index, window)?;
         self.frame = (self.frame + 1) % MAX_FRAMES_IN_FLIGHT;
+        Ok(())
+    }
+
+    /// Checks if the player moved to a new chunk and loads/unloads accordingly.
+    unsafe fn update_chunks(&mut self, camera: &Camera) -> anyhow::Result<()> {
+        let player_cx = (camera.position.x / CHUNK_SIZE as f32).floor() as i32;
+        let player_cz = (camera.position.z / CHUNK_SIZE as f32).floor() as i32;
+
+        if [player_cx, player_cz] == self.last_player_chunk {
+            return Ok(());
+        }
+        self.last_player_chunk = [player_cx, player_cz];
+
+        let delta = self.world.update(player_cx, player_cz);
+        if delta.loaded.is_empty() && delta.unloaded.is_empty() {
+            return Ok(());
+        }
+
+        // Wait for GPU to finish before modifying mesh buffers
+        self.device.device_wait_idle()?;
+
+        // Destroy GPU buffers for unloaded chunks and null out the slot
+        for pos in &delta.unloaded {
+            if let Some(mesh_index) = self.chunk_meshes.remove(pos) {
+                destroy_mesh(&self.device, &self.vulkan_application_data.meshes[mesh_index]);
+                self.vulkan_application_data.meshes[mesh_index] = Mesh::default();
+            }
+        }
+
+        // Upload meshes for newly loaded chunks
+        for &[cx, cz] in &delta.loaded {
+            let mesh_index = upload_chunk_mesh(
+                &self.world,
+                cx,
+                cz,
+                &self.device,
+                &self.vulkan_instance,
+                &mut self.vulkan_application_data,
+            )?;
+            if let Some(mesh_index) = mesh_index {
+                self.chunk_meshes.insert([cx, cz], mesh_index);
+            }
+        }
+
+        // Rebuild scene Vec from chunk_meshes (cheap — just SceneObject structs)
+        self.scene.clear();
+        for (&[cx, cz], &mesh_index) in &self.chunk_meshes {
+            self.scene.push(SceneObject {
+                transform: chunk_transform(cx, cz),
+                mesh_index,
+            });
+        }
+
         Ok(())
     }
 
@@ -355,7 +427,9 @@ impl VulkanApplication {
         self.device
             .destroy_descriptor_set_layout(self.vulkan_application_data.descriptor_set_layout, None);
         for mesh in &self.vulkan_application_data.meshes {
-            destroy_mesh(&self.device, mesh);
+            if !mesh.vertex_buffer.is_null() {
+                destroy_mesh(&self.device, mesh);
+            }
         }
     }
 

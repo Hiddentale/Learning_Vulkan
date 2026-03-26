@@ -6,13 +6,13 @@ use vulkanalia::{Device, Instance};
 
 const FOV_DEGREES: f32 = 90.0;
 const NEAR_PLANE: f32 = 0.1;
-const FAR_PLANE: f32 = 100.0;
+const FAR_PLANE: f32 = 500.0;
 const WORLD_UP: Vec3 = Vec3::Y;
 const MAX_PITCH: f32 = 89.0_f32 * (std::f32::consts::PI / 180.0);
 
-const DEFAULT_POSITION: Vec3 = Vec3::new(0.0, 0.0, 2.0);
+const DEFAULT_POSITION: Vec3 = Vec3::new(0.0, 30.0, 60.0);
 const DEFAULT_YAW_DEGREES: f32 = 0.0;
-const DEFAULT_PITCH_DEGREES: f32 = 0.0;
+const DEFAULT_PITCH_DEGREES: f32 = -30.0;
 
 pub struct Camera {
     pub position: Vec3,
@@ -109,5 +109,8 @@ pub fn destroy_uniform_buffer(device: &vulkanalia::Device, vulkan_application_da
 fn compute_projection_matrix(fov_degrees: f32, near: f32, far: f32, width: f32, height: f32) -> Mat4 {
     let fov_radians = fov_degrees.to_radians();
     let aspect_ratio = width / height;
-    Mat4::perspective_rh(fov_radians, aspect_ratio, near, far)
+    let mut proj = Mat4::perspective_rh(fov_radians, aspect_ratio, near, far);
+    // Vulkan NDC has Y pointing down; glam's perspective_rh assumes Y up (OpenGL).
+    proj.y_axis.y *= -1.0;
+    proj
 }

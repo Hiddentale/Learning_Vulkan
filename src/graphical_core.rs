@@ -8,7 +8,6 @@ pub mod input;
 pub mod instance;
 pub mod memory;
 pub mod mesh;
-pub mod model_loading;
 pub mod pipeline;
 pub mod queue_families;
 pub mod render_pass;
