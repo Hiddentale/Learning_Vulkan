@@ -20,6 +20,7 @@ use crate::voxel::{
 };
 use crate::VALIDATION_ENABLED;
 use anyhow::anyhow;
+use std::collections::HashMap;
 use vulkanalia::{
     loader::{LibloadingLoader, LIBRARY},
     prelude::v1_0::*,
@@ -66,7 +67,8 @@ pub struct VulkanApplicationData {
     pub depth_image_view: vk::ImageView,
 }
 
-const WORLD_RADIUS: i32 = 3;
+type ChunkMeshMap = HashMap<[i32; 2], usize>;
+const RENDER_DISTANCE: i32 = 5;
 
 pub struct VulkanApplication {
     _vulkan_entry_point: Entry,
@@ -77,6 +79,9 @@ pub struct VulkanApplication {
     pub(crate) resized: bool,
     scene: Vec<SceneObject>,
     world: World,
+    /// Maps chunk position → mesh index in VulkanApplicationData::meshes.
+    chunk_meshes: ChunkMeshMap,
+    last_player_chunk: [i32; 2],
 }
 impl VulkanApplication {
     /// Creates a fully initialized Vulkan renderer for the given window.
@@ -91,8 +96,9 @@ impl VulkanApplication {
         allocate_command_buffers(&device, &mut data)?;
         create_sync_objects(&device, &mut data)?;
 
-        let world = World::generate(WORLD_RADIUS);
-        let scene = build_world_meshes(&world, &device, &instance, &mut data)?;
+        let mut world = World::new(RENDER_DISTANCE);
+        world.update(0, 0);
+        let (scene, chunk_meshes) = build_world_meshes(&world, &device, &instance, &mut data)?;
 
         Ok(Self {
             _vulkan_entry_point: entry,
@@ -103,6 +109,8 @@ impl VulkanApplication {
             resized: false,
             scene,
             world,
+            chunk_meshes,
+            last_player_chunk: [0, 0],
         })
     }
 }
@@ -162,39 +170,59 @@ unsafe fn build_world_meshes(
     device: &Device,
     instance: &Instance,
     data: &mut VulkanApplicationData,
-) -> anyhow::Result<Vec<SceneObject>> {
+) -> anyhow::Result<(Vec<SceneObject>, ChunkMeshMap)> {
     let mut scene = Vec::new();
+    let mut chunk_meshes = HashMap::new();
 
     for [cx, cz] in world.chunk_positions() {
-        let chunk = world.get_chunk(cx, cz).unwrap();
-        let neighbors = ChunkNeighbors {
-            pos_x: world.get_chunk(cx + 1, cz),
-            neg_x: world.get_chunk(cx - 1, cz),
-            pos_z: world.get_chunk(cx, cz + 1),
-            neg_z: world.get_chunk(cx, cz - 1),
-        };
-
-        let (vertices, indices) = meshing::mesh_chunk(chunk, &neighbors);
-        if vertices.is_empty() {
-            continue;
+        let mesh_index = upload_chunk_mesh(world, cx, cz, device, instance, data)?;
+        if let Some(mesh_index) = mesh_index {
+            chunk_meshes.insert([cx, cz], mesh_index);
+            scene.push(SceneObject {
+                transform: chunk_transform(cx, cz),
+                mesh_index,
+            });
         }
-
-        let mesh_index = data.meshes.len();
-        let mesh = create_mesh(&vertices, &indices, device, instance, data)?;
-        data.meshes.push(mesh);
-
-        let world_x = cx as f32 * CHUNK_SIZE as f32;
-        let world_z = cz as f32 * CHUNK_SIZE as f32;
-        scene.push(SceneObject {
-            transform: Transform {
-                position: glam::Vec3::new(world_x, 0.0, world_z),
-                ..Default::default()
-            },
-            mesh_index,
-        });
     }
 
-    Ok(scene)
+    Ok((scene, chunk_meshes))
+}
+
+unsafe fn upload_chunk_mesh(
+    world: &World,
+    cx: i32,
+    cz: i32,
+    device: &Device,
+    instance: &Instance,
+    data: &mut VulkanApplicationData,
+) -> anyhow::Result<Option<usize>> {
+    let chunk = match world.get_chunk(cx, cz) {
+        Some(c) => c,
+        None => return Ok(None),
+    };
+    let neighbors = ChunkNeighbors {
+        pos_x: world.get_chunk(cx + 1, cz),
+        neg_x: world.get_chunk(cx - 1, cz),
+        pos_z: world.get_chunk(cx, cz + 1),
+        neg_z: world.get_chunk(cx, cz - 1),
+    };
+
+    let (vertices, indices) = meshing::mesh_chunk(chunk, &neighbors);
+    if vertices.is_empty() {
+        return Ok(None);
+    }
+
+    let mesh_index = data.meshes.len();
+    let mesh = create_mesh(&vertices, &indices, device, instance, data)?;
+    data.meshes.push(mesh);
+    Ok(Some(mesh_index))
+}
+
+fn chunk_transform(cx: i32, cz: i32) -> Transform {
+    Transform {
+        position: glam::Vec3::new(cx as f32 * CHUNK_SIZE as f32, 0.0, cz as f32 * CHUNK_SIZE as f32),
+        ..Default::default()
+    }
 }
 
 impl VulkanApplication {
@@ -203,6 +231,8 @@ impl VulkanApplication {
     /// # Safety
     /// Calls unsafe Vulkan queue and synchronization APIs.
     pub unsafe fn render_frame(&mut self, window: &Window, camera: &Camera) -> anyhow::Result<()> {
+        self.update_chunks(camera)?;
+
         let image_index = match self.acquire_next_image(window)? {
             Some(index) => index,
             None => return Ok(()), // swapchain was recreated, skip this frame
@@ -212,6 +242,59 @@ impl VulkanApplication {
         self.submit_command_buffer(image_index)?;
         self.present_frame(image_index, window)?;
         self.frame = (self.frame + 1) % MAX_FRAMES_IN_FLIGHT;
+        Ok(())
+    }
+
+    /// Checks if the player moved to a new chunk and loads/unloads accordingly.
+    unsafe fn update_chunks(&mut self, camera: &Camera) -> anyhow::Result<()> {
+        let player_cx = (camera.position.x / CHUNK_SIZE as f32).floor() as i32;
+        let player_cz = (camera.position.z / CHUNK_SIZE as f32).floor() as i32;
+
+        if [player_cx, player_cz] == self.last_player_chunk {
+            return Ok(());
+        }
+        self.last_player_chunk = [player_cx, player_cz];
+
+        let delta = self.world.update(player_cx, player_cz);
+        if delta.loaded.is_empty() && delta.unloaded.is_empty() {
+            return Ok(());
+        }
+
+        // Wait for GPU to finish before modifying mesh buffers
+        self.device.device_wait_idle()?;
+
+        // Destroy GPU buffers for unloaded chunks and null out the slot
+        for pos in &delta.unloaded {
+            if let Some(mesh_index) = self.chunk_meshes.remove(pos) {
+                destroy_mesh(&self.device, &self.vulkan_application_data.meshes[mesh_index]);
+                self.vulkan_application_data.meshes[mesh_index] = Mesh::default();
+            }
+        }
+
+        // Upload meshes for newly loaded chunks
+        for &[cx, cz] in &delta.loaded {
+            let mesh_index = upload_chunk_mesh(
+                &self.world,
+                cx,
+                cz,
+                &self.device,
+                &self.vulkan_instance,
+                &mut self.vulkan_application_data,
+            )?;
+            if let Some(mesh_index) = mesh_index {
+                self.chunk_meshes.insert([cx, cz], mesh_index);
+            }
+        }
+
+        // Rebuild scene Vec from chunk_meshes (cheap — just SceneObject structs)
+        self.scene.clear();
+        for (&[cx, cz], &mesh_index) in &self.chunk_meshes {
+            self.scene.push(SceneObject {
+                transform: chunk_transform(cx, cz),
+                mesh_index,
+            });
+        }
+
         Ok(())
     }
 
@@ -344,7 +427,9 @@ impl VulkanApplication {
         self.device
             .destroy_descriptor_set_layout(self.vulkan_application_data.descriptor_set_layout, None);
         for mesh in &self.vulkan_application_data.meshes {
-            destroy_mesh(&self.device, mesh);
+            if !mesh.vertex_buffer.is_null() {
+                destroy_mesh(&self.device, mesh);
+            }
         }
     }
 
