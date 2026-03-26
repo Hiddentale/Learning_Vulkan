@@ -13,7 +13,11 @@ use crate::graphical_core::{
     texture_mapping::{create_texture_image, destroy_textures},
     MAX_FRAMES_IN_FLIGHT,
 };
-use crate::voxel::{meshing, terrain};
+use crate::voxel::{
+    chunk::CHUNK_SIZE,
+    meshing::{self, ChunkNeighbors},
+    world::World,
+};
 use crate::VALIDATION_ENABLED;
 use anyhow::anyhow;
 use vulkanalia::{
@@ -62,6 +66,8 @@ pub struct VulkanApplicationData {
     pub depth_image_view: vk::ImageView,
 }
 
+const WORLD_RADIUS: i32 = 3;
+
 pub struct VulkanApplication {
     _vulkan_entry_point: Entry,
     vulkan_instance: Instance,
@@ -70,6 +76,7 @@ pub struct VulkanApplication {
     frame: usize,
     pub(crate) resized: bool,
     scene: Vec<SceneObject>,
+    world: World,
 }
 impl VulkanApplication {
     /// Creates a fully initialized Vulkan renderer for the given window.
@@ -84,7 +91,8 @@ impl VulkanApplication {
         allocate_command_buffers(&device, &mut data)?;
         create_sync_objects(&device, &mut data)?;
 
-        let scene = build_chunk_scene();
+        let world = World::generate(WORLD_RADIUS);
+        let scene = build_world_meshes(&world, &device, &instance, &mut data)?;
 
         Ok(Self {
             _vulkan_entry_point: entry,
@@ -94,6 +102,7 @@ impl VulkanApplication {
             frame: 0,
             resized: false,
             scene,
+            world,
         })
     }
 }
@@ -145,21 +154,47 @@ unsafe fn create_resources(device: &Device, instance: &Instance, data: &mut Vulk
     data.texture_sampler = texture_sampler;
     data.descriptor_set = descriptor_set;
 
-    let chunk = terrain::generate_chunk(0, 0);
-    let (vertices, indices) = meshing::mesh_chunk(&chunk);
-    let chunk_mesh = create_mesh(&vertices, &indices, device, instance, data)?;
-    data.meshes.push(chunk_mesh);
-
     Ok(())
 }
 
-const CHUNK_MESH: usize = 0;
+unsafe fn build_world_meshes(
+    world: &World,
+    device: &Device,
+    instance: &Instance,
+    data: &mut VulkanApplicationData,
+) -> anyhow::Result<Vec<SceneObject>> {
+    let mut scene = Vec::new();
 
-fn build_chunk_scene() -> Vec<SceneObject> {
-    vec![SceneObject {
-        transform: Transform::default(),
-        mesh_index: CHUNK_MESH,
-    }]
+    for [cx, cz] in world.chunk_positions() {
+        let chunk = world.get_chunk(cx, cz).unwrap();
+        let neighbors = ChunkNeighbors {
+            pos_x: world.get_chunk(cx + 1, cz),
+            neg_x: world.get_chunk(cx - 1, cz),
+            pos_z: world.get_chunk(cx, cz + 1),
+            neg_z: world.get_chunk(cx, cz - 1),
+        };
+
+        let (vertices, indices) = meshing::mesh_chunk(chunk, &neighbors);
+        if vertices.is_empty() {
+            continue;
+        }
+
+        let mesh_index = data.meshes.len();
+        let mesh = create_mesh(&vertices, &indices, device, instance, data)?;
+        data.meshes.push(mesh);
+
+        let world_x = cx as f32 * CHUNK_SIZE as f32;
+        let world_z = cz as f32 * CHUNK_SIZE as f32;
+        scene.push(SceneObject {
+            transform: Transform {
+                position: glam::Vec3::new(world_x, 0.0, world_z),
+                ..Default::default()
+            },
+            mesh_index,
+        });
+    }
+
+    Ok(scene)
 }
 
 impl VulkanApplication {
