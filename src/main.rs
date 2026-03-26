@@ -6,6 +6,7 @@ use graphical_core::camera::Camera;
 use graphical_core::input::InputState;
 use graphical_core::vulkan_object::VulkanApplication;
 use std::time::Instant;
+use voxel::player::Player;
 use vulkanalia::{prelude::v1_0::*, Version};
 use winit::{
     dpi::LogicalSize,
@@ -37,6 +38,7 @@ fn main() -> Result<()> {
     let mut minimized = false;
     let mut camera = Camera::default();
     let mut input = InputState::new();
+    let mut player = Player::new();
     let mut last_frame = Instant::now();
 
     event_handler
@@ -85,7 +87,11 @@ fn main() -> Result<()> {
                 let delta_time = (now - last_frame).as_secs_f32();
                 last_frame = now;
 
+                let old_position = camera.position;
                 input.update_camera(&mut camera, delta_time);
+                let world = application.world();
+                player.apply_physics(&mut camera.position, delta_time, world);
+                player.resolve_horizontal(&mut camera.position, old_position, world);
                 user_window.request_redraw();
             }
             Event::WindowEvent {

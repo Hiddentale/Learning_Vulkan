@@ -83,6 +83,13 @@ pub struct VulkanApplication {
     chunk_meshes: ChunkMeshMap,
     last_player_chunk: [i32; 2],
 }
+
+impl VulkanApplication {
+    pub fn world(&self) -> &World {
+        &self.world
+    }
+}
+
 impl VulkanApplication {
     /// Creates a fully initialized Vulkan renderer for the given window.
     ///
