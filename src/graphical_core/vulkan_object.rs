@@ -1,7 +1,7 @@
 use crate::graphical_core::{
     camera::{create_uniform_buffer, destroy_uniform_buffer, update_uniform_buffer, view_projection_matrix, Camera, UniformBufferObject},
     commands::{allocate_command_buffers, create_command_pool, create_frame_buffers, create_sync_objects, record_command_buffer},
-    compute_cull::{self, ComputeCullResources, CullPushConstants},
+    compute_cull::{self, ComputeCullResources, CullPushConstants, DepthPyramidResources},
     depth::{create_depth_image, create_depth_pyramid, destroy_depth_image, destroy_depth_pyramid},
     descriptors,
     frustum::Frustum,
@@ -107,6 +107,7 @@ pub struct VulkanApplication {
     world: World,
     mesh_pool: MeshPool,
     compute_cull: ComputeCullResources,
+    depth_pyramid_pipeline: DepthPyramidResources,
     chunk_count: u32,
     last_player_chunk: [i32; 2],
 }
@@ -140,6 +141,7 @@ impl VulkanApplication {
         let compute_cull =
             compute_cull::create_compute_cull(&device, &instance, &mut data, MAX_LOADED_CHUNKS, indirect_buffer, indirect_buffer_size)?;
         let chunk_count = compute_cull::write_chunk_info(&mesh_pool, compute_cull.chunk_info_ptr);
+        let depth_pyramid_pipeline = compute_cull::create_depth_pyramid_pipeline(&device, &data)?;
 
         Ok(Self {
             _vulkan_entry_point: entry,
@@ -151,6 +153,7 @@ impl VulkanApplication {
             world,
             mesh_pool,
             compute_cull,
+            depth_pyramid_pipeline,
             chunk_count,
             last_player_chunk: [0, 0],
         })
@@ -348,6 +351,7 @@ impl VulkanApplication {
             &self.vulkan_application_data,
             image_index,
             &self.compute_cull,
+            &self.depth_pyramid_pipeline,
             &cull_push,
             self.mesh_pool.vertex_buffer,
             self.mesh_pool.index_buffer,
@@ -464,11 +468,13 @@ impl VulkanApplication {
     /// Calls unsafe Vulkan destruction and creation APIs.
     pub unsafe fn recreate_swapchain(&mut self, user_window: &Window) -> anyhow::Result<()> {
         self.device.device_wait_idle()?;
+        compute_cull::destroy_depth_pyramid_pipeline(&self.device, &self.depth_pyramid_pipeline);
         self.destroy_swapchain();
         create_swapchain(user_window, &self.vulkan_instance, &self.device, &mut self.vulkan_application_data)?;
         create_swapchain_image_views(&self.device, &mut self.vulkan_application_data)?;
         create_depth_image(&self.device, &self.vulkan_instance, &mut self.vulkan_application_data)?;
         create_depth_pyramid(&self.device, &self.vulkan_instance, &mut self.vulkan_application_data)?;
+        self.depth_pyramid_pipeline = compute_cull::create_depth_pyramid_pipeline(&self.device, &self.vulkan_application_data)?;
         create_render_pass(&self.vulkan_instance, &self.device, &mut self.vulkan_application_data)?;
         create_pipeline(&self.device, &mut self.vulkan_application_data)?;
         create_frame_buffers(&self.device, &mut self.vulkan_application_data)?;
@@ -516,6 +522,7 @@ impl VulkanApplication {
     }
 
     unsafe fn destroy_resources(&mut self) {
+        compute_cull::destroy_depth_pyramid_pipeline(&self.device, &self.depth_pyramid_pipeline);
         compute_cull::destroy_compute_cull(&self.device, &self.compute_cull);
         destroy_textures(&self.device, &mut self.vulkan_application_data);
         destroy_palette_buffer(&self.device, &mut self.vulkan_application_data);

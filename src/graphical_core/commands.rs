@@ -1,4 +1,4 @@
-use crate::graphical_core::compute_cull::{ComputeCullResources, CullPushConstants};
+use crate::graphical_core::compute_cull::{ComputeCullResources, CullPushConstants, DepthPyramidResources, DepthReducePush};
 use crate::graphical_core::vulkan_object::{DrawIndexedIndirectCommand, VulkanApplicationData};
 use crate::graphical_core::{self, MAX_FRAMES_IN_FLIGHT};
 use vulkanalia::vk::{DeviceV1_0, DeviceV1_2, Handle, HasBuilder};
@@ -53,6 +53,7 @@ pub unsafe fn record_command_buffer(
     data: &VulkanApplicationData,
     image_index: usize,
     compute: &ComputeCullResources,
+    depth_pyramid: &DepthPyramidResources,
     cull_push: &CullPushConstants,
     vertex_buffer: vk::Buffer,
     index_buffer: vk::Buffer,
@@ -65,6 +66,7 @@ pub unsafe fn record_command_buffer(
 
     record_compute_cull(device, cmd, compute, cull_push);
     record_draw_commands(device, cmd, data, image_index, compute, vertex_buffer, index_buffer);
+    record_depth_pyramid_generation(device, cmd, data, depth_pyramid);
 
     device.end_command_buffer(cmd)?;
     Ok(())
@@ -160,6 +162,141 @@ unsafe fn record_draw_commands(
     device.cmd_draw_indexed_indirect_count(cmd, data.indirect_buffer, 0, compute.draw_count_buffer, 0, max_draws, stride);
 
     device.cmd_end_render_pass(cmd);
+}
+
+/// Generates the depth pyramid from the depth buffer after the render pass.
+/// Transitions the depth buffer to shader-read, then dispatches one reduction per mip level.
+unsafe fn record_depth_pyramid_generation(device: &Device, cmd: vk::CommandBuffer, data: &VulkanApplicationData, pyramid: &DepthPyramidResources) {
+    let mip_count = data.depth_pyramid_mip_count;
+    let extent = data.swapchain_extent;
+
+    // Transition depth buffer: DEPTH_ATTACHMENT → SHADER_READ_ONLY
+    let depth_barrier = vk::ImageMemoryBarrier::builder()
+        .old_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+        .new_layout(vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL)
+        .src_access_mask(vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE)
+        .dst_access_mask(vk::AccessFlags::SHADER_READ)
+        .image(data.depth_image)
+        .subresource_range(
+            vk::ImageSubresourceRange::builder()
+                .aspect_mask(vk::ImageAspectFlags::DEPTH)
+                .base_mip_level(0)
+                .level_count(1)
+                .base_array_layer(0)
+                .layer_count(1),
+        );
+    device.cmd_pipeline_barrier(
+        cmd,
+        vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+        vk::PipelineStageFlags::COMPUTE_SHADER,
+        vk::DependencyFlags::empty(),
+        &[] as &[vk::MemoryBarrier],
+        &[] as &[vk::BufferMemoryBarrier],
+        &[depth_barrier],
+    );
+
+    // Transition entire pyramid to GENERAL for compute writes
+    let pyramid_barrier = vk::ImageMemoryBarrier::builder()
+        .old_layout(vk::ImageLayout::UNDEFINED)
+        .new_layout(vk::ImageLayout::GENERAL)
+        .src_access_mask(vk::AccessFlags::empty())
+        .dst_access_mask(vk::AccessFlags::SHADER_WRITE)
+        .image(data.depth_pyramid_image)
+        .subresource_range(
+            vk::ImageSubresourceRange::builder()
+                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                .base_mip_level(0)
+                .level_count(mip_count)
+                .base_array_layer(0)
+                .layer_count(1),
+        );
+    device.cmd_pipeline_barrier(
+        cmd,
+        vk::PipelineStageFlags::TOP_OF_PIPE,
+        vk::PipelineStageFlags::COMPUTE_SHADER,
+        vk::DependencyFlags::empty(),
+        &[] as &[vk::MemoryBarrier],
+        &[] as &[vk::BufferMemoryBarrier],
+        &[pyramid_barrier],
+    );
+
+    device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pyramid.pipeline);
+
+    for mip in 0..mip_count {
+        let dst_width = (extent.width >> mip).max(1);
+        let dst_height = (extent.height >> mip).max(1);
+
+        device.cmd_bind_descriptor_sets(
+            cmd,
+            vk::PipelineBindPoint::COMPUTE,
+            pyramid.pipeline_layout,
+            0,
+            &[pyramid.descriptor_sets[mip as usize]],
+            &[],
+        );
+
+        let push = DepthReducePush {
+            dst_size: [dst_width, dst_height],
+        };
+        let push_bytes: &[u8] = std::slice::from_raw_parts(&push as *const DepthReducePush as *const u8, std::mem::size_of::<DepthReducePush>());
+        device.cmd_push_constants(cmd, pyramid.pipeline_layout, vk::ShaderStageFlags::COMPUTE, 0, push_bytes);
+
+        let wg_x = dst_width.div_ceil(16);
+        let wg_y = dst_height.div_ceil(16);
+        device.cmd_dispatch(cmd, wg_x, wg_y, 1);
+
+        // Barrier between mip passes: previous write must complete before next read
+        if mip + 1 < mip_count {
+            let mip_barrier = vk::ImageMemoryBarrier::builder()
+                .old_layout(vk::ImageLayout::GENERAL)
+                .new_layout(vk::ImageLayout::GENERAL)
+                .src_access_mask(vk::AccessFlags::SHADER_WRITE)
+                .dst_access_mask(vk::AccessFlags::SHADER_READ)
+                .image(data.depth_pyramid_image)
+                .subresource_range(
+                    vk::ImageSubresourceRange::builder()
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .base_mip_level(mip)
+                        .level_count(1)
+                        .base_array_layer(0)
+                        .layer_count(1),
+                );
+            device.cmd_pipeline_barrier(
+                cmd,
+                vk::PipelineStageFlags::COMPUTE_SHADER,
+                vk::PipelineStageFlags::COMPUTE_SHADER,
+                vk::DependencyFlags::empty(),
+                &[] as &[vk::MemoryBarrier],
+                &[] as &[vk::BufferMemoryBarrier],
+                &[mip_barrier],
+            );
+        }
+    }
+
+    // Transition depth buffer back to DEPTH_ATTACHMENT for next frame
+    let depth_restore = vk::ImageMemoryBarrier::builder()
+        .old_layout(vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL)
+        .new_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+        .src_access_mask(vk::AccessFlags::SHADER_READ)
+        .dst_access_mask(vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE)
+        .image(data.depth_image)
+        .subresource_range(
+            vk::ImageSubresourceRange::builder()
+                .aspect_mask(vk::ImageAspectFlags::DEPTH)
+                .base_mip_level(0)
+                .level_count(1)
+                .base_array_layer(0)
+                .layer_count(1),
+        );
+    device.cmd_pipeline_barrier(
+        cmd,
+        vk::PipelineStageFlags::COMPUTE_SHADER,
+        vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+        vk::DependencyFlags::empty(),
+        &[] as &[vk::MemoryBarrier],
+        &[] as &[vk::BufferMemoryBarrier],
+        &[depth_restore],
+    );
 }
 
 /// Creates semaphores and fences for each frame in flight.
