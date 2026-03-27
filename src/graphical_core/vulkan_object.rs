@@ -69,6 +69,7 @@ pub struct VulkanApplicationData {
     pub depth_pyramid_image: vk::Image,
     pub depth_pyramid_memory: vk::DeviceMemory,
     pub depth_pyramid_mip_views: Vec<vk::ImageView>,
+    pub depth_pyramid_full_view: vk::ImageView,
     pub depth_pyramid_sampler: vk::Sampler,
     pub depth_pyramid_mip_count: u32,
     pub palette_buffer: vk::Buffer,
@@ -109,6 +110,8 @@ pub struct VulkanApplication {
     compute_cull: ComputeCullResources,
     depth_pyramid_pipeline: DepthPyramidResources,
     chunk_count: u32,
+    /// Counts frames since last pyramid reset. Occlusion test skipped during warmup.
+    depth_pyramid_frame: u32,
     last_player_chunk: [i32; 2],
 }
 
@@ -155,6 +158,7 @@ impl VulkanApplication {
             compute_cull,
             depth_pyramid_pipeline,
             chunk_count,
+            depth_pyramid_frame: 0,
             last_player_chunk: [0, 0],
         })
     }
@@ -344,6 +348,12 @@ impl VulkanApplication {
             ],
             camera_pos: camera.position.to_array(),
             chunk_count: self.chunk_count,
+            screen_size: [
+                self.vulkan_application_data.swapchain_extent.width as f32,
+                self.vulkan_application_data.swapchain_extent.height as f32,
+            ],
+            enable_occlusion: if self.depth_pyramid_frame >= 3 { 1 } else { 0 },
+            _padding: 0,
         };
 
         record_command_buffer(
@@ -355,7 +365,9 @@ impl VulkanApplication {
             &cull_push,
             self.mesh_pool.vertex_buffer,
             self.mesh_pool.index_buffer,
+            self.depth_pyramid_frame == 0,
         )?;
+        self.depth_pyramid_frame += 1;
         self.submit_command_buffer(image_index)?;
         self.present_frame(image_index, window)?;
         self.frame = (self.frame + 1) % MAX_FRAMES_IN_FLIGHT;
@@ -475,6 +487,8 @@ impl VulkanApplication {
         create_depth_image(&self.device, &self.vulkan_instance, &mut self.vulkan_application_data)?;
         create_depth_pyramid(&self.device, &self.vulkan_instance, &mut self.vulkan_application_data)?;
         self.depth_pyramid_pipeline = compute_cull::create_depth_pyramid_pipeline(&self.device, &self.vulkan_application_data)?;
+        compute_cull::update_cull_depth_pyramid(&self.device, &self.compute_cull, &self.vulkan_application_data);
+        self.depth_pyramid_frame = 0;
         create_render_pass(&self.vulkan_instance, &self.device, &mut self.vulkan_application_data)?;
         create_pipeline(&self.device, &mut self.vulkan_application_data)?;
         create_frame_buffers(&self.device, &mut self.vulkan_application_data)?;

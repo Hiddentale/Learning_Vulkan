@@ -2,27 +2,31 @@
 
 layout(local_size_x = 16, local_size_y = 16) in;
 
-// Mip 0 source: either the depth buffer (sampler) or a previous mip level (image2D)
 layout(set = 0, binding = 0) uniform sampler2D src_texture;
 layout(set = 0, binding = 1, r32f) writeonly uniform image2D dst_mip;
 
 layout(push_constant) uniform PushConstants {
     uvec2 dst_size;
+    uint is_copy;
 };
 
 void main() {
     uvec2 pos = gl_GlobalInvocationID.xy;
     if (pos.x >= dst_size.x || pos.y >= dst_size.y) return;
 
-    // Each output texel = max of 2x2 region from the source
     vec2 texel_size = 1.0 / vec2(textureSize(src_texture, 0));
-    vec2 uv = (vec2(pos) * 2.0 + 1.0) * texel_size;
 
-    float d0 = texture(src_texture, uv).r;
-    float d1 = texture(src_texture, uv + vec2(texel_size.x, 0.0)).r;
-    float d2 = texture(src_texture, uv + vec2(0.0, texel_size.y)).r;
-    float d3 = texture(src_texture, uv + texel_size).r;
-
-    float max_depth = max(max(d0, d1), max(d2, d3));
-    imageStore(dst_mip, ivec2(pos), vec4(max_depth));
+    if (is_copy == 1) {
+        // Mip 0: 1:1 copy from depth buffer
+        vec2 uv = (vec2(pos) + 0.5) * texel_size;
+        imageStore(dst_mip, ivec2(pos), vec4(texture(src_texture, uv).r));
+    } else {
+        // Mip 1+: 2x2 max reduction from previous mip
+        vec2 uv = (vec2(pos) * 2.0 + 1.0) * texel_size;
+        float d0 = texture(src_texture, uv).r;
+        float d1 = texture(src_texture, uv + vec2(texel_size.x, 0.0)).r;
+        float d2 = texture(src_texture, uv + vec2(0.0, texel_size.y)).r;
+        float d3 = texture(src_texture, uv + texel_size).r;
+        imageStore(dst_mip, ivec2(pos), vec4(max(max(d0, d1), max(d2, d3))));
+    }
 }

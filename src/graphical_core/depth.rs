@@ -126,6 +126,21 @@ pub unsafe fn create_depth_pyramid(device: &Device, instance: &Instance, data: &
     }
     data.depth_pyramid_mip_views = mip_views;
 
+    // Full-mip view for textureLod() sampling in the cull shader
+    let full_view_info = vk::ImageViewCreateInfo::builder()
+        .image(data.depth_pyramid_image)
+        .view_type(vk::ImageViewType::_2D)
+        .format(vk::Format::R32_SFLOAT)
+        .subresource_range(
+            vk::ImageSubresourceRange::builder()
+                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                .base_mip_level(0)
+                .level_count(mip_count)
+                .base_array_layer(0)
+                .layer_count(1),
+        );
+    data.depth_pyramid_full_view = device.create_image_view(&full_view_info, None)?;
+
     // Nearest-filter sampler with clamp-to-edge (min-reduction reads)
     let sampler_info = vk::SamplerCreateInfo::builder()
         .mag_filter(vk::Filter::NEAREST)
@@ -144,6 +159,7 @@ pub unsafe fn create_depth_pyramid(device: &Device, instance: &Instance, data: &
 /// Destroys the depth pyramid image, all mip views, sampler, and frees memory.
 pub unsafe fn destroy_depth_pyramid(device: &Device, data: &mut VulkanApplicationData) {
     device.destroy_sampler(data.depth_pyramid_sampler, None);
+    device.destroy_image_view(data.depth_pyramid_full_view, None);
     for &view in &data.depth_pyramid_mip_views {
         device.destroy_image_view(view, None);
     }

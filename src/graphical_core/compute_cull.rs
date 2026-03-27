@@ -34,6 +34,9 @@ pub struct CullPushConstants {
     pub planes: [[f32; 4]; 6],
     pub camera_pos: [f32; 3],
     pub chunk_count: u32,
+    pub screen_size: [f32; 2],
+    pub enable_occlusion: u32,
+    pub _padding: u32,
 }
 
 const WORKGROUP_SIZE: u32 = 64;
@@ -89,7 +92,7 @@ pub unsafe fn create_compute_cull(
         host_visible,
     )?;
 
-    // Descriptor set layout: 3 SSBOs
+    // Descriptor set layout: 3 SSBOs + depth pyramid sampler + camera UBO
     let bindings = [
         vk::DescriptorSetLayoutBinding::builder()
             .binding(0)
@@ -109,15 +112,38 @@ pub unsafe fn create_compute_cull(
             .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
             .stage_flags(vk::ShaderStageFlags::COMPUTE)
             .build(),
+        vk::DescriptorSetLayoutBinding::builder()
+            .binding(3)
+            .descriptor_count(1)
+            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .stage_flags(vk::ShaderStageFlags::COMPUTE)
+            .build(),
+        vk::DescriptorSetLayoutBinding::builder()
+            .binding(4)
+            .descriptor_count(1)
+            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+            .stage_flags(vk::ShaderStageFlags::COMPUTE)
+            .build(),
     ];
     let layout_info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings).build();
     let desc_layout = device.create_descriptor_set_layout(&layout_info, None)?;
 
     // Descriptor pool
-    let pool_size = vk::DescriptorPoolSize::builder()
-        .descriptor_count(3)
-        .type_(vk::DescriptorType::STORAGE_BUFFER);
-    let pool_info = vk::DescriptorPoolCreateInfo::builder().max_sets(1).pool_sizes(&[pool_size]).build();
+    let pool_sizes = [
+        vk::DescriptorPoolSize::builder()
+            .descriptor_count(3)
+            .type_(vk::DescriptorType::STORAGE_BUFFER)
+            .build(),
+        vk::DescriptorPoolSize::builder()
+            .descriptor_count(1)
+            .type_(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .build(),
+        vk::DescriptorPoolSize::builder()
+            .descriptor_count(1)
+            .type_(vk::DescriptorType::UNIFORM_BUFFER)
+            .build(),
+    ];
+    let pool_info = vk::DescriptorPoolCreateInfo::builder().max_sets(1).pool_sizes(&pool_sizes).build();
     let desc_pool = device.create_descriptor_pool(&pool_info, None)?;
 
     // Allocate descriptor set
@@ -129,6 +155,7 @@ pub unsafe fn create_compute_cull(
 
     // Write descriptors
     write_compute_descriptors(device, desc_set, ci_buf, chunk_info_size, indirect_buffer, indirect_buffer_size, dc_buf);
+    write_depth_pyramid_descriptors(device, desc_set, data);
 
     // Pipeline layout with push constants
     let push_range = vk::PushConstantRange::builder()
@@ -209,6 +236,41 @@ fn write_compute_descriptors(
     }
 }
 
+/// Writes depth pyramid sampler (binding 3) and camera UBO (binding 4) into the cull descriptor set.
+fn write_depth_pyramid_descriptors(device: &Device, set: vk::DescriptorSet, data: &VulkanApplicationData) {
+    let img_info = vk::DescriptorImageInfo::builder()
+        .sampler(data.depth_pyramid_sampler)
+        .image_view(data.depth_pyramid_full_view)
+        .image_layout(vk::ImageLayout::GENERAL);
+    let img_write = vk::WriteDescriptorSet::builder()
+        .dst_set(set)
+        .dst_binding(3)
+        .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+        .image_info(&[img_info])
+        .build();
+
+    // Binding 4: camera UBO (view-projection matrix)
+    let ubo_info = vk::DescriptorBufferInfo::builder()
+        .buffer(data.uniform_buffer)
+        .offset(0)
+        .range(std::mem::size_of::<crate::graphical_core::camera::UniformBufferObject>() as u64);
+    let ubo_write = vk::WriteDescriptorSet::builder()
+        .dst_set(set)
+        .dst_binding(4)
+        .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+        .buffer_info(&[ubo_info])
+        .build();
+
+    unsafe {
+        device.update_descriptor_sets(&[img_write, ubo_write], &[] as &[vk::CopyDescriptorSet]);
+    }
+}
+
+/// Updates the depth pyramid descriptor after swapchain recreation.
+pub unsafe fn update_cull_depth_pyramid(device: &Device, res: &ComputeCullResources, data: &VulkanApplicationData) {
+    write_depth_pyramid_descriptors(device, res.descriptor_set, data);
+}
+
 /// Writes per-chunk GPU info (AABBs, draw params, face buckets) into the mapped buffer.
 /// Returns the number of chunks written.
 pub fn write_chunk_info(pool: &MeshPool, ptr: *mut GpuChunkInfo) -> u32 {
@@ -259,6 +321,9 @@ pub struct DepthPyramidResources {
 #[derive(Copy, Clone)]
 pub struct DepthReducePush {
     pub dst_size: [u32; 2],
+    /// 1 for mip 0 (1:1 copy from depth buffer), 0 for mip 1+ (2x2 max reduction).
+    pub is_copy: u32,
+    pub _pad: u32,
 }
 
 pub unsafe fn create_depth_pyramid_pipeline(device: &Device, data: &VulkanApplicationData) -> anyhow::Result<DepthPyramidResources> {

@@ -35,17 +35,26 @@ layout(std430, set = 0, binding = 2) buffer DrawCountBuffer {
     uint draw_count;
 };
 
+layout(set = 0, binding = 3) uniform sampler2D depth_pyramid;
+
+layout(set = 0, binding = 4) uniform CameraUBO {
+    mat4 view_projection_matrix;
+    vec3 light_direction;
+    float ambient_strength;
+} camera;
+
 layout(push_constant) uniform CullParams {
     vec4 planes[6];
     vec3 camera_pos;
     uint chunk_count;
+    vec2 screen_size;
+    uint enable_occlusion;
 };
 
 /// Frustum-AABB test using the p-vertex method.
 bool frustum_visible(vec3 aabb_min, vec3 aabb_max) {
     for (int i = 0; i < 6; i++) {
         vec3 normal = planes[i].xyz;
-        // p-vertex: corner most aligned with plane normal
         vec3 p = vec3(
             normal.x >= 0.0 ? aabb_max.x : aabb_min.x,
             normal.y >= 0.0 ? aabb_max.y : aabb_min.y,
@@ -58,6 +67,61 @@ bool frustum_visible(vec3 aabb_min, vec3 aabb_max) {
     return true;
 }
 
+/// Projects an AABB to screen space and tests against the depth pyramid.
+/// Returns true if the chunk is potentially visible (not fully occluded).
+bool occlusion_visible(vec3 aabb_min, vec3 aabb_max) {
+    // Project all 8 corners of the AABB to clip space
+    vec3 corners[8] = vec3[8](
+        vec3(aabb_min.x, aabb_min.y, aabb_min.z),
+        vec3(aabb_max.x, aabb_min.y, aabb_min.z),
+        vec3(aabb_min.x, aabb_max.y, aabb_min.z),
+        vec3(aabb_max.x, aabb_max.y, aabb_min.z),
+        vec3(aabb_min.x, aabb_min.y, aabb_max.z),
+        vec3(aabb_max.x, aabb_min.y, aabb_max.z),
+        vec3(aabb_min.x, aabb_max.y, aabb_max.z),
+        vec3(aabb_max.x, aabb_max.y, aabb_max.z)
+    );
+
+    float min_z = 1.0;
+    vec2 ndc_min = vec2(1.0);
+    vec2 ndc_max = vec2(-1.0);
+
+    for (int i = 0; i < 8; i++) {
+        vec4 clip = camera.view_projection_matrix * vec4(corners[i], 1.0);
+
+        // Behind the camera — conservatively treat as visible
+        if (clip.w <= 0.0) return true;
+
+        vec3 ndc = clip.xyz / clip.w;
+        ndc_min = min(ndc_min, ndc.xy);
+        ndc_max = max(ndc_max, ndc.xy);
+        min_z = min(min_z, ndc.z);
+    }
+
+    // Clamp to screen (chunk might be partially off-screen)
+    ndc_min = clamp(ndc_min, vec2(-1.0), vec2(1.0));
+    ndc_max = clamp(ndc_max, vec2(-1.0), vec2(1.0));
+
+    // Convert NDC [-1,1] to UV [0,1]
+    vec2 uv_min = ndc_min * 0.5 + 0.5;
+    vec2 uv_max = ndc_max * 0.5 + 0.5;
+
+    // Screen-space size in pixels
+    vec2 size_pixels = (uv_max - uv_min) * screen_size;
+    float max_extent = max(size_pixels.x, size_pixels.y);
+
+    // Pick mip level where the projection fits in ~1 texel, +1 conservative bias
+    // to prevent feedback loops (culled chunk → no depth → stays culled)
+    float mip = ceil(log2(max(max_extent, 1.0))) + 1.0;
+    float pyramid_depth = textureLod(depth_pyramid, (uv_min + uv_max) * 0.5, mip).r;
+
+    // No valid depth data yet (pyramid uninitialized) — treat as visible
+    if (pyramid_depth == 0.0) return true;
+
+    // Chunk is occluded if its nearest point is farther than the pyramid's max depth
+    return min_z <= pyramid_depth;
+}
+
 void main() {
     uint idx = gl_GlobalInvocationID.x;
     if (idx >= chunk_count) return;
@@ -65,18 +129,18 @@ void main() {
     ChunkInfo chunk = chunks[idx];
 
     if (!frustum_visible(chunk.aabb_min, chunk.aabb_max)) return;
+    if (enable_occlusion == 1 && !occlusion_visible(chunk.aabb_min, chunk.aabb_max)) return;
 
     // Per-chunk face bucket culling based on camera position vs AABB
     bool visible[6] = bool[6](
-        camera_pos.x > chunk.aabb_min.x,  // +X
-        camera_pos.x < chunk.aabb_max.x,  // -X
-        camera_pos.y > chunk.aabb_min.y,  // +Y
-        camera_pos.y < chunk.aabb_max.y,  // -Y
-        camera_pos.z > chunk.aabb_min.z,  // +Z
-        camera_pos.z < chunk.aabb_max.z   // -Z
+        camera_pos.x > chunk.aabb_min.x,
+        camera_pos.x < chunk.aabb_max.x,
+        camera_pos.y > chunk.aabb_min.y,
+        camera_pos.y < chunk.aabb_max.y,
+        camera_pos.z > chunk.aabb_min.z,
+        camera_pos.z < chunk.aabb_max.z
     );
 
-    // Count non-empty visible buckets
     uint count = 0;
     for (int i = 0; i < 6; i++) {
         if (visible[i] && chunk.buckets[i].index_count > 0)
@@ -84,10 +148,8 @@ void main() {
     }
     if (count == 0) return;
 
-    // Reserve output slots atomically
     uint base = atomicAdd(draw_count, count);
 
-    // Write indirect draw commands
     uint slot = base;
     for (int i = 0; i < 6; i++) {
         if (visible[i] && chunk.buckets[i].index_count > 0) {

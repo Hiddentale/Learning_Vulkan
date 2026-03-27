@@ -57,12 +57,40 @@ pub unsafe fn record_command_buffer(
     cull_push: &CullPushConstants,
     vertex_buffer: vk::Buffer,
     index_buffer: vk::Buffer,
+    pyramid_needs_init: bool,
 ) -> anyhow::Result<()> {
     let cmd = data.command_buffers[image_index];
     device.reset_command_buffer(cmd, vk::CommandBufferResetFlags::empty())?;
 
     let begin_info = vk::CommandBufferBeginInfo::builder();
     device.begin_command_buffer(cmd, &begin_info)?;
+
+    if pyramid_needs_init {
+        // First frame: transition pyramid from UNDEFINED to GENERAL so the cull shader can read it
+        let init_barrier = vk::ImageMemoryBarrier::builder()
+            .old_layout(vk::ImageLayout::UNDEFINED)
+            .new_layout(vk::ImageLayout::GENERAL)
+            .src_access_mask(vk::AccessFlags::empty())
+            .dst_access_mask(vk::AccessFlags::SHADER_READ)
+            .image(data.depth_pyramid_image)
+            .subresource_range(
+                vk::ImageSubresourceRange::builder()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .base_mip_level(0)
+                    .level_count(data.depth_pyramid_mip_count)
+                    .base_array_layer(0)
+                    .layer_count(1),
+            );
+        device.cmd_pipeline_barrier(
+            cmd,
+            vk::PipelineStageFlags::TOP_OF_PIPE,
+            vk::PipelineStageFlags::COMPUTE_SHADER,
+            vk::DependencyFlags::empty(),
+            &[] as &[vk::MemoryBarrier],
+            &[] as &[vk::BufferMemoryBarrier],
+            &[init_barrier],
+        );
+    }
 
     record_compute_cull(device, cmd, compute, cull_push);
     record_draw_commands(device, cmd, data, image_index, compute, vertex_buffer, index_buffer);
@@ -195,11 +223,11 @@ unsafe fn record_depth_pyramid_generation(device: &Device, cmd: vk::CommandBuffe
         &[depth_barrier],
     );
 
-    // Transition entire pyramid to GENERAL for compute writes
+    // Pyramid is already in GENERAL layout; ensure prior reads complete before writes
     let pyramid_barrier = vk::ImageMemoryBarrier::builder()
-        .old_layout(vk::ImageLayout::UNDEFINED)
+        .old_layout(vk::ImageLayout::GENERAL)
         .new_layout(vk::ImageLayout::GENERAL)
-        .src_access_mask(vk::AccessFlags::empty())
+        .src_access_mask(vk::AccessFlags::SHADER_READ)
         .dst_access_mask(vk::AccessFlags::SHADER_WRITE)
         .image(data.depth_pyramid_image)
         .subresource_range(
@@ -212,7 +240,7 @@ unsafe fn record_depth_pyramid_generation(device: &Device, cmd: vk::CommandBuffe
         );
     device.cmd_pipeline_barrier(
         cmd,
-        vk::PipelineStageFlags::TOP_OF_PIPE,
+        vk::PipelineStageFlags::COMPUTE_SHADER,
         vk::PipelineStageFlags::COMPUTE_SHADER,
         vk::DependencyFlags::empty(),
         &[] as &[vk::MemoryBarrier],
@@ -237,6 +265,8 @@ unsafe fn record_depth_pyramid_generation(device: &Device, cmd: vk::CommandBuffe
 
         let push = DepthReducePush {
             dst_size: [dst_width, dst_height],
+            is_copy: if mip == 0 { 1 } else { 0 },
+            _pad: 0,
         };
         let push_bytes: &[u8] = std::slice::from_raw_parts(&push as *const DepthReducePush as *const u8, std::mem::size_of::<DepthReducePush>());
         device.cmd_push_constants(cmd, pyramid.pipeline_layout, vk::ShaderStageFlags::COMPUTE, 0, push_bytes);
