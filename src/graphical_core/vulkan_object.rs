@@ -1,8 +1,9 @@
 use crate::graphical_core::{
-    camera::{create_uniform_buffer, destroy_uniform_buffer, update_uniform_buffer, Camera, UniformBufferObject},
+    camera::{create_uniform_buffer, destroy_uniform_buffer, update_uniform_buffer, view_projection_matrix, Camera, UniformBufferObject},
     commands::{allocate_command_buffers, create_command_pool, create_frame_buffers, create_sync_objects, record_command_buffer},
     depth::{create_depth_image, destroy_depth_image},
     descriptors,
+    frustum::Frustum,
     gpu::choose_gpu,
     instance::{create_instance, create_logical_device},
     mesh::{create_mesh, destroy_mesh, Mesh},
@@ -196,9 +197,12 @@ unsafe fn build_world_meshes(
         let mesh_index = upload_chunk_mesh(world, cx, cz, device, instance, data)?;
         if let Some(mesh_index) = mesh_index {
             chunk_meshes.insert([cx, cz], mesh_index);
+            let (aabb_min, aabb_max) = chunk_aabb(cx, cz);
             scene.push(SceneObject {
                 transform: chunk_transform(cx, cz),
                 mesh_index,
+                aabb_min,
+                aabb_max,
             });
         }
     }
@@ -243,6 +247,13 @@ fn chunk_transform(cx: i32, cz: i32) -> Transform {
     }
 }
 
+/// Returns the world-space AABB for a chunk at grid position (cx, cz).
+fn chunk_aabb(cx: i32, cz: i32) -> (glam::Vec3, glam::Vec3) {
+    let min = glam::Vec3::new(cx as f32 * CHUNK_SIZE as f32, 0.0, cz as f32 * CHUNK_SIZE as f32);
+    let max = min + glam::Vec3::splat(CHUNK_SIZE as f32);
+    (min, max)
+}
+
 impl VulkanApplication {
     /// Acquires a swapchain image, submits the command buffer, and presents the result.
     ///
@@ -256,7 +267,15 @@ impl VulkanApplication {
             None => return Ok(()), // swapchain was recreated, skip this frame
         };
         update_uniform_buffer(&self.vulkan_application_data, camera)?;
-        record_command_buffer(&self.device, &self.vulkan_application_data, image_index, &self.scene)?;
+
+        let vp = view_projection_matrix(camera, self.vulkan_application_data.swapchain_extent);
+        let frustum = Frustum::from_view_projection(&vp);
+        let visible: Vec<&SceneObject> = self
+            .scene
+            .iter()
+            .filter(|obj| frustum.intersects_aabb(obj.aabb_min, obj.aabb_max))
+            .collect();
+        record_command_buffer(&self.device, &self.vulkan_application_data, image_index, &visible)?;
         self.submit_command_buffer(image_index)?;
         self.present_frame(image_index, window)?;
         self.frame = (self.frame + 1) % MAX_FRAMES_IN_FLIGHT;
@@ -307,9 +326,12 @@ impl VulkanApplication {
         // Rebuild scene Vec from chunk_meshes (cheap — just SceneObject structs)
         self.scene.clear();
         for (&[cx, cz], &mesh_index) in &self.chunk_meshes {
+            let (aabb_min, aabb_max) = chunk_aabb(cx, cz);
             self.scene.push(SceneObject {
                 transform: chunk_transform(cx, cz),
                 mesh_index,
+                aabb_min,
+                aabb_max,
             });
         }
 

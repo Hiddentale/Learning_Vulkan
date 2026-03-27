@@ -3,6 +3,7 @@ pub mod camera;
 pub mod commands;
 pub mod depth;
 pub mod descriptors;
+pub mod frustum;
 pub mod gpu;
 pub mod input;
 pub mod instance;

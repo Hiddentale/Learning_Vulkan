@@ -26,4 +26,7 @@ impl Default for Transform {
 pub struct SceneObject {
     pub transform: Transform,
     pub mesh_index: usize,
+    /// World-space axis-aligned bounding box for frustum culling.
+    pub aabb_min: Vec3,
+    pub aabb_max: Vec3,
 }
