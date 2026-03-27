@@ -11,6 +11,8 @@ pub struct ChunkDrawParams {
     pub first_index: u32,
     pub index_count: u32,
     pub vertex_offset: i32,
+    /// Index into the transform SSBO (used as firstInstance in indirect draws).
+    pub transform_index: u32,
 }
 
 /// CPU-side cached mesh data for one chunk.
@@ -78,7 +80,7 @@ impl MeshPool {
         let mut all_vertices: Vec<Vertex> = Vec::new();
         let mut all_indices: Vec<u32> = Vec::new();
 
-        for (pos, mesh) in &self.chunk_data {
+        for (transform_index, (pos, mesh)) in (0u32..).zip(self.chunk_data.iter()) {
             let vertex_offset = all_vertices.len() as i32;
             let first_index = all_indices.len() as u32;
 
@@ -91,6 +93,7 @@ impl MeshPool {
                     first_index,
                     index_count: mesh.indices.len() as u32,
                     vertex_offset,
+                    transform_index,
                 },
             );
         }

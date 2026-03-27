@@ -67,9 +67,27 @@ pub struct VulkanApplicationData {
     pub depth_image_view: vk::ImageView,
     pub palette_buffer: vk::Buffer,
     pub palette_buffer_memory: vk::DeviceMemory,
+    pub transform_buffer: vk::Buffer,
+    pub transform_buffer_memory: vk::DeviceMemory,
+    pub transform_buffer_ptr: *mut [[f32; 4]; 4],
+    pub indirect_buffer: vk::Buffer,
+    pub indirect_buffer_memory: vk::DeviceMemory,
+    pub indirect_buffer_ptr: *mut DrawIndexedIndirectCommand,
 }
 
 const RENDER_DISTANCE: i32 = 5;
+const MAX_LOADED_CHUNKS: usize = ((2 * RENDER_DISTANCE + 1) * (2 * RENDER_DISTANCE + 1)) as usize;
+
+/// Mirrors VkDrawIndexedIndirectCommand.
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default)]
+pub struct DrawIndexedIndirectCommand {
+    pub index_count: u32,
+    pub instance_count: u32,
+    pub first_index: u32,
+    pub vertex_offset: i32,
+    pub first_instance: u32,
+}
 
 pub struct VulkanApplication {
     _vulkan_entry_point: Entry,
@@ -154,9 +172,11 @@ unsafe fn create_resources(device: &Device, instance: &Instance, data: &mut Vulk
     create_command_pool(instance, device, data)?;
     create_uniform_buffer(device, instance, data)?;
     create_palette_buffer(device, instance, data)?;
+    create_transform_and_indirect_buffers(device, instance, data)?;
 
     let (texture_image, texture_memory, texture_image_view, texture_sampler) = create_texture_image(device, instance, data)?;
 
+    let transform_buffer_size = (MAX_LOADED_CHUNKS * std::mem::size_of::<[[f32; 4]; 4]>()) as u64;
     descriptors::create_pool(device, data)?;
     let descriptor_sets = descriptors::allocate_set(device, data.descriptor_pool, data.descriptor_set_layout)?;
     let descriptor_set = descriptor_sets
@@ -170,6 +190,8 @@ unsafe fn create_resources(device: &Device, instance: &Instance, data: &mut Vulk
         texture_sampler,
         data.uniform_buffer,
         data.palette_buffer,
+        data.transform_buffer,
+        transform_buffer_size,
     );
 
     data.texture_image = texture_image;
@@ -179,6 +201,39 @@ unsafe fn create_resources(device: &Device, instance: &Instance, data: &mut Vulk
     data.descriptor_set = descriptor_set;
 
     Ok(())
+}
+
+/// Pre-allocates persistently mapped buffers for per-chunk model matrices (SSBO)
+/// and indirect draw commands.
+unsafe fn create_transform_and_indirect_buffers(device: &Device, instance: &Instance, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
+    use crate::graphical_core::buffers::allocate_buffer;
+
+    let host_visible = vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT;
+
+    let transform_size = (MAX_LOADED_CHUNKS * std::mem::size_of::<[[f32; 4]; 4]>()) as u64;
+    let (tb, tm, tp) = allocate_buffer::<[[f32; 4]; 4]>(transform_size, vk::BufferUsageFlags::STORAGE_BUFFER, device, instance, data, host_visible)?;
+    data.transform_buffer = tb;
+    data.transform_buffer_memory = tm;
+    data.transform_buffer_ptr = tp;
+
+    let indirect_size = (MAX_LOADED_CHUNKS * std::mem::size_of::<DrawIndexedIndirectCommand>()) as u64;
+    let (ib, im, ip) =
+        allocate_buffer::<DrawIndexedIndirectCommand>(indirect_size, vk::BufferUsageFlags::INDIRECT_BUFFER, device, instance, data, host_visible)?;
+    data.indirect_buffer = ib;
+    data.indirect_buffer_memory = im;
+    data.indirect_buffer_ptr = ip;
+
+    Ok(())
+}
+
+unsafe fn destroy_transform_and_indirect_buffers(device: &Device, data: &mut VulkanApplicationData) {
+    device.unmap_memory(data.transform_buffer_memory);
+    device.destroy_buffer(data.transform_buffer, None);
+    device.free_memory(data.transform_buffer_memory, None);
+
+    device.unmap_memory(data.indirect_buffer_memory);
+    device.destroy_buffer(data.indirect_buffer, None);
+    device.free_memory(data.indirect_buffer_memory, None);
 }
 
 unsafe fn build_world_meshes(
@@ -192,6 +247,7 @@ unsafe fn build_world_meshes(
         mesh_chunk_into_pool(world, cx, cz, pool);
     }
     pool.rebuild(device, instance, data)?;
+    write_transforms_to_ssbo(pool, data);
 
     Ok(build_scene_from_pool(pool))
 }
@@ -223,15 +279,50 @@ fn build_scene_from_pool(pool: &MeshPool) -> Vec<SceneObject> {
             let params = pool.draw_params(&pos)?;
             let (aabb_min, aabb_max) = chunk_aabb(pos[0], pos[1]);
             Some(SceneObject {
-                transform: chunk_transform(pos[0], pos[1]),
                 first_index: params.first_index,
                 index_count: params.index_count,
                 vertex_offset: params.vertex_offset,
+                transform_index: params.transform_index,
                 aabb_min,
                 aabb_max,
             })
         })
         .collect()
+}
+
+/// Writes all chunk model matrices into the persistently mapped transform SSBO.
+fn write_transforms_to_ssbo(pool: &MeshPool, data: &VulkanApplicationData) {
+    for &pos in pool.chunk_positions() {
+        if let Some(params) = pool.draw_params(&pos) {
+            let matrix = chunk_transform(pos[0], pos[1]).model_matrix().to_cols_array_2d();
+            unsafe {
+                std::ptr::write(data.transform_buffer_ptr.add(params.transform_index as usize), matrix);
+            }
+        }
+    }
+}
+
+/// Writes indirect draw commands for frustum-visible chunks into the mapped indirect buffer.
+/// Returns the number of visible draws written.
+fn write_indirect_commands(scene: &[SceneObject], frustum: &Frustum, data: &VulkanApplicationData) -> u32 {
+    let mut draw_count: u32 = 0;
+    for obj in scene {
+        if !frustum.intersects_aabb(obj.aabb_min, obj.aabb_max) {
+            continue;
+        }
+        let cmd = DrawIndexedIndirectCommand {
+            index_count: obj.index_count,
+            instance_count: 1,
+            first_index: obj.first_index,
+            vertex_offset: obj.vertex_offset,
+            first_instance: obj.transform_index,
+        };
+        unsafe {
+            std::ptr::write(data.indirect_buffer_ptr.add(draw_count as usize), cmd);
+        }
+        draw_count += 1;
+    }
+    draw_count
 }
 
 fn chunk_transform(cx: i32, cz: i32) -> Transform {
@@ -264,16 +355,13 @@ impl VulkanApplication {
 
         let vp = view_projection_matrix(camera, self.vulkan_application_data.swapchain_extent);
         let frustum = Frustum::from_view_projection(&vp);
-        let visible: Vec<&SceneObject> = self
-            .scene
-            .iter()
-            .filter(|obj| frustum.intersects_aabb(obj.aabb_min, obj.aabb_max))
-            .collect();
+        let draw_count = write_indirect_commands(&self.scene, &frustum, &self.vulkan_application_data);
+
         record_command_buffer(
             &self.device,
             &self.vulkan_application_data,
             image_index,
-            &visible,
+            draw_count,
             self.mesh_pool.vertex_buffer,
             self.mesh_pool.index_buffer,
         )?;
@@ -310,6 +398,7 @@ impl VulkanApplication {
 
         self.mesh_pool
             .rebuild(&self.device, &self.vulkan_instance, &mut self.vulkan_application_data)?;
+        write_transforms_to_ssbo(&self.mesh_pool, &self.vulkan_application_data);
         self.scene = build_scene_from_pool(&self.mesh_pool);
 
         Ok(())
@@ -441,6 +530,7 @@ impl VulkanApplication {
         destroy_textures(&self.device, &mut self.vulkan_application_data);
         destroy_palette_buffer(&self.device, &mut self.vulkan_application_data);
         destroy_uniform_buffer(&self.device, &mut self.vulkan_application_data);
+        destroy_transform_and_indirect_buffers(&self.device, &mut self.vulkan_application_data);
         self.device.destroy_descriptor_pool(self.vulkan_application_data.descriptor_pool, None);
         self.device
             .destroy_descriptor_set_layout(self.vulkan_application_data.descriptor_set_layout, None);

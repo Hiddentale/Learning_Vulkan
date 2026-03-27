@@ -1,9 +1,7 @@
-use crate::graphical_core::scene::SceneObject;
-use crate::graphical_core::{vulkan_object::VulkanApplicationData, MAX_FRAMES_IN_FLIGHT};
+use crate::graphical_core::vulkan_object::{DrawIndexedIndirectCommand, VulkanApplicationData};
+use crate::graphical_core::{self, MAX_FRAMES_IN_FLIGHT};
 use vulkanalia::vk::{DeviceV1_0, Handle, HasBuilder};
 use vulkanalia::{vk, Device, Instance};
-
-use crate::graphical_core;
 
 /// Creates a framebuffer for each swapchain image view, attaching color and depth.
 pub unsafe fn create_frame_buffers(device: &Device, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
@@ -56,7 +54,7 @@ pub unsafe fn record_command_buffer(
     device: &Device,
     data: &VulkanApplicationData,
     image_index: usize,
-    scene: &[&SceneObject],
+    draw_count: u32,
     vertex_buffer: vk::Buffer,
     index_buffer: vk::Buffer,
 ) -> anyhow::Result<()> {
@@ -65,7 +63,7 @@ pub unsafe fn record_command_buffer(
 
     let begin_info = vk::CommandBufferBeginInfo::builder();
     device.begin_command_buffer(cmd, &begin_info)?;
-    record_draw_commands(device, cmd, data, image_index, scene, vertex_buffer, index_buffer);
+    record_draw_commands(device, cmd, data, image_index, draw_count, vertex_buffer, index_buffer);
     device.end_command_buffer(cmd)?;
     Ok(())
 }
@@ -75,7 +73,7 @@ unsafe fn record_draw_commands(
     cmd: vk::CommandBuffer,
     data: &VulkanApplicationData,
     framebuffer_index: usize,
-    scene: &[&SceneObject],
+    draw_count: u32,
     vertex_buffer: vk::Buffer,
     index_buffer: vk::Buffer,
 ) {
@@ -99,16 +97,13 @@ unsafe fn record_draw_commands(
     device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, data.pipeline);
     device.cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::GRAPHICS, data.pipeline_layout, 0, &[data.descriptor_set], &[]);
 
-    // Bind the shared pool buffers once for all chunks
+    // Bind the shared pool buffers once, then issue a single multi-draw indirect call
     device.cmd_bind_vertex_buffers(cmd, 0, &[vertex_buffer], &[0]);
     device.cmd_bind_index_buffer(cmd, index_buffer, 0, vk::IndexType::UINT32);
 
-    for object in scene {
-        let model_bytes = object.transform.model_matrix().to_cols_array();
-        let byte_slice = std::slice::from_raw_parts(model_bytes.as_ptr() as *const u8, 64);
-        device.cmd_push_constants(cmd, data.pipeline_layout, vk::ShaderStageFlags::VERTEX, 0, byte_slice);
-
-        device.cmd_draw_indexed(cmd, object.index_count, 1, object.first_index, object.vertex_offset, 0);
+    if draw_count > 0 {
+        let stride = std::mem::size_of::<DrawIndexedIndirectCommand>() as u32;
+        device.cmd_draw_indexed_indirect(cmd, data.indirect_buffer, 0, draw_count, stride);
     }
 
     device.cmd_end_render_pass(cmd);

@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use winit::keyboard::KeyCode;
 
 const MOVE_SPEED: f32 = 3.0;
+const SPRINT_MULTIPLIER: f32 = 10.0;
 const MOUSE_SENSITIVITY: f32 = 0.003;
 const MAX_PITCH: f32 = 89.0_f32 * (std::f32::consts::PI / 180.0);
 
@@ -55,7 +56,8 @@ impl InputState {
     }
 
     fn apply_fly_movement(&self, camera: &mut Camera, delta_time: f32) {
-        let speed = MOVE_SPEED * delta_time;
+        let multiplier = if self.is_pressed(KeyCode::ShiftLeft) { SPRINT_MULTIPLIER } else { 1.0 };
+        let speed = MOVE_SPEED * multiplier * delta_time;
         let front = camera.front();
         let right = camera.right();
 
