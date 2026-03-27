@@ -1,15 +1,17 @@
 use crate::graphical_core::{
-    camera::{create_uniform_buffer, destroy_uniform_buffer, update_uniform_buffer, Camera, UniformBufferObject},
+    camera::{create_uniform_buffer, destroy_uniform_buffer, update_uniform_buffer, view_projection_matrix, Camera, UniformBufferObject},
     commands::{allocate_command_buffers, create_command_pool, create_frame_buffers, create_sync_objects, record_command_buffer},
-    depth::{create_depth_image, destroy_depth_image},
+    compute_cull::{self, ComputeCullResources, CullPushConstants, DepthPyramidResources},
+    depth::{create_depth_image, create_depth_pyramid, destroy_depth_image, destroy_depth_pyramid},
     descriptors,
+    frustum::Frustum,
     gpu::choose_gpu,
     instance::{create_instance, create_logical_device},
-    mesh::{create_mesh, destroy_mesh, Mesh},
+    mesh_pool::MeshPool,
     palette_buffer::{create_palette_buffer, destroy_palette_buffer},
     pipeline::create_pipeline,
     render_pass::create_render_pass,
-    scene::{SceneObject, Transform},
+    scene::Transform,
     swapchain::{create_swapchain, create_swapchain_image_views},
     texture_mapping::{create_texture_image, destroy_textures},
     MAX_FRAMES_IN_FLIGHT,
@@ -21,7 +23,6 @@ use crate::voxel::{
 };
 use crate::VALIDATION_ENABLED;
 use anyhow::anyhow;
-use std::collections::HashMap;
 use vulkanalia::{
     loader::{LibloadingLoader, LIBRARY},
     prelude::v1_0::*,
@@ -43,6 +44,7 @@ pub struct VulkanApplicationData {
     pub swapchain_images: Vec<vk::Image>,
     pub swapchain_image_views: Vec<vk::ImageView>,
     pub render_pass: vk::RenderPass,
+    pub render_pass_load: vk::RenderPass,
     pub pipeline_layout: vk::PipelineLayout,
     pub pipeline: vk::Pipeline,
     pub framebuffers: Vec<vk::Framebuffer>,
@@ -52,7 +54,6 @@ pub struct VulkanApplicationData {
     pub render_finished_semaphores: Vec<vk::Semaphore>,
     pub(crate) in_flight_fences: Vec<vk::Fence>,
     pub(crate) images_in_flight: Vec<vk::Fence>,
-    pub meshes: Vec<Mesh>,
     pub descriptor_set_layout: vk::DescriptorSetLayout,
     pub descriptor_pool: vk::DescriptorPool,
     pub texture_image: vk::Image,
@@ -66,12 +67,37 @@ pub struct VulkanApplicationData {
     pub depth_image: vk::Image,
     pub depth_image_memory: vk::DeviceMemory,
     pub depth_image_view: vk::ImageView,
+    pub depth_pyramid_image: vk::Image,
+    pub depth_pyramid_memory: vk::DeviceMemory,
+    pub depth_pyramid_mip_views: Vec<vk::ImageView>,
+    pub depth_pyramid_full_view: vk::ImageView,
+    pub depth_pyramid_sampler: vk::Sampler,
+    pub depth_pyramid_mip_count: u32,
     pub palette_buffer: vk::Buffer,
     pub palette_buffer_memory: vk::DeviceMemory,
+    pub transform_buffer: vk::Buffer,
+    pub transform_buffer_memory: vk::DeviceMemory,
+    pub transform_buffer_ptr: *mut [[f32; 4]; 4],
+    pub indirect_buffer: vk::Buffer,
+    pub indirect_buffer_memory: vk::DeviceMemory,
+    pub indirect_buffer_ptr: *mut DrawIndexedIndirectCommand,
 }
 
-type ChunkMeshMap = HashMap<[i32; 2], usize>;
 const RENDER_DISTANCE: i32 = 5;
+const MAX_LOADED_CHUNKS: usize = ((2 * RENDER_DISTANCE + 1) * (2 * RENDER_DISTANCE + 1)) as usize;
+/// Each chunk can emit up to 6 indirect draws (one per face-direction bucket).
+pub const MAX_INDIRECT_DRAWS: usize = MAX_LOADED_CHUNKS * 6;
+
+/// Mirrors VkDrawIndexedIndirectCommand.
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default)]
+pub struct DrawIndexedIndirectCommand {
+    pub index_count: u32,
+    pub instance_count: u32,
+    pub first_index: u32,
+    pub vertex_offset: i32,
+    pub first_instance: u32,
+}
 
 pub struct VulkanApplication {
     _vulkan_entry_point: Entry,
@@ -80,10 +106,12 @@ pub struct VulkanApplication {
     device: Device,
     frame: usize,
     pub(crate) resized: bool,
-    scene: Vec<SceneObject>,
     world: World,
-    /// Maps chunk position → mesh index in VulkanApplicationData::meshes.
-    chunk_meshes: ChunkMeshMap,
+    mesh_pool: MeshPool,
+    compute_cull: ComputeCullResources,
+    depth_pyramid_pipeline: DepthPyramidResources,
+    chunk_count: u32,
+    depth_pyramid_needs_init: bool,
     last_player_chunk: [i32; 2],
 }
 
@@ -108,7 +136,15 @@ impl VulkanApplication {
 
         let mut world = World::new(RENDER_DISTANCE);
         world.update(0, 0);
-        let (scene, chunk_meshes) = build_world_meshes(&world, &device, &instance, &mut data)?;
+        let mut mesh_pool = MeshPool::new();
+        build_world_meshes(&world, &mut mesh_pool, &device, &instance, &mut data)?;
+
+        let indirect_buffer_size = (MAX_INDIRECT_DRAWS * std::mem::size_of::<DrawIndexedIndirectCommand>()) as u64;
+        let indirect_buffer = data.indirect_buffer;
+        let compute_cull =
+            compute_cull::create_compute_cull(&device, &instance, &mut data, MAX_LOADED_CHUNKS, indirect_buffer, indirect_buffer_size)?;
+        let chunk_count = compute_cull::write_chunk_info(&mesh_pool, compute_cull.chunk_info_ptr);
+        let depth_pyramid_pipeline = compute_cull::create_depth_pyramid_pipeline(&device, &data)?;
 
         Ok(Self {
             _vulkan_entry_point: entry,
@@ -117,9 +153,12 @@ impl VulkanApplication {
             device,
             frame: 0,
             resized: false,
-            scene,
             world,
-            chunk_meshes,
+            mesh_pool,
+            compute_cull,
+            depth_pyramid_pipeline,
+            chunk_count,
+            depth_pyramid_needs_init: true,
             last_player_chunk: [0, 0],
         })
     }
@@ -145,6 +184,7 @@ unsafe fn create_presentation_pipeline(
     create_swapchain(window, instance, device, data)?;
     create_swapchain_image_views(device, data)?;
     create_depth_image(device, instance, data)?;
+    create_depth_pyramid(device, instance, data)?;
     create_render_pass(instance, device, data)?;
     descriptors::create_layout(device, data)?;
     create_pipeline(device, data)?;
@@ -156,9 +196,11 @@ unsafe fn create_resources(device: &Device, instance: &Instance, data: &mut Vulk
     create_command_pool(instance, device, data)?;
     create_uniform_buffer(device, instance, data)?;
     create_palette_buffer(device, instance, data)?;
+    create_transform_and_indirect_buffers(device, instance, data)?;
 
     let (texture_image, texture_memory, texture_image_view, texture_sampler) = create_texture_image(device, instance, data)?;
 
+    let transform_buffer_size = (MAX_LOADED_CHUNKS * std::mem::size_of::<[[f32; 4]; 4]>()) as u64;
     descriptors::create_pool(device, data)?;
     let descriptor_sets = descriptors::allocate_set(device, data.descriptor_pool, data.descriptor_set_layout)?;
     let descriptor_set = descriptor_sets
@@ -172,6 +214,8 @@ unsafe fn create_resources(device: &Device, instance: &Instance, data: &mut Vulk
         texture_sampler,
         data.uniform_buffer,
         data.palette_buffer,
+        data.transform_buffer,
+        transform_buffer_size,
     );
 
     data.texture_image = texture_image;
@@ -183,40 +227,66 @@ unsafe fn create_resources(device: &Device, instance: &Instance, data: &mut Vulk
     Ok(())
 }
 
-unsafe fn build_world_meshes(
-    world: &World,
-    device: &Device,
-    instance: &Instance,
-    data: &mut VulkanApplicationData,
-) -> anyhow::Result<(Vec<SceneObject>, ChunkMeshMap)> {
-    let mut scene = Vec::new();
-    let mut chunk_meshes = HashMap::new();
+/// Pre-allocates persistently mapped buffers for per-chunk model matrices (SSBO)
+/// and indirect draw commands.
+unsafe fn create_transform_and_indirect_buffers(device: &Device, instance: &Instance, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
+    use crate::graphical_core::buffers::allocate_buffer;
 
-    for [cx, cz] in world.chunk_positions() {
-        let mesh_index = upload_chunk_mesh(world, cx, cz, device, instance, data)?;
-        if let Some(mesh_index) = mesh_index {
-            chunk_meshes.insert([cx, cz], mesh_index);
-            scene.push(SceneObject {
-                transform: chunk_transform(cx, cz),
-                mesh_index,
-            });
-        }
-    }
+    let host_visible = vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT;
 
-    Ok((scene, chunk_meshes))
+    let transform_size = (MAX_LOADED_CHUNKS * std::mem::size_of::<[[f32; 4]; 4]>()) as u64;
+    let (tb, tm, tp) = allocate_buffer::<[[f32; 4]; 4]>(transform_size, vk::BufferUsageFlags::STORAGE_BUFFER, device, instance, data, host_visible)?;
+    data.transform_buffer = tb;
+    data.transform_buffer_memory = tm;
+    data.transform_buffer_ptr = tp;
+
+    let indirect_size = (MAX_INDIRECT_DRAWS * std::mem::size_of::<DrawIndexedIndirectCommand>()) as u64;
+    let (ib, im, ip) = allocate_buffer::<DrawIndexedIndirectCommand>(
+        indirect_size,
+        vk::BufferUsageFlags::INDIRECT_BUFFER | vk::BufferUsageFlags::STORAGE_BUFFER,
+        device,
+        instance,
+        data,
+        host_visible,
+    )?;
+    data.indirect_buffer = ib;
+    data.indirect_buffer_memory = im;
+    data.indirect_buffer_ptr = ip;
+
+    Ok(())
 }
 
-unsafe fn upload_chunk_mesh(
+unsafe fn destroy_transform_and_indirect_buffers(device: &Device, data: &mut VulkanApplicationData) {
+    device.unmap_memory(data.transform_buffer_memory);
+    device.destroy_buffer(data.transform_buffer, None);
+    device.free_memory(data.transform_buffer_memory, None);
+
+    device.unmap_memory(data.indirect_buffer_memory);
+    device.destroy_buffer(data.indirect_buffer, None);
+    device.free_memory(data.indirect_buffer_memory, None);
+}
+
+unsafe fn build_world_meshes(
     world: &World,
-    cx: i32,
-    cz: i32,
+    pool: &mut MeshPool,
     device: &Device,
     instance: &Instance,
     data: &mut VulkanApplicationData,
-) -> anyhow::Result<Option<usize>> {
+) -> anyhow::Result<u32> {
+    for [cx, cz] in world.chunk_positions() {
+        mesh_chunk_into_pool(world, cx, cz, pool);
+    }
+    pool.rebuild(device, instance, data)?;
+    write_transforms_to_ssbo(pool, data);
+
+    Ok(0) // chunk_count set after compute_cull is created
+}
+
+/// Meshes a single chunk and adds its data to the pool (CPU-side only).
+fn mesh_chunk_into_pool(world: &World, cx: i32, cz: i32, pool: &mut MeshPool) {
     let chunk = match world.get_chunk(cx, cz) {
         Some(c) => c,
-        None => return Ok(None),
+        None => return,
     };
     let neighbors = ChunkNeighbors {
         pos_x: world.get_chunk(cx + 1, cz),
@@ -225,15 +295,23 @@ unsafe fn upload_chunk_mesh(
         neg_z: world.get_chunk(cx, cz - 1),
     };
 
-    let (vertices, indices) = meshing::mesh_chunk(chunk, &neighbors);
+    let (vertices, bucket_indices) = meshing::mesh_chunk(chunk, &neighbors);
     if vertices.is_empty() {
-        return Ok(None);
+        return;
     }
+    pool.add_chunk([cx, cz], vertices, bucket_indices);
+}
 
-    let mesh_index = data.meshes.len();
-    let mesh = create_mesh(&vertices, &indices, device, instance, data)?;
-    data.meshes.push(mesh);
-    Ok(Some(mesh_index))
+/// Writes all chunk model matrices into the persistently mapped transform SSBO.
+fn write_transforms_to_ssbo(pool: &MeshPool, data: &VulkanApplicationData) {
+    for &pos in pool.chunk_positions() {
+        if let Some(params) = pool.draw_params(&pos) {
+            let matrix = chunk_transform(pos[0], pos[1]).model_matrix().to_cols_array_2d();
+            unsafe {
+                std::ptr::write(data.transform_buffer_ptr.add(params.transform_index as usize), matrix);
+            }
+        }
+    }
 }
 
 fn chunk_transform(cx: i32, cz: i32) -> Transform {
@@ -256,7 +334,40 @@ impl VulkanApplication {
             None => return Ok(()), // swapchain was recreated, skip this frame
         };
         update_uniform_buffer(&self.vulkan_application_data, camera)?;
-        record_command_buffer(&self.device, &self.vulkan_application_data, image_index, &self.scene)?;
+
+        let vp = view_projection_matrix(camera, self.vulkan_application_data.swapchain_extent);
+        let frustum = Frustum::from_view_projection(&vp);
+        let cull_push = CullPushConstants {
+            planes: [
+                frustum.plane(0),
+                frustum.plane(1),
+                frustum.plane(2),
+                frustum.plane(3),
+                frustum.plane(4),
+                frustum.plane(5),
+            ],
+            camera_pos: camera.position.to_array(),
+            chunk_count: self.chunk_count,
+            screen_size: [
+                self.vulkan_application_data.swapchain_extent.width as f32,
+                self.vulkan_application_data.swapchain_extent.height as f32,
+            ],
+            phase: 0,
+            draw_offset: 0,
+        };
+
+        record_command_buffer(
+            &self.device,
+            &self.vulkan_application_data,
+            image_index,
+            &self.compute_cull,
+            &self.depth_pyramid_pipeline,
+            &cull_push,
+            self.mesh_pool.vertex_buffer,
+            self.mesh_pool.index_buffer,
+            self.depth_pyramid_needs_init,
+        )?;
+        self.depth_pyramid_needs_init = false;
         self.submit_command_buffer(image_index)?;
         self.present_frame(image_index, window)?;
         self.frame = (self.frame + 1) % MAX_FRAMES_IN_FLIGHT;
@@ -278,40 +389,21 @@ impl VulkanApplication {
             return Ok(());
         }
 
-        // Wait for GPU to finish before modifying mesh buffers
+        // Wait for GPU to finish before rebuilding the shared buffer
         self.device.device_wait_idle()?;
 
-        // Destroy GPU buffers for unloaded chunks and null out the slot
         for pos in &delta.unloaded {
-            if let Some(mesh_index) = self.chunk_meshes.remove(pos) {
-                destroy_mesh(&self.device, &self.vulkan_application_data.meshes[mesh_index]);
-                self.vulkan_application_data.meshes[mesh_index] = Mesh::default();
-            }
+            self.mesh_pool.remove_chunk(pos);
         }
-
-        // Upload meshes for newly loaded chunks
         for &[cx, cz] in &delta.loaded {
-            let mesh_index = upload_chunk_mesh(
-                &self.world,
-                cx,
-                cz,
-                &self.device,
-                &self.vulkan_instance,
-                &mut self.vulkan_application_data,
-            )?;
-            if let Some(mesh_index) = mesh_index {
-                self.chunk_meshes.insert([cx, cz], mesh_index);
-            }
+            mesh_chunk_into_pool(&self.world, cx, cz, &mut self.mesh_pool);
         }
 
-        // Rebuild scene Vec from chunk_meshes (cheap — just SceneObject structs)
-        self.scene.clear();
-        for (&[cx, cz], &mesh_index) in &self.chunk_meshes {
-            self.scene.push(SceneObject {
-                transform: chunk_transform(cx, cz),
-                mesh_index,
-            });
-        }
+        self.mesh_pool
+            .rebuild(&self.device, &self.vulkan_instance, &mut self.vulkan_application_data)?;
+        write_transforms_to_ssbo(&self.mesh_pool, &self.vulkan_application_data);
+        self.chunk_count = compute_cull::write_chunk_info(&self.mesh_pool, self.compute_cull.chunk_info_ptr);
+        self.compute_cull.reset_visibility();
 
         Ok(())
     }
@@ -389,10 +481,15 @@ impl VulkanApplication {
     /// Calls unsafe Vulkan destruction and creation APIs.
     pub unsafe fn recreate_swapchain(&mut self, user_window: &Window) -> anyhow::Result<()> {
         self.device.device_wait_idle()?;
+        compute_cull::destroy_depth_pyramid_pipeline(&self.device, &self.depth_pyramid_pipeline);
         self.destroy_swapchain();
         create_swapchain(user_window, &self.vulkan_instance, &self.device, &mut self.vulkan_application_data)?;
         create_swapchain_image_views(&self.device, &mut self.vulkan_application_data)?;
         create_depth_image(&self.device, &self.vulkan_instance, &mut self.vulkan_application_data)?;
+        create_depth_pyramid(&self.device, &self.vulkan_instance, &mut self.vulkan_application_data)?;
+        self.depth_pyramid_pipeline = compute_cull::create_depth_pyramid_pipeline(&self.device, &self.vulkan_application_data)?;
+        compute_cull::update_cull_depth_pyramid(&self.device, &self.compute_cull, &self.vulkan_application_data);
+        self.depth_pyramid_needs_init = true;
         create_render_pass(&self.vulkan_instance, &self.device, &mut self.vulkan_application_data)?;
         create_pipeline(&self.device, &mut self.vulkan_application_data)?;
         create_frame_buffers(&self.device, &mut self.vulkan_application_data)?;
@@ -417,6 +514,8 @@ impl VulkanApplication {
         self.device.destroy_pipeline(self.vulkan_application_data.pipeline, None);
         self.device.destroy_pipeline_layout(self.vulkan_application_data.pipeline_layout, None);
         self.device.destroy_render_pass(self.vulkan_application_data.render_pass, None);
+        self.device.destroy_render_pass(self.vulkan_application_data.render_pass_load, None);
+        destroy_depth_pyramid(&self.device, &mut self.vulkan_application_data);
         destroy_depth_image(&self.device, &mut self.vulkan_application_data);
         self.vulkan_application_data
             .swapchain_image_views
@@ -439,17 +538,16 @@ impl VulkanApplication {
     }
 
     unsafe fn destroy_resources(&mut self) {
+        compute_cull::destroy_depth_pyramid_pipeline(&self.device, &self.depth_pyramid_pipeline);
+        compute_cull::destroy_compute_cull(&self.device, &self.compute_cull);
         destroy_textures(&self.device, &mut self.vulkan_application_data);
         destroy_palette_buffer(&self.device, &mut self.vulkan_application_data);
         destroy_uniform_buffer(&self.device, &mut self.vulkan_application_data);
+        destroy_transform_and_indirect_buffers(&self.device, &mut self.vulkan_application_data);
         self.device.destroy_descriptor_pool(self.vulkan_application_data.descriptor_pool, None);
         self.device
             .destroy_descriptor_set_layout(self.vulkan_application_data.descriptor_set_layout, None);
-        for mesh in &self.vulkan_application_data.meshes {
-            if !mesh.vertex_buffer.is_null() {
-                destroy_mesh(&self.device, mesh);
-            }
-        }
+        self.mesh_pool.destroy(&self.device);
     }
 
     unsafe fn destroy_sync_objects(&self) {
@@ -476,5 +574,31 @@ impl VulkanApplication {
                 .destroy_debug_utils_messenger_ext(self.vulkan_application_data.debug_messenger, None);
         }
         self.vulkan_instance.destroy_instance(None);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn draw_indirect_command_size_matches_vulkan_spec() {
+        // VkDrawIndexedIndirectCommand is 5 × u32 = 20 bytes
+        assert_eq!(std::mem::size_of::<DrawIndexedIndirectCommand>(), 20);
+    }
+
+    #[test]
+    fn draw_indirect_command_field_offsets_match_vulkan_spec() {
+        assert_eq!(memoffset::offset_of!(DrawIndexedIndirectCommand, index_count), 0);
+        assert_eq!(memoffset::offset_of!(DrawIndexedIndirectCommand, instance_count), 4);
+        assert_eq!(memoffset::offset_of!(DrawIndexedIndirectCommand, first_index), 8);
+        assert_eq!(memoffset::offset_of!(DrawIndexedIndirectCommand, vertex_offset), 12);
+        assert_eq!(memoffset::offset_of!(DrawIndexedIndirectCommand, first_instance), 16);
+    }
+
+    #[test]
+    fn max_indirect_draws_accommodates_all_chunks() {
+        let max_chunks = ((2 * 5 + 1) * (2 * 5 + 1)) as usize; // RENDER_DISTANCE = 5
+        assert_eq!(MAX_INDIRECT_DRAWS, max_chunks * 6);
     }
 }

@@ -21,9 +21,3 @@ impl Default for Transform {
         }
     }
 }
-
-/// An object in the scene: a transform paired with an index into the mesh registry.
-pub struct SceneObject {
-    pub transform: Transform,
-    pub mesh_index: usize,
-}

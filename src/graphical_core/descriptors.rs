@@ -23,8 +23,14 @@ pub fn create_layout(device: &Device, data: &mut VulkanApplicationData) -> anyho
         .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
         .stage_flags(vk::ShaderStageFlags::FRAGMENT);
 
+    let transform_binding = vk::DescriptorSetLayoutBinding::builder()
+        .binding(3)
+        .descriptor_count(1)
+        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+        .stage_flags(vk::ShaderStageFlags::VERTEX);
+
     let create_info = vk::DescriptorSetLayoutCreateInfo::builder()
-        .bindings(&[sampler_binding, ubo_binding, palette_binding])
+        .bindings(&[sampler_binding, ubo_binding, palette_binding, transform_binding])
         .build();
     data.descriptor_set_layout = unsafe { device.create_descriptor_set_layout(&create_info, None)? };
     Ok(())
@@ -40,10 +46,14 @@ pub fn create_pool(device: &Device, data: &mut VulkanApplicationData) -> anyhow:
         .descriptor_count(2)
         .type_(vk::DescriptorType::UNIFORM_BUFFER);
 
+    let ssbo_pool_size = vk::DescriptorPoolSize::builder()
+        .descriptor_count(1)
+        .type_(vk::DescriptorType::STORAGE_BUFFER);
+
     let pool_info = vk::DescriptorPoolCreateInfo::builder()
         .flags(vk::DescriptorPoolCreateFlags::empty())
         .max_sets(1)
-        .pool_sizes(&[sampler_pool_size, ubo_pool_size])
+        .pool_sizes(&[sampler_pool_size, ubo_pool_size, ssbo_pool_size])
         .build();
 
     data.descriptor_pool = unsafe { device.create_descriptor_pool(&pool_info, None)? };
@@ -59,7 +69,7 @@ pub fn allocate_set(device: &Device, descriptor_pool: DescriptorPool, layout: De
     Ok(unsafe { device.allocate_descriptor_sets(&allocate_info)? })
 }
 
-/// Writes actual resources (texture sampler + camera UBO + palette UBO) into a descriptor set.
+/// Writes actual resources (texture sampler + camera UBO + palette UBO + transform SSBO) into a descriptor set.
 pub fn update_set(
     device: &Device,
     descriptor_set: DescriptorSet,
@@ -67,6 +77,8 @@ pub fn update_set(
     sampler: Sampler,
     uniform_buffer: vk::Buffer,
     palette_buffer: vk::Buffer,
+    transform_buffer: vk::Buffer,
+    transform_buffer_size: u64,
 ) {
     let image_info = vk::DescriptorImageInfo::builder()
         .image_view(image_view)
@@ -104,7 +116,19 @@ pub fn update_set(
         .buffer_info(&[palette_info])
         .build();
 
+    let transform_info = vk::DescriptorBufferInfo::builder()
+        .buffer(transform_buffer)
+        .offset(0)
+        .range(transform_buffer_size);
+
+    let transform_write = vk::WriteDescriptorSet::builder()
+        .dst_set(descriptor_set)
+        .dst_binding(3)
+        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+        .buffer_info(&[transform_info])
+        .build();
+
     unsafe {
-        device.update_descriptor_sets(&[sampler_write, ubo_write, palette_write], &[] as &[CopyDescriptorSet]);
+        device.update_descriptor_sets(&[sampler_write, ubo_write, palette_write, transform_write], &[] as &[CopyDescriptorSet]);
     }
 }

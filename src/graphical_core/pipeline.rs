@@ -66,14 +66,7 @@ pub unsafe fn create_pipeline(vulkan_logical_device: &Device, data: &mut VulkanA
         .depth_bounds_test_enable(false)
         .stencil_test_enable(false);
 
-    let push_constant_range = vk::PushConstantRange::builder()
-        .stage_flags(vk::ShaderStageFlags::VERTEX)
-        .offset(0)
-        .size(64);
-    let layout_info = vk::PipelineLayoutCreateInfo::builder()
-        .set_layouts(&[data.descriptor_set_layout])
-        .push_constant_ranges(&[push_constant_range])
-        .build();
+    let layout_info = vk::PipelineLayoutCreateInfo::builder().set_layouts(&[data.descriptor_set_layout]).build();
 
     data.pipeline_layout = vulkan_logical_device.create_pipeline_layout(&layout_info, None)?;
 

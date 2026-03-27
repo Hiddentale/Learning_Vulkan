@@ -49,11 +49,14 @@ pub struct ChunkNeighbors<'a> {
     pub neg_z: Option<&'a Chunk>,
 }
 
-/// Generates vertices and indices for all visible faces in a chunk.
+/// Number of face direction buckets: +X, -X, +Y, -Y, +Z, -Z.
+pub const BUCKET_COUNT: usize = 6;
+
+/// Generates vertices and 6 index buckets (one per face direction) for a chunk.
 /// Neighbor chunks are used for hidden-face culling at chunk boundaries.
-pub fn mesh_chunk(chunk: &Chunk, neighbors: &ChunkNeighbors) -> (Vec<Vertex>, Vec<u32>) {
+pub fn mesh_chunk(chunk: &Chunk, neighbors: &ChunkNeighbors) -> (Vec<Vertex>, [Vec<u32>; BUCKET_COUNT]) {
     let mut vertices = Vec::new();
-    let mut indices = Vec::new();
+    let mut bucket_indices: [Vec<u32>; BUCKET_COUNT] = Default::default();
 
     for y in 0..CHUNK_SIZE {
         for z in 0..CHUNK_SIZE {
@@ -63,18 +66,18 @@ pub fn mesh_chunk(chunk: &Chunk, neighbors: &ChunkNeighbors) -> (Vec<Vertex>, Ve
                     continue;
                 }
                 let material_id = block.material_id() as u32;
-                for face in &FACES {
+                for (bucket, face) in FACES.iter().enumerate() {
                     if !is_face_visible(chunk, neighbors, x, y, z, face.normal) {
                         continue;
                     }
                     let normal = [face.normal[0] as f32, face.normal[1] as f32, face.normal[2] as f32];
-                    emit_face(&mut vertices, &mut indices, x, y, z, face, normal, material_id);
+                    emit_face(&mut vertices, &mut bucket_indices[bucket], x, y, z, face, normal, material_id);
                 }
             }
         }
     }
 
-    (vertices, indices)
+    (vertices, bucket_indices)
 }
 
 /// A face is visible when its neighbor is air or outside the world.

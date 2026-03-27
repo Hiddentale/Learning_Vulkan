@@ -19,7 +19,7 @@ pub unsafe fn create_render_pass(_instance: &Instance, device: &Device, data: &m
         .format(depth_format())
         .samples(vk::SampleCountFlags::_1)
         .load_op(vk::AttachmentLoadOp::CLEAR)
-        .store_op(vk::AttachmentStoreOp::DONT_CARE)
+        .store_op(vk::AttachmentStoreOp::STORE)
         .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
         .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
         .initial_layout(vk::ImageLayout::UNDEFINED)
@@ -56,5 +56,34 @@ pub unsafe fn create_render_pass(_instance: &Instance, device: &Device, data: &m
         .dependencies(dependencies);
 
     data.render_pass = device.create_render_pass(&info, None)?;
+
+    // Second render pass: LOAD_OP_LOAD to preserve phase 1's color and depth
+    let color_load = vk::AttachmentDescription::builder()
+        .format(data.swapchain_format)
+        .samples(vk::SampleCountFlags::_1)
+        .load_op(vk::AttachmentLoadOp::LOAD)
+        .store_op(vk::AttachmentStoreOp::STORE)
+        .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+        .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+        .initial_layout(vk::ImageLayout::PRESENT_SRC_KHR)
+        .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
+
+    let depth_load = vk::AttachmentDescription::builder()
+        .format(depth_format())
+        .samples(vk::SampleCountFlags::_1)
+        .load_op(vk::AttachmentLoadOp::LOAD)
+        .store_op(vk::AttachmentStoreOp::STORE)
+        .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+        .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+        .initial_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+        .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+
+    let load_attachments = &[color_load, depth_load];
+    let load_info = vk::RenderPassCreateInfo::builder()
+        .attachments(load_attachments)
+        .subpasses(subpasses)
+        .dependencies(dependencies);
+    data.render_pass_load = device.create_render_pass(&load_info, None)?;
+
     Ok(())
 }

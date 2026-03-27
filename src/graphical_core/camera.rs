@@ -81,13 +81,7 @@ pub fn create_uniform_buffer(device: &Device, instance: &Instance, vulkan_applic
 
 /// Computes model/view/projection matrices and writes them to the mapped UBO.
 pub fn update_uniform_buffer(vulkan_application_data: &VulkanApplicationData, camera: &Camera) -> anyhow::Result<()> {
-    let extent = vulkan_application_data.swapchain_extent;
-    let width = extent.width as f32;
-    let height = extent.height as f32;
-
-    let projection = compute_projection_matrix(FOV_DEGREES, NEAR_PLANE, FAR_PLANE, width, height);
-    let view = camera.view_matrix();
-    let view_projection = projection * view;
+    let view_projection = view_projection_matrix(camera, vulkan_application_data.swapchain_extent);
 
     let sun_direction = Vec3::new(0.3, -1.0, 0.5).normalize();
     let ubo = UniformBufferObject {
@@ -109,6 +103,15 @@ pub fn destroy_uniform_buffer(device: &vulkanalia::Device, vulkan_application_da
         device.destroy_buffer(vulkan_application_data.uniform_buffer, None);
         device.free_memory(vulkan_application_data.uniform_buffer_memory, None);
     }
+}
+
+/// Computes the view-projection matrix for the current camera and swapchain extent.
+/// Used by both UBO upload and frustum extraction.
+pub fn view_projection_matrix(camera: &Camera, extent: vk::Extent2D) -> Mat4 {
+    let width = extent.width as f32;
+    let height = extent.height as f32;
+    let projection = compute_projection_matrix(FOV_DEGREES, NEAR_PLANE, FAR_PLANE, width, height);
+    projection * camera.view_matrix()
 }
 
 fn compute_projection_matrix(fov_degrees: f32, near: f32, far: f32, width: f32, height: f32) -> Mat4 {
