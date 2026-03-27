@@ -53,6 +53,8 @@ impl Default for Camera {
 #[derive(Copy, Clone, Debug)]
 pub struct UniformBufferObject {
     view_projection_matrix: [[f32; 4]; 4],
+    light_direction: [f32; 3],
+    ambient_strength: f32,
 }
 
 /// Allocates a persistently mapped uniform buffer for camera matrices.
@@ -87,8 +89,11 @@ pub fn update_uniform_buffer(vulkan_application_data: &VulkanApplicationData, ca
     let view = camera.view_matrix();
     let view_projection = projection * view;
 
+    let sun_direction = Vec3::new(0.3, -1.0, 0.5).normalize();
     let ubo = UniformBufferObject {
         view_projection_matrix: view_projection.to_cols_array_2d(),
+        light_direction: sun_direction.to_array(),
+        ambient_strength: 0.15,
     };
 
     unsafe {

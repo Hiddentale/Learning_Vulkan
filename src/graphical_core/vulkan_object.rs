@@ -6,6 +6,7 @@ use crate::graphical_core::{
     gpu::choose_gpu,
     instance::{create_instance, create_logical_device},
     mesh::{create_mesh, destroy_mesh, Mesh},
+    palette_buffer::{create_palette_buffer, destroy_palette_buffer},
     pipeline::create_pipeline,
     render_pass::create_render_pass,
     scene::{SceneObject, Transform},
@@ -65,6 +66,8 @@ pub struct VulkanApplicationData {
     pub depth_image: vk::Image,
     pub depth_image_memory: vk::DeviceMemory,
     pub depth_image_view: vk::ImageView,
+    pub palette_buffer: vk::Buffer,
+    pub palette_buffer_memory: vk::DeviceMemory,
 }
 
 type ChunkMeshMap = HashMap<[i32; 2], usize>;
@@ -152,6 +155,7 @@ unsafe fn create_presentation_pipeline(
 unsafe fn create_resources(device: &Device, instance: &Instance, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
     create_command_pool(instance, device, data)?;
     create_uniform_buffer(device, instance, data)?;
+    create_palette_buffer(device, instance, data)?;
 
     let (texture_image, texture_memory, texture_image_view, texture_sampler) = create_texture_image(device, instance, data)?;
 
@@ -161,7 +165,14 @@ unsafe fn create_resources(device: &Device, instance: &Instance, data: &mut Vulk
         .first()
         .copied()
         .ok_or_else(|| anyhow!("Failed to allocate descriptor set"))?;
-    descriptors::update_set(device, descriptor_set, texture_image_view, texture_sampler, data.uniform_buffer);
+    descriptors::update_set(
+        device,
+        descriptor_set,
+        texture_image_view,
+        texture_sampler,
+        data.uniform_buffer,
+        data.palette_buffer,
+    );
 
     data.texture_image = texture_image;
     data.texture_memory = texture_memory;
@@ -429,6 +440,7 @@ impl VulkanApplication {
 
     unsafe fn destroy_resources(&mut self) {
         destroy_textures(&self.device, &mut self.vulkan_application_data);
+        destroy_palette_buffer(&self.device, &mut self.vulkan_application_data);
         destroy_uniform_buffer(&self.device, &mut self.vulkan_application_data);
         self.device.destroy_descriptor_pool(self.vulkan_application_data.descriptor_pool, None);
         self.device
