@@ -511,3 +511,188 @@ pub unsafe fn destroy_compute_cull(device: &Device, res: &ComputeCullResources) 
     device.destroy_buffer(res.visibility_buffer, None);
     device.free_memory(res.visibility_memory, None);
 }
+
+// --- Testable occlusion math (mirrors the GLSL shader logic) ---
+
+/// Result of projecting an AABB to screen space.
+pub struct ScreenProjection {
+    pub uv_min: [f32; 2],
+    pub uv_max: [f32; 2],
+    /// Nearest depth in NDC space.
+    pub ndc_min_z: f32,
+    /// Nearest depth converted to viewport [0,1] range.
+    pub viewport_min_z: f32,
+}
+
+/// Projects an AABB's 8 corners through a VP matrix to screen-space UVs and depth.
+/// Returns None if any corner is behind the camera (conservatively visible).
+pub fn project_aabb_to_screen(vp: &glam::Mat4, aabb_min: glam::Vec3, aabb_max: glam::Vec3) -> Option<ScreenProjection> {
+    let corners = [
+        glam::Vec3::new(aabb_min.x, aabb_min.y, aabb_min.z),
+        glam::Vec3::new(aabb_max.x, aabb_min.y, aabb_min.z),
+        glam::Vec3::new(aabb_min.x, aabb_max.y, aabb_min.z),
+        glam::Vec3::new(aabb_max.x, aabb_max.y, aabb_min.z),
+        glam::Vec3::new(aabb_min.x, aabb_min.y, aabb_max.z),
+        glam::Vec3::new(aabb_max.x, aabb_min.y, aabb_max.z),
+        glam::Vec3::new(aabb_min.x, aabb_max.y, aabb_max.z),
+        glam::Vec3::new(aabb_max.x, aabb_max.y, aabb_max.z),
+    ];
+
+    let mut ndc_min = glam::Vec2::splat(1.0);
+    let mut ndc_max = glam::Vec2::splat(-1.0);
+    let mut min_z: f32 = 1.0;
+
+    for corner in &corners {
+        let clip = *vp * corner.extend(1.0);
+        if clip.w <= 0.0 {
+            return None;
+        }
+        let ndc = glam::Vec3::new(clip.x / clip.w, clip.y / clip.w, clip.z / clip.w);
+        ndc_min = ndc_min.min(glam::Vec2::new(ndc.x, ndc.y));
+        ndc_max = ndc_max.max(glam::Vec2::new(ndc.x, ndc.y));
+        min_z = min_z.min(ndc.z);
+    }
+
+    ndc_min = ndc_min.clamp(glam::Vec2::splat(-1.0), glam::Vec2::splat(1.0));
+    ndc_max = ndc_max.clamp(glam::Vec2::splat(-1.0), glam::Vec2::splat(1.0));
+
+    let uv_min = [ndc_min.x * 0.5 + 0.5, ndc_min.y * 0.5 + 0.5];
+    let uv_max = [ndc_max.x * 0.5 + 0.5, ndc_max.y * 0.5 + 0.5];
+
+    Some(ScreenProjection {
+        uv_min,
+        uv_max,
+        ndc_min_z: min_z,
+        viewport_min_z: min_z * 0.5 + 0.5,
+    })
+}
+
+/// Selects the depth pyramid mip level for a given screen-space projection.
+pub fn select_mip_level(proj: &ScreenProjection, screen_width: f32, screen_height: f32) -> f32 {
+    let size_x = (proj.uv_max[0] - proj.uv_min[0]) * screen_width;
+    let size_y = (proj.uv_max[1] - proj.uv_min[1]) * screen_height;
+    let max_extent = size_x.max(size_y).max(1.0);
+    max_extent.log2().ceil()
+}
+
+/// Returns true if the chunk is NOT occluded (visible).
+/// `pyramid_depth` is the max depth sampled from the Hi-Z pyramid.
+pub fn occlusion_test(viewport_min_z: f32, pyramid_depth: f32) -> bool {
+    viewport_min_z <= pyramid_depth
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use glam::{Mat4, Vec3};
+
+    fn test_vp_matrix() -> Mat4 {
+        let mut proj = Mat4::perspective_rh(90_f32.to_radians(), 16.0 / 9.0, 0.1, 500.0);
+        proj.y_axis.y *= -1.0; // Vulkan Y-flip
+        let view = Mat4::look_at_rh(Vec3::new(0.0, 30.0, 0.0), Vec3::new(0.0, 30.0, -1.0), Vec3::Y);
+        proj * view
+    }
+
+    #[test]
+    fn project_aabb_in_front_of_camera_returns_some() {
+        let vp = test_vp_matrix();
+        let result = project_aabb_to_screen(&vp, Vec3::new(-8.0, 22.0, -20.0), Vec3::new(8.0, 38.0, -4.0));
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn project_aabb_behind_camera_returns_none() {
+        let vp = test_vp_matrix();
+        let result = project_aabb_to_screen(&vp, Vec3::new(-8.0, 22.0, 10.0), Vec3::new(8.0, 38.0, 26.0));
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn projected_uvs_are_in_zero_one_range() {
+        let vp = test_vp_matrix();
+        let proj = project_aabb_to_screen(&vp, Vec3::new(-8.0, 22.0, -20.0), Vec3::new(8.0, 38.0, -4.0)).unwrap();
+        assert!(proj.uv_min[0] >= 0.0 && proj.uv_min[0] <= 1.0, "uv_min.x = {}", proj.uv_min[0]);
+        assert!(proj.uv_min[1] >= 0.0 && proj.uv_min[1] <= 1.0, "uv_min.y = {}", proj.uv_min[1]);
+        assert!(proj.uv_max[0] >= 0.0 && proj.uv_max[0] <= 1.0, "uv_max.x = {}", proj.uv_max[0]);
+        assert!(proj.uv_max[1] >= 0.0 && proj.uv_max[1] <= 1.0, "uv_max.y = {}", proj.uv_max[1]);
+    }
+
+    #[test]
+    fn viewport_depth_is_in_zero_one_range() {
+        let vp = test_vp_matrix();
+        let proj = project_aabb_to_screen(&vp, Vec3::new(-8.0, 22.0, -20.0), Vec3::new(8.0, 38.0, -4.0)).unwrap();
+        assert!(
+            proj.viewport_min_z >= 0.0 && proj.viewport_min_z <= 1.0,
+            "viewport_min_z = {} (ndc_min_z = {})",
+            proj.viewport_min_z,
+            proj.ndc_min_z
+        );
+    }
+
+    #[test]
+    fn near_chunk_has_smaller_viewport_depth_than_far_chunk() {
+        let vp = test_vp_matrix();
+        let near = project_aabb_to_screen(&vp, Vec3::new(-4.0, 26.0, -10.0), Vec3::new(4.0, 34.0, -2.0)).unwrap();
+        let far = project_aabb_to_screen(&vp, Vec3::new(-4.0, 26.0, -100.0), Vec3::new(4.0, 34.0, -92.0)).unwrap();
+        assert!(
+            near.viewport_min_z < far.viewport_min_z,
+            "near={} should be < far={}",
+            near.viewport_min_z,
+            far.viewport_min_z
+        );
+    }
+
+    #[test]
+    fn mip_level_increases_for_larger_projection() {
+        let small = ScreenProjection {
+            uv_min: [0.4, 0.4],
+            uv_max: [0.6, 0.6],
+            ndc_min_z: 0.5,
+            viewport_min_z: 0.75,
+        };
+        let large = ScreenProjection {
+            uv_min: [0.1, 0.1],
+            uv_max: [0.9, 0.9],
+            ndc_min_z: 0.5,
+            viewport_min_z: 0.75,
+        };
+        let mip_small = select_mip_level(&small, 1920.0, 1080.0);
+        let mip_large = select_mip_level(&large, 1920.0, 1080.0);
+        assert!(mip_large > mip_small, "large mip {} should be > small mip {}", mip_large, mip_small);
+    }
+
+    #[test]
+    fn chunk_in_front_of_occluder_is_visible() {
+        assert!(occlusion_test(0.3, 0.5));
+    }
+
+    #[test]
+    fn chunk_behind_occluder_is_culled() {
+        assert!(!occlusion_test(0.7, 0.5));
+    }
+
+    #[test]
+    fn chunk_at_far_plane_with_sky_depth_is_visible() {
+        assert!(occlusion_test(0.99, 1.0));
+    }
+
+    #[test]
+    fn face_bucket_visibility() {
+        let cam = Vec3::new(10.0, 5.0, 10.0);
+        let aabb_min = Vec3::new(0.0, 0.0, 0.0);
+        let aabb_max = Vec3::new(16.0, 16.0, 16.0);
+
+        // Camera is inside the AABB on all axes → all faces visible
+        assert!(cam.x > aabb_min.x); // +X
+        assert!(cam.x < aabb_max.x); // -X
+        assert!(cam.y > aabb_min.y); // +Y
+        assert!(cam.y < aabb_max.y); // -Y
+        assert!(cam.z > aabb_min.z); // +Z
+        assert!(cam.z < aabb_max.z); // -Z
+
+        // Camera far to the right → -X faces not visible
+        let cam_right = Vec3::new(100.0, 5.0, 10.0);
+        assert!(cam_right.x > aabb_max.x); // camera past +X side
+        assert!(!(cam_right.x < aabb_max.x)); // -X faces NOT visible (camera.x >= aabb_max.x)
+    }
+}

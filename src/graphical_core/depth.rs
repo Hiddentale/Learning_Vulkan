@@ -167,3 +167,32 @@ pub unsafe fn destroy_depth_pyramid(device: &Device, data: &mut VulkanApplicatio
     device.destroy_image(data.depth_pyramid_image, None);
     device.free_memory(data.depth_pyramid_memory, None);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mip_count_1920x1080() {
+        let extent = vk::Extent2D { width: 1920, height: 1080 };
+        assert_eq!(pyramid_mip_count(extent), 11);
+    }
+
+    #[test]
+    fn mip_count_power_of_two() {
+        let extent = vk::Extent2D { width: 1024, height: 1024 };
+        assert_eq!(pyramid_mip_count(extent), 11);
+    }
+
+    #[test]
+    fn mip_count_small() {
+        let extent = vk::Extent2D { width: 2, height: 2 };
+        assert_eq!(pyramid_mip_count(extent), 2);
+    }
+
+    #[test]
+    fn mip_count_1x1() {
+        let extent = vk::Extent2D { width: 1, height: 1 };
+        assert_eq!(pyramid_mip_count(extent), 1);
+    }
+}
