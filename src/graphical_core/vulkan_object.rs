@@ -2,7 +2,7 @@ use crate::graphical_core::{
     camera::{create_uniform_buffer, destroy_uniform_buffer, update_uniform_buffer, view_projection_matrix, Camera, UniformBufferObject},
     commands::{allocate_command_buffers, create_command_pool, create_frame_buffers, create_sync_objects, record_command_buffer},
     compute_cull::{self, ComputeCullResources, CullPushConstants},
-    depth::{create_depth_image, destroy_depth_image},
+    depth::{create_depth_image, create_depth_pyramid, destroy_depth_image, destroy_depth_pyramid},
     descriptors,
     frustum::Frustum,
     gpu::choose_gpu,
@@ -66,6 +66,11 @@ pub struct VulkanApplicationData {
     pub depth_image: vk::Image,
     pub depth_image_memory: vk::DeviceMemory,
     pub depth_image_view: vk::ImageView,
+    pub depth_pyramid_image: vk::Image,
+    pub depth_pyramid_memory: vk::DeviceMemory,
+    pub depth_pyramid_mip_views: Vec<vk::ImageView>,
+    pub depth_pyramid_sampler: vk::Sampler,
+    pub depth_pyramid_mip_count: u32,
     pub palette_buffer: vk::Buffer,
     pub palette_buffer_memory: vk::DeviceMemory,
     pub transform_buffer: vk::Buffer,
@@ -172,6 +177,7 @@ unsafe fn create_presentation_pipeline(
     create_swapchain(window, instance, device, data)?;
     create_swapchain_image_views(device, data)?;
     create_depth_image(device, instance, data)?;
+    create_depth_pyramid(device, instance, data)?;
     create_render_pass(instance, device, data)?;
     descriptors::create_layout(device, data)?;
     create_pipeline(device, data)?;
@@ -462,6 +468,7 @@ impl VulkanApplication {
         create_swapchain(user_window, &self.vulkan_instance, &self.device, &mut self.vulkan_application_data)?;
         create_swapchain_image_views(&self.device, &mut self.vulkan_application_data)?;
         create_depth_image(&self.device, &self.vulkan_instance, &mut self.vulkan_application_data)?;
+        create_depth_pyramid(&self.device, &self.vulkan_instance, &mut self.vulkan_application_data)?;
         create_render_pass(&self.vulkan_instance, &self.device, &mut self.vulkan_application_data)?;
         create_pipeline(&self.device, &mut self.vulkan_application_data)?;
         create_frame_buffers(&self.device, &mut self.vulkan_application_data)?;
@@ -486,6 +493,7 @@ impl VulkanApplication {
         self.device.destroy_pipeline(self.vulkan_application_data.pipeline, None);
         self.device.destroy_pipeline_layout(self.vulkan_application_data.pipeline_layout, None);
         self.device.destroy_render_pass(self.vulkan_application_data.render_pass, None);
+        destroy_depth_pyramid(&self.device, &mut self.vulkan_application_data);
         destroy_depth_image(&self.device, &mut self.vulkan_application_data);
         self.vulkan_application_data
             .swapchain_image_views
