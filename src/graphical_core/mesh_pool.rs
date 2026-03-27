@@ -1,15 +1,22 @@
 use crate::graphical_core::buffers::allocate_and_fill_buffer;
 use crate::graphical_core::mesh::Vertex;
 use crate::graphical_core::vulkan_object::VulkanApplicationData;
+use crate::voxel::meshing::BUCKET_COUNT;
 use std::collections::HashMap;
 use vulkanalia::vk::{self, DeviceV1_0, Handle};
 use vulkanalia::{Device, Instance};
 
+/// Index range for one face-direction bucket within the shared index buffer.
+#[derive(Copy, Clone, Debug, Default)]
+pub struct FaceBucket {
+    pub first_index: u32,
+    pub index_count: u32,
+}
+
 /// Draw parameters for a single chunk within the shared buffer.
 #[derive(Copy, Clone, Debug)]
 pub struct ChunkDrawParams {
-    pub first_index: u32,
-    pub index_count: u32,
+    pub buckets: [FaceBucket; BUCKET_COUNT],
     pub vertex_offset: i32,
     /// Index into the transform SSBO (used as firstInstance in indirect draws).
     pub transform_index: u32,
@@ -18,7 +25,7 @@ pub struct ChunkDrawParams {
 /// CPU-side cached mesh data for one chunk.
 struct ChunkMeshData {
     vertices: Vec<Vertex>,
-    indices: Vec<u32>,
+    bucket_indices: [Vec<u32>; BUCKET_COUNT],
 }
 
 /// A single shared VBO + IBO containing all chunk meshes.
@@ -48,8 +55,8 @@ impl MeshPool {
     }
 
     /// Caches mesh data for a chunk. Call `rebuild` afterwards to upload to GPU.
-    pub fn add_chunk(&mut self, pos: [i32; 2], vertices: Vec<Vertex>, indices: Vec<u32>) {
-        self.chunk_data.insert(pos, ChunkMeshData { vertices, indices });
+    pub fn add_chunk(&mut self, pos: [i32; 2], vertices: Vec<Vertex>, bucket_indices: [Vec<u32>; BUCKET_COUNT]) {
+        self.chunk_data.insert(pos, ChunkMeshData { vertices, bucket_indices });
     }
 
     /// Removes cached mesh data for a chunk. Call `rebuild` afterwards to update GPU.
@@ -82,16 +89,21 @@ impl MeshPool {
 
         for (transform_index, (pos, mesh)) in (0u32..).zip(self.chunk_data.iter()) {
             let vertex_offset = all_vertices.len() as i32;
-            let first_index = all_indices.len() as u32;
-
             all_vertices.extend_from_slice(&mesh.vertices);
-            all_indices.extend_from_slice(&mesh.indices);
+
+            let mut buckets = [FaceBucket::default(); BUCKET_COUNT];
+            for (i, bucket_idx) in mesh.bucket_indices.iter().enumerate() {
+                buckets[i] = FaceBucket {
+                    first_index: all_indices.len() as u32,
+                    index_count: bucket_idx.len() as u32,
+                };
+                all_indices.extend_from_slice(bucket_idx);
+            }
 
             self.draw_params.insert(
                 *pos,
                 ChunkDrawParams {
-                    first_index,
-                    index_count: mesh.indices.len() as u32,
+                    buckets,
                     vertex_offset,
                     transform_index,
                 },

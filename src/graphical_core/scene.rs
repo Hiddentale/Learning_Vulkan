@@ -24,9 +24,8 @@ impl Default for Transform {
 
 /// An object in the scene: draw parameters and culling bounds for one chunk.
 pub struct SceneObject {
-    /// Offset into the shared index buffer.
-    pub first_index: u32,
-    pub index_count: u32,
+    /// Six face-direction buckets (+X, -X, +Y, -Y, +Z, -Z) for orientation culling.
+    pub buckets: [crate::graphical_core::mesh_pool::FaceBucket; 6],
     /// Added to each index value to locate vertices in the shared vertex buffer.
     pub vertex_offset: i32,
     /// Index into the transform SSBO (used as firstInstance in indirect draws).

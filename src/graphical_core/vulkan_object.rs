@@ -77,6 +77,8 @@ pub struct VulkanApplicationData {
 
 const RENDER_DISTANCE: i32 = 5;
 const MAX_LOADED_CHUNKS: usize = ((2 * RENDER_DISTANCE + 1) * (2 * RENDER_DISTANCE + 1)) as usize;
+/// Each chunk can emit up to 6 indirect draws (one per face-direction bucket).
+const MAX_INDIRECT_DRAWS: usize = MAX_LOADED_CHUNKS * 6;
 
 /// Mirrors VkDrawIndexedIndirectCommand.
 #[repr(C)]
@@ -216,7 +218,7 @@ unsafe fn create_transform_and_indirect_buffers(device: &Device, instance: &Inst
     data.transform_buffer_memory = tm;
     data.transform_buffer_ptr = tp;
 
-    let indirect_size = (MAX_LOADED_CHUNKS * std::mem::size_of::<DrawIndexedIndirectCommand>()) as u64;
+    let indirect_size = (MAX_INDIRECT_DRAWS * std::mem::size_of::<DrawIndexedIndirectCommand>()) as u64;
     let (ib, im, ip) =
         allocate_buffer::<DrawIndexedIndirectCommand>(indirect_size, vk::BufferUsageFlags::INDIRECT_BUFFER, device, instance, data, host_visible)?;
     data.indirect_buffer = ib;
@@ -265,11 +267,11 @@ fn mesh_chunk_into_pool(world: &World, cx: i32, cz: i32, pool: &mut MeshPool) {
         neg_z: world.get_chunk(cx, cz - 1),
     };
 
-    let (vertices, indices) = meshing::mesh_chunk(chunk, &neighbors);
+    let (vertices, bucket_indices) = meshing::mesh_chunk(chunk, &neighbors);
     if vertices.is_empty() {
         return;
     }
-    pool.add_chunk([cx, cz], vertices, indices);
+    pool.add_chunk([cx, cz], vertices, bucket_indices);
 }
 
 /// Builds the scene Vec from the pool's current draw params.
@@ -279,8 +281,7 @@ fn build_scene_from_pool(pool: &MeshPool) -> Vec<SceneObject> {
             let params = pool.draw_params(&pos)?;
             let (aabb_min, aabb_max) = chunk_aabb(pos[0], pos[1]);
             Some(SceneObject {
-                first_index: params.first_index,
-                index_count: params.index_count,
+                buckets: params.buckets,
                 vertex_offset: params.vertex_offset,
                 transform_index: params.transform_index,
                 aabb_min,
@@ -303,26 +304,47 @@ fn write_transforms_to_ssbo(pool: &MeshPool, data: &VulkanApplicationData) {
 }
 
 /// Writes indirect draw commands for frustum-visible chunks into the mapped indirect buffer.
-/// Returns the number of visible draws written.
-fn write_indirect_commands(scene: &[SceneObject], frustum: &Frustum, data: &VulkanApplicationData) -> u32 {
+/// For each visible chunk, emits up to 6 draws (one per face bucket), skipping buckets
+/// whose faces point away from the camera relative to the chunk's AABB.
+fn write_indirect_commands(scene: &[SceneObject], frustum: &Frustum, camera_pos: glam::Vec3, data: &VulkanApplicationData) -> u32 {
     let mut draw_count: u32 = 0;
     for obj in scene {
         if !frustum.intersects_aabb(obj.aabb_min, obj.aabb_max) {
             continue;
         }
-        let cmd = DrawIndexedIndirectCommand {
-            index_count: obj.index_count,
-            instance_count: 1,
-            first_index: obj.first_index,
-            vertex_offset: obj.vertex_offset,
-            first_instance: obj.transform_index,
-        };
-        unsafe {
-            std::ptr::write(data.indirect_buffer_ptr.add(draw_count as usize), cmd);
+        let visible_buckets = visible_face_buckets(camera_pos, obj.aabb_min, obj.aabb_max);
+        for (i, &visible) in visible_buckets.iter().enumerate() {
+            let bucket = &obj.buckets[i];
+            if !visible || bucket.index_count == 0 {
+                continue;
+            }
+            let cmd = DrawIndexedIndirectCommand {
+                index_count: bucket.index_count,
+                instance_count: 1,
+                first_index: bucket.first_index,
+                vertex_offset: obj.vertex_offset,
+                first_instance: obj.transform_index,
+            };
+            unsafe {
+                std::ptr::write(data.indirect_buffer_ptr.add(draw_count as usize), cmd);
+            }
+            draw_count += 1;
         }
-        draw_count += 1;
     }
     draw_count
+}
+
+/// Determines which face-direction buckets are potentially visible given the camera position
+/// and a chunk's AABB. Order: +X, -X, +Y, -Y, +Z, -Z.
+fn visible_face_buckets(camera: glam::Vec3, aabb_min: glam::Vec3, aabb_max: glam::Vec3) -> [bool; 6] {
+    [
+        camera.x > aabb_min.x, // +X faces visible if camera is not entirely to the -X side
+        camera.x < aabb_max.x, // -X faces visible if camera is not entirely to the +X side
+        camera.y > aabb_min.y, // +Y
+        camera.y < aabb_max.y, // -Y
+        camera.z > aabb_min.z, // +Z
+        camera.z < aabb_max.z, // -Z
+    ]
 }
 
 fn chunk_transform(cx: i32, cz: i32) -> Transform {
@@ -355,7 +377,7 @@ impl VulkanApplication {
 
         let vp = view_projection_matrix(camera, self.vulkan_application_data.swapchain_extent);
         let frustum = Frustum::from_view_projection(&vp);
-        let draw_count = write_indirect_commands(&self.scene, &frustum, &self.vulkan_application_data);
+        let draw_count = write_indirect_commands(&self.scene, &frustum, camera.position, &self.vulkan_application_data);
 
         record_command_buffer(
             &self.device,
