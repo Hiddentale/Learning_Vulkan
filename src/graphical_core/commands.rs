@@ -89,7 +89,7 @@ pub unsafe fn record_command_buffer(
         &[] as &[vk::ImageMemoryBarrier],
     );
 
-    // Bind compute pipeline once for both phases
+    // Bind cull compute pipeline for phase 1
     device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, compute.pipeline);
     device.cmd_bind_descriptor_sets(
         cmd,
@@ -122,6 +122,17 @@ pub unsafe fn record_command_buffer(
     record_depth_pyramid_generation(device, cmd, data, depth_pyramid);
 
     // === Phase 2: previously invisible chunks (with occlusion test) ===
+    // Re-bind cull pipeline (pyramid generation bound a different compute pipeline)
+    device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, compute.pipeline);
+    device.cmd_bind_descriptor_sets(
+        cmd,
+        vk::PipelineBindPoint::COMPUTE,
+        compute.pipeline_layout,
+        0,
+        &[compute.descriptor_set],
+        &[],
+    );
+
     let mut push2 = *cull_push;
     push2.phase = 2;
     push2.draw_offset = PHASE2_DRAW_OFFSET;

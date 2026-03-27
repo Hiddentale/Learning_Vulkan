@@ -57,11 +57,22 @@ pub struct ComputeCullResources {
     pub draw_count_memory: vk::DeviceMemory,
     pub visibility_buffer: vk::Buffer,
     pub visibility_memory: vk::DeviceMemory,
+    pub visibility_ptr: *mut u32,
+    pub max_chunks: usize,
 }
 
 impl ComputeCullResources {
     pub fn workgroup_count(chunk_count: u32) -> u32 {
         chunk_count.div_ceil(WORKGROUP_SIZE)
+    }
+
+    /// Resets all visibility entries to 1 (visible).
+    /// Must be called when chunk ordering changes (load/unload) so that
+    /// visibility[i] matches chunks[i].
+    pub unsafe fn reset_visibility(&self) {
+        for i in 0..self.max_chunks {
+            std::ptr::write(self.visibility_ptr.add(i), 1u32);
+        }
     }
 }
 
@@ -98,7 +109,7 @@ pub unsafe fn create_compute_cull(
 
     // Visibility buffer (1 uint per chunk, persists across frames)
     let vis_size = (max_chunks * std::mem::size_of::<u32>()) as u64;
-    let (vis_buf, vis_mem, _vis_ptr) = allocate_buffer::<u32>(
+    let (vis_buf, vis_mem, vis_ptr) = allocate_buffer::<u32>(
         vis_size,
         vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
         device,
@@ -108,7 +119,7 @@ pub unsafe fn create_compute_cull(
     )?;
     // Initialize all to 1 (treat all chunks as "was visible" on first frame)
     for i in 0..max_chunks {
-        std::ptr::write(_vis_ptr.add(i), 1u32);
+        std::ptr::write(vis_ptr.add(i), 1u32);
     }
 
     // Descriptor set layout: 4 SSBOs + depth pyramid sampler + camera UBO
@@ -226,6 +237,8 @@ pub unsafe fn create_compute_cull(
         draw_count_memory: dc_mem,
         visibility_buffer: vis_buf,
         visibility_memory: vis_mem,
+        visibility_ptr: vis_ptr,
+        max_chunks,
     })
 }
 
@@ -791,10 +804,8 @@ mod tests {
     fn phase2_draw_offset_is_half_max_indirect_draws() {
         use crate::graphical_core::vulkan_object::MAX_INDIRECT_DRAWS;
         let expected = (MAX_INDIRECT_DRAWS / 2) as u32;
-        // PHASE2_DRAW_OFFSET is private, so recompute the same way
         let phase2_offset = (MAX_INDIRECT_DRAWS / 2) as u32;
         assert_eq!(phase2_offset, expected);
-        // Each phase gets half the buffer — must be enough for all chunks × 6 buckets
         assert!(phase2_offset as usize >= MAX_INDIRECT_DRAWS / 2);
     }
 
@@ -805,7 +816,6 @@ mod tests {
         let phase2_offset = MAX_INDIRECT_DRAWS / 2;
         let total_bytes = MAX_INDIRECT_DRAWS * stride;
         let phase2_byte_offset = phase2_offset * stride;
-        // Phase 2 commands + their region must fit within the buffer
         assert!(phase2_byte_offset + phase2_offset * stride <= total_bytes);
     }
 

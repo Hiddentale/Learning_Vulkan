@@ -403,6 +403,7 @@ impl VulkanApplication {
             .rebuild(&self.device, &self.vulkan_instance, &mut self.vulkan_application_data)?;
         write_transforms_to_ssbo(&self.mesh_pool, &self.vulkan_application_data);
         self.chunk_count = compute_cull::write_chunk_info(&self.mesh_pool, self.compute_cull.chunk_info_ptr);
+        self.compute_cull.reset_visibility();
 
         Ok(())
     }
