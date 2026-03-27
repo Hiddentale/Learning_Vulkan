@@ -35,8 +35,10 @@ pub struct CullPushConstants {
     pub camera_pos: [f32; 3],
     pub chunk_count: u32,
     pub screen_size: [f32; 2],
-    pub enable_occlusion: u32,
-    pub _padding: u32,
+    /// 1 = phase 1 (prev visible, no occlusion), 2 = phase 2 (prev invisible, occlusion test)
+    pub phase: u32,
+    /// Offset into the draw command buffer for this phase's output.
+    pub draw_offset: u32,
 }
 
 const WORKGROUP_SIZE: u32 = 64;
@@ -53,6 +55,8 @@ pub struct ComputeCullResources {
     pub chunk_info_ptr: *mut GpuChunkInfo,
     pub draw_count_buffer: vk::Buffer,
     pub draw_count_memory: vk::DeviceMemory,
+    pub visibility_buffer: vk::Buffer,
+    pub visibility_memory: vk::DeviceMemory,
 }
 
 impl ComputeCullResources {
@@ -82,9 +86,9 @@ pub unsafe fn create_compute_cull(
         host_visible,
     )?;
 
-    // Draw count buffer (atomic counter, reset each frame via vkCmdFillBuffer)
-    let (dc_buf, dc_mem, _dc_ptr) = allocate_buffer::<u32>(
-        4,
+    // Draw count buffer (2 atomic counters: phase1_count + phase2_count)
+    let (dc_buf, dc_mem, _dc_ptr) = allocate_buffer::<[u32; 2]>(
+        8,
         vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::INDIRECT_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
         device,
         instance,
@@ -92,7 +96,22 @@ pub unsafe fn create_compute_cull(
         host_visible,
     )?;
 
-    // Descriptor set layout: 3 SSBOs + depth pyramid sampler + camera UBO
+    // Visibility buffer (1 uint per chunk, persists across frames)
+    let vis_size = (max_chunks * std::mem::size_of::<u32>()) as u64;
+    let (vis_buf, vis_mem, _vis_ptr) = allocate_buffer::<u32>(
+        vis_size,
+        vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+        device,
+        instance,
+        data,
+        host_visible,
+    )?;
+    // Initialize all to 1 (treat all chunks as "was visible" on first frame)
+    for i in 0..max_chunks {
+        std::ptr::write(_vis_ptr.add(i), 1u32);
+    }
+
+    // Descriptor set layout: 4 SSBOs + depth pyramid sampler + camera UBO
     let bindings = [
         vk::DescriptorSetLayoutBinding::builder()
             .binding(0)
@@ -124,6 +143,12 @@ pub unsafe fn create_compute_cull(
             .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
             .stage_flags(vk::ShaderStageFlags::COMPUTE)
             .build(),
+        vk::DescriptorSetLayoutBinding::builder()
+            .binding(5)
+            .descriptor_count(1)
+            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+            .stage_flags(vk::ShaderStageFlags::COMPUTE)
+            .build(),
     ];
     let layout_info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings).build();
     let desc_layout = device.create_descriptor_set_layout(&layout_info, None)?;
@@ -131,7 +156,7 @@ pub unsafe fn create_compute_cull(
     // Descriptor pool
     let pool_sizes = [
         vk::DescriptorPoolSize::builder()
-            .descriptor_count(3)
+            .descriptor_count(4)
             .type_(vk::DescriptorType::STORAGE_BUFFER)
             .build(),
         vk::DescriptorPoolSize::builder()
@@ -154,7 +179,17 @@ pub unsafe fn create_compute_cull(
     let desc_set = device.allocate_descriptor_sets(&alloc_info)?[0];
 
     // Write descriptors
-    write_compute_descriptors(device, desc_set, ci_buf, chunk_info_size, indirect_buffer, indirect_buffer_size, dc_buf);
+    write_compute_descriptors(
+        device,
+        desc_set,
+        ci_buf,
+        chunk_info_size,
+        indirect_buffer,
+        indirect_buffer_size,
+        dc_buf,
+        vis_buf,
+        vis_size,
+    );
     write_depth_pyramid_descriptors(device, desc_set, data);
 
     // Pipeline layout with push constants
@@ -189,6 +224,8 @@ pub unsafe fn create_compute_cull(
         chunk_info_ptr: ci_ptr,
         draw_count_buffer: dc_buf,
         draw_count_memory: dc_mem,
+        visibility_buffer: vis_buf,
+        visibility_memory: vis_mem,
     })
 }
 
@@ -200,6 +237,8 @@ fn write_compute_descriptors(
     indirect_buffer: vk::Buffer,
     indirect_buffer_size: u64,
     draw_count_buffer: vk::Buffer,
+    visibility_buffer: vk::Buffer,
+    visibility_size: u64,
 ) {
     let ci_info = vk::DescriptorBufferInfo::builder()
         .buffer(chunk_info_buffer)
@@ -223,7 +262,7 @@ fn write_compute_descriptors(
         .buffer_info(&[ind_info])
         .build();
 
-    let dc_info = vk::DescriptorBufferInfo::builder().buffer(draw_count_buffer).offset(0).range(4);
+    let dc_info = vk::DescriptorBufferInfo::builder().buffer(draw_count_buffer).offset(0).range(8);
     let dc_write = vk::WriteDescriptorSet::builder()
         .dst_set(set)
         .dst_binding(2)
@@ -231,8 +270,19 @@ fn write_compute_descriptors(
         .buffer_info(&[dc_info])
         .build();
 
+    let vis_info = vk::DescriptorBufferInfo::builder()
+        .buffer(visibility_buffer)
+        .offset(0)
+        .range(visibility_size);
+    let vis_write = vk::WriteDescriptorSet::builder()
+        .dst_set(set)
+        .dst_binding(5)
+        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+        .buffer_info(&[vis_info])
+        .build();
+
     unsafe {
-        device.update_descriptor_sets(&[ci_write, ind_write, dc_write], &[] as &[vk::CopyDescriptorSet]);
+        device.update_descriptor_sets(&[ci_write, ind_write, dc_write, vis_write], &[] as &[vk::CopyDescriptorSet]);
     }
 }
 
@@ -456,4 +506,8 @@ pub unsafe fn destroy_compute_cull(device: &Device, res: &ComputeCullResources) 
     device.unmap_memory(res.draw_count_memory);
     device.destroy_buffer(res.draw_count_buffer, None);
     device.free_memory(res.draw_count_memory, None);
+
+    device.unmap_memory(res.visibility_memory);
+    device.destroy_buffer(res.visibility_buffer, None);
+    device.free_memory(res.visibility_memory, None);
 }

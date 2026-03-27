@@ -47,7 +47,14 @@ pub unsafe fn allocate_command_buffers(device: &Device, data: &mut VulkanApplica
     Ok(())
 }
 
-/// Records compute culling dispatch + graphics draw into a command buffer.
+const PHASE2_DRAW_OFFSET: u32 = (crate::graphical_core::vulkan_object::MAX_INDIRECT_DRAWS / 2) as u32;
+
+/// Records the two-phase GPU-driven rendering pipeline:
+/// 1. Cull phase 1 (previously visible chunks, frustum+face only)
+/// 2. Draw phase 1
+/// 3. Build depth pyramid from phase 1 depth
+/// 4. Cull phase 2 (previously invisible chunks, frustum+face+occlusion)
+/// 5. Draw phase 2
 pub unsafe fn record_command_buffer(
     device: &Device,
     data: &VulkanApplicationData,
@@ -61,51 +68,14 @@ pub unsafe fn record_command_buffer(
 ) -> anyhow::Result<()> {
     let cmd = data.command_buffers[image_index];
     device.reset_command_buffer(cmd, vk::CommandBufferResetFlags::empty())?;
-
-    let begin_info = vk::CommandBufferBeginInfo::builder();
-    device.begin_command_buffer(cmd, &begin_info)?;
+    device.begin_command_buffer(cmd, &vk::CommandBufferBeginInfo::builder())?;
 
     if pyramid_needs_init {
-        // First frame: transition pyramid from UNDEFINED to GENERAL so the cull shader can read it
-        let init_barrier = vk::ImageMemoryBarrier::builder()
-            .old_layout(vk::ImageLayout::UNDEFINED)
-            .new_layout(vk::ImageLayout::GENERAL)
-            .src_access_mask(vk::AccessFlags::empty())
-            .dst_access_mask(vk::AccessFlags::SHADER_READ)
-            .image(data.depth_pyramid_image)
-            .subresource_range(
-                vk::ImageSubresourceRange::builder()
-                    .aspect_mask(vk::ImageAspectFlags::COLOR)
-                    .base_mip_level(0)
-                    .level_count(data.depth_pyramid_mip_count)
-                    .base_array_layer(0)
-                    .layer_count(1),
-            );
-        device.cmd_pipeline_barrier(
-            cmd,
-            vk::PipelineStageFlags::TOP_OF_PIPE,
-            vk::PipelineStageFlags::COMPUTE_SHADER,
-            vk::DependencyFlags::empty(),
-            &[] as &[vk::MemoryBarrier],
-            &[] as &[vk::BufferMemoryBarrier],
-            &[init_barrier],
-        );
+        transition_pyramid_undefined_to_general(device, cmd, data);
     }
 
-    record_compute_cull(device, cmd, compute, cull_push);
-    record_draw_commands(device, cmd, data, image_index, compute, vertex_buffer, index_buffer);
-    record_depth_pyramid_generation(device, cmd, data, depth_pyramid);
-
-    device.end_command_buffer(cmd)?;
-    Ok(())
-}
-
-/// Resets draw count, dispatches the cull compute shader, and inserts a barrier.
-unsafe fn record_compute_cull(device: &Device, cmd: vk::CommandBuffer, compute: &ComputeCullResources, cull_push: &CullPushConstants) {
-    // Reset draw count to 0
-    device.cmd_fill_buffer(cmd, compute.draw_count_buffer, 0, 4, 0);
-
-    // Barrier: transfer write → compute read/write
+    // Reset both draw counts to 0
+    device.cmd_fill_buffer(cmd, compute.draw_count_buffer, 0, 8, 0);
     let fill_barrier = vk::MemoryBarrier::builder()
         .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
         .dst_access_mask(vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE);
@@ -119,7 +89,7 @@ unsafe fn record_compute_cull(device: &Device, cmd: vk::CommandBuffer, compute: 
         &[] as &[vk::ImageMemoryBarrier],
     );
 
-    // Dispatch compute
+    // Bind compute pipeline once for both phases
     device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, compute.pipeline);
     device.cmd_bind_descriptor_sets(
         cmd,
@@ -129,17 +99,89 @@ unsafe fn record_compute_cull(device: &Device, cmd: vk::CommandBuffer, compute: 
         &[compute.descriptor_set],
         &[],
     );
-    let push_bytes: &[u8] = std::slice::from_raw_parts(
-        cull_push as *const CullPushConstants as *const u8,
-        std::mem::size_of::<CullPushConstants>(),
+
+    let stride = std::mem::size_of::<DrawIndexedIndirectCommand>() as u32;
+    let phase2_byte_offset = PHASE2_DRAW_OFFSET as u64 * stride as u64;
+
+    // === Phase 1: previously visible chunks (no occlusion test) ===
+    let mut push1 = *cull_push;
+    push1.phase = 1;
+    push1.draw_offset = 0;
+    dispatch_cull(device, cmd, compute, &push1);
+
+    // Barrier: compute → draw indirect
+    compute_to_draw_barrier(device, cmd);
+
+    // Draw phase 1 (begins render pass with clear)
+    begin_render_pass(device, cmd, data, image_index);
+    bind_graphics_state(device, cmd, data, vertex_buffer, index_buffer);
+    device.cmd_draw_indexed_indirect_count(cmd, data.indirect_buffer, 0, compute.draw_count_buffer, 0, PHASE2_DRAW_OFFSET, stride);
+    device.cmd_end_render_pass(cmd);
+
+    // === Build depth pyramid from phase 1 depth ===
+    record_depth_pyramid_generation(device, cmd, data, depth_pyramid);
+
+    // === Phase 2: previously invisible chunks (with occlusion test) ===
+    let mut push2 = *cull_push;
+    push2.phase = 2;
+    push2.draw_offset = PHASE2_DRAW_OFFSET;
+    dispatch_cull(device, cmd, compute, &push2);
+
+    // Barrier: compute → draw indirect
+    compute_to_draw_barrier(device, cmd);
+
+    // Draw phase 2 (resume render pass WITHOUT clearing — append to existing depth+color)
+    begin_render_pass_no_clear(device, cmd, data, image_index);
+    bind_graphics_state(device, cmd, data, vertex_buffer, index_buffer);
+    device.cmd_draw_indexed_indirect_count(
+        cmd,
+        data.indirect_buffer,
+        phase2_byte_offset,
+        compute.draw_count_buffer,
+        4,
+        PHASE2_DRAW_OFFSET,
+        stride,
     );
+    device.cmd_end_render_pass(cmd);
+
+    device.end_command_buffer(cmd)?;
+    Ok(())
+}
+
+unsafe fn transition_pyramid_undefined_to_general(device: &Device, cmd: vk::CommandBuffer, data: &VulkanApplicationData) {
+    let barrier = vk::ImageMemoryBarrier::builder()
+        .old_layout(vk::ImageLayout::UNDEFINED)
+        .new_layout(vk::ImageLayout::GENERAL)
+        .src_access_mask(vk::AccessFlags::empty())
+        .dst_access_mask(vk::AccessFlags::SHADER_READ)
+        .image(data.depth_pyramid_image)
+        .subresource_range(
+            vk::ImageSubresourceRange::builder()
+                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                .base_mip_level(0)
+                .level_count(data.depth_pyramid_mip_count)
+                .base_array_layer(0)
+                .layer_count(1),
+        );
+    device.cmd_pipeline_barrier(
+        cmd,
+        vk::PipelineStageFlags::TOP_OF_PIPE,
+        vk::PipelineStageFlags::COMPUTE_SHADER,
+        vk::DependencyFlags::empty(),
+        &[] as &[vk::MemoryBarrier],
+        &[] as &[vk::BufferMemoryBarrier],
+        &[barrier],
+    );
+}
+
+unsafe fn dispatch_cull(device: &Device, cmd: vk::CommandBuffer, compute: &ComputeCullResources, push: &CullPushConstants) {
+    let push_bytes: &[u8] = std::slice::from_raw_parts(push as *const CullPushConstants as *const u8, std::mem::size_of::<CullPushConstants>());
     device.cmd_push_constants(cmd, compute.pipeline_layout, vk::ShaderStageFlags::COMPUTE, 0, push_bytes);
+    device.cmd_dispatch(cmd, ComputeCullResources::workgroup_count(push.chunk_count), 1, 1);
+}
 
-    let workgroups = ComputeCullResources::workgroup_count(cull_push.chunk_count);
-    device.cmd_dispatch(cmd, workgroups, 1, 1);
-
-    // Barrier: compute shader writes → indirect draw reads
-    let compute_barrier = vk::MemoryBarrier::builder()
+unsafe fn compute_to_draw_barrier(device: &Device, cmd: vk::CommandBuffer) {
+    let barrier = vk::MemoryBarrier::builder()
         .src_access_mask(vk::AccessFlags::SHADER_WRITE)
         .dst_access_mask(vk::AccessFlags::INDIRECT_COMMAND_READ);
     device.cmd_pipeline_barrier(
@@ -147,49 +189,50 @@ unsafe fn record_compute_cull(device: &Device, cmd: vk::CommandBuffer, compute: 
         vk::PipelineStageFlags::COMPUTE_SHADER,
         vk::PipelineStageFlags::DRAW_INDIRECT,
         vk::DependencyFlags::empty(),
-        &[compute_barrier],
+        &[barrier],
         &[] as &[vk::BufferMemoryBarrier],
         &[] as &[vk::ImageMemoryBarrier],
     );
 }
 
-unsafe fn record_draw_commands(
-    device: &Device,
-    cmd: vk::CommandBuffer,
-    data: &VulkanApplicationData,
-    framebuffer_index: usize,
-    compute: &ComputeCullResources,
-    vertex_buffer: vk::Buffer,
-    index_buffer: vk::Buffer,
-) {
-    let render_area = vk::Rect2D::builder().offset(vk::Offset2D::default()).extent(data.swapchain_extent);
-    let color_clear_value = vk::ClearValue {
-        color: vk::ClearColorValue {
-            float32: [0.0, 0.0, 0.0, 1.0],
+unsafe fn begin_render_pass(device: &Device, cmd: vk::CommandBuffer, data: &VulkanApplicationData, framebuffer_index: usize) {
+    let clear_values = &[
+        vk::ClearValue {
+            color: vk::ClearColorValue {
+                float32: [0.0, 0.0, 0.0, 1.0],
+            },
         },
-    };
-    let depth_clear_value = vk::ClearValue {
-        depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 },
-    };
-    let clear_values = &[color_clear_value, depth_clear_value];
+        vk::ClearValue {
+            depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 },
+        },
+    ];
     let info = vk::RenderPassBeginInfo::builder()
         .render_pass(data.render_pass)
         .framebuffer(data.framebuffers[framebuffer_index])
-        .render_area(render_area)
+        .render_area(vk::Rect2D::builder().offset(vk::Offset2D::default()).extent(data.swapchain_extent))
         .clear_values(clear_values);
-
     device.cmd_begin_render_pass(cmd, &info, vk::SubpassContents::INLINE);
+}
+
+unsafe fn begin_render_pass_no_clear(device: &Device, cmd: vk::CommandBuffer, data: &VulkanApplicationData, framebuffer_index: usize) {
+    let info = vk::RenderPassBeginInfo::builder()
+        .render_pass(data.render_pass_load)
+        .framebuffer(data.framebuffers[framebuffer_index])
+        .render_area(vk::Rect2D::builder().offset(vk::Offset2D::default()).extent(data.swapchain_extent));
+    device.cmd_begin_render_pass(cmd, &info, vk::SubpassContents::INLINE);
+}
+
+unsafe fn bind_graphics_state(
+    device: &Device,
+    cmd: vk::CommandBuffer,
+    data: &VulkanApplicationData,
+    vertex_buffer: vk::Buffer,
+    index_buffer: vk::Buffer,
+) {
     device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, data.pipeline);
     device.cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::GRAPHICS, data.pipeline_layout, 0, &[data.descriptor_set], &[]);
-
     device.cmd_bind_vertex_buffers(cmd, 0, &[vertex_buffer], &[0]);
     device.cmd_bind_index_buffer(cmd, index_buffer, 0, vk::IndexType::UINT32);
-
-    let stride = std::mem::size_of::<DrawIndexedIndirectCommand>() as u32;
-    let max_draws = (crate::graphical_core::vulkan_object::MAX_INDIRECT_DRAWS) as u32;
-    device.cmd_draw_indexed_indirect_count(cmd, data.indirect_buffer, 0, compute.draw_count_buffer, 0, max_draws, stride);
-
-    device.cmd_end_render_pass(cmd);
 }
 
 /// Generates the depth pyramid from the depth buffer after the render pass.
