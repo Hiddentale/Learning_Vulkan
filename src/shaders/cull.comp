@@ -1,0 +1,102 @@
+#version 450
+
+layout(local_size_x = 64) in;
+
+struct FaceBucket {
+    uint first_index;
+    uint index_count;
+};
+
+struct ChunkInfo {
+    vec3 aabb_min;
+    int vertex_offset;
+    vec3 aabb_max;
+    uint transform_index;
+    FaceBucket buckets[6];
+};
+
+struct DrawCommand {
+    uint index_count;
+    uint instance_count;
+    uint first_index;
+    int vertex_offset;
+    uint first_instance;
+};
+
+layout(std430, set = 0, binding = 0) readonly buffer ChunkInfoBuffer {
+    ChunkInfo chunks[];
+};
+
+layout(std430, set = 0, binding = 1) writeonly buffer DrawCommandBuffer {
+    DrawCommand draws[];
+};
+
+layout(std430, set = 0, binding = 2) buffer DrawCountBuffer {
+    uint draw_count;
+};
+
+layout(push_constant) uniform CullParams {
+    vec4 planes[6];
+    vec3 camera_pos;
+    uint chunk_count;
+};
+
+/// Frustum-AABB test using the p-vertex method.
+bool frustum_visible(vec3 aabb_min, vec3 aabb_max) {
+    for (int i = 0; i < 6; i++) {
+        vec3 normal = planes[i].xyz;
+        // p-vertex: corner most aligned with plane normal
+        vec3 p = vec3(
+            normal.x >= 0.0 ? aabb_max.x : aabb_min.x,
+            normal.y >= 0.0 ? aabb_max.y : aabb_min.y,
+            normal.z >= 0.0 ? aabb_max.z : aabb_min.z
+        );
+        if (dot(normal, p) + planes[i].w < 0.0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void main() {
+    uint idx = gl_GlobalInvocationID.x;
+    if (idx >= chunk_count) return;
+
+    ChunkInfo chunk = chunks[idx];
+
+    if (!frustum_visible(chunk.aabb_min, chunk.aabb_max)) return;
+
+    // Per-chunk face bucket culling based on camera position vs AABB
+    bool visible[6] = bool[6](
+        camera_pos.x > chunk.aabb_min.x,  // +X
+        camera_pos.x < chunk.aabb_max.x,  // -X
+        camera_pos.y > chunk.aabb_min.y,  // +Y
+        camera_pos.y < chunk.aabb_max.y,  // -Y
+        camera_pos.z > chunk.aabb_min.z,  // +Z
+        camera_pos.z < chunk.aabb_max.z   // -Z
+    );
+
+    // Count non-empty visible buckets
+    uint count = 0;
+    for (int i = 0; i < 6; i++) {
+        if (visible[i] && chunk.buckets[i].index_count > 0)
+            count++;
+    }
+    if (count == 0) return;
+
+    // Reserve output slots atomically
+    uint base = atomicAdd(draw_count, count);
+
+    // Write indirect draw commands
+    uint slot = base;
+    for (int i = 0; i < 6; i++) {
+        if (visible[i] && chunk.buckets[i].index_count > 0) {
+            draws[slot].index_count = chunk.buckets[i].index_count;
+            draws[slot].instance_count = 1;
+            draws[slot].first_index = chunk.buckets[i].first_index;
+            draws[slot].vertex_offset = chunk.vertex_offset;
+            draws[slot].first_instance = chunk.transform_index;
+            slot++;
+        }
+    }
+}

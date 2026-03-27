@@ -21,16 +21,3 @@ impl Default for Transform {
         }
     }
 }
-
-/// An object in the scene: draw parameters and culling bounds for one chunk.
-pub struct SceneObject {
-    /// Six face-direction buckets (+X, -X, +Y, -Y, +Z, -Z) for orientation culling.
-    pub buckets: [crate::graphical_core::mesh_pool::FaceBucket; 6],
-    /// Added to each index value to locate vertices in the shared vertex buffer.
-    pub vertex_offset: i32,
-    /// Index into the transform SSBO (used as firstInstance in indirect draws).
-    pub transform_index: u32,
-    /// World-space axis-aligned bounding box for frustum culling.
-    pub aabb_min: Vec3,
-    pub aabb_max: Vec3,
-}

@@ -17,7 +17,7 @@ pub unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut VulkanA
         .application_version(vk::make_version(1, 0, 0))
         .engine_name(b"No Engine\0")
         .engine_version(vk::make_version(1, 0, 0))
-        .api_version(vk::make_version(1, 0, 0));
+        .api_version(vk::make_version(1, 2, 0));
 
     let available_layers = entry
         .enumerate_instance_layer_properties()?
@@ -100,11 +100,13 @@ pub unsafe fn create_logical_device(entry: &Entry, instance: &Instance, data: &m
         extensions.push(vk::KHR_PORTABILITY_SUBSET_EXTENSION.name.as_ptr());
     }
     let features = vk::PhysicalDeviceFeatures::builder().multi_draw_indirect(true);
+    let mut features_1_2 = vk::PhysicalDeviceVulkan12Features::builder().draw_indirect_count(true);
     let info = vk::DeviceCreateInfo::builder()
         .queue_create_infos(&queue_infos)
         .enabled_layer_names(&layers)
         .enabled_extension_names(&extensions)
-        .enabled_features(&features);
+        .enabled_features(&features)
+        .push_next(&mut features_1_2);
     let device = instance.create_device(data.physical_device, &info, None)?;
 
     data.graphics_queue = device.get_device_queue(indices.graphics_queue_index, 0);

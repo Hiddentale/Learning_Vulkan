@@ -1,6 +1,7 @@
+use crate::graphical_core::compute_cull::{ComputeCullResources, CullPushConstants};
 use crate::graphical_core::vulkan_object::{DrawIndexedIndirectCommand, VulkanApplicationData};
 use crate::graphical_core::{self, MAX_FRAMES_IN_FLIGHT};
-use vulkanalia::vk::{DeviceV1_0, Handle, HasBuilder};
+use vulkanalia::vk::{DeviceV1_0, DeviceV1_2, Handle, HasBuilder};
 use vulkanalia::{vk, Device, Instance};
 
 /// Creates a framebuffer for each swapchain image view, attaching color and depth.
@@ -46,15 +47,13 @@ pub unsafe fn allocate_command_buffers(device: &Device, data: &mut VulkanApplica
     Ok(())
 }
 
-/// Records draw commands into a single command buffer for the given framebuffer index.
-///
-/// Called once per frame. The command buffer must have been allocated and
-/// must not be in use by the GPU (caller ensures this via fence waits).
+/// Records compute culling dispatch + graphics draw into a command buffer.
 pub unsafe fn record_command_buffer(
     device: &Device,
     data: &VulkanApplicationData,
     image_index: usize,
-    draw_count: u32,
+    compute: &ComputeCullResources,
+    cull_push: &CullPushConstants,
     vertex_buffer: vk::Buffer,
     index_buffer: vk::Buffer,
 ) -> anyhow::Result<()> {
@@ -63,9 +62,65 @@ pub unsafe fn record_command_buffer(
 
     let begin_info = vk::CommandBufferBeginInfo::builder();
     device.begin_command_buffer(cmd, &begin_info)?;
-    record_draw_commands(device, cmd, data, image_index, draw_count, vertex_buffer, index_buffer);
+
+    record_compute_cull(device, cmd, compute, cull_push);
+    record_draw_commands(device, cmd, data, image_index, compute, vertex_buffer, index_buffer);
+
     device.end_command_buffer(cmd)?;
     Ok(())
+}
+
+/// Resets draw count, dispatches the cull compute shader, and inserts a barrier.
+unsafe fn record_compute_cull(device: &Device, cmd: vk::CommandBuffer, compute: &ComputeCullResources, cull_push: &CullPushConstants) {
+    // Reset draw count to 0
+    device.cmd_fill_buffer(cmd, compute.draw_count_buffer, 0, 4, 0);
+
+    // Barrier: transfer write → compute read/write
+    let fill_barrier = vk::MemoryBarrier::builder()
+        .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+        .dst_access_mask(vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE);
+    device.cmd_pipeline_barrier(
+        cmd,
+        vk::PipelineStageFlags::TRANSFER,
+        vk::PipelineStageFlags::COMPUTE_SHADER,
+        vk::DependencyFlags::empty(),
+        &[fill_barrier],
+        &[] as &[vk::BufferMemoryBarrier],
+        &[] as &[vk::ImageMemoryBarrier],
+    );
+
+    // Dispatch compute
+    device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, compute.pipeline);
+    device.cmd_bind_descriptor_sets(
+        cmd,
+        vk::PipelineBindPoint::COMPUTE,
+        compute.pipeline_layout,
+        0,
+        &[compute.descriptor_set],
+        &[],
+    );
+    let push_bytes: &[u8] = std::slice::from_raw_parts(
+        cull_push as *const CullPushConstants as *const u8,
+        std::mem::size_of::<CullPushConstants>(),
+    );
+    device.cmd_push_constants(cmd, compute.pipeline_layout, vk::ShaderStageFlags::COMPUTE, 0, push_bytes);
+
+    let workgroups = ComputeCullResources::workgroup_count(cull_push.chunk_count);
+    device.cmd_dispatch(cmd, workgroups, 1, 1);
+
+    // Barrier: compute shader writes → indirect draw reads
+    let compute_barrier = vk::MemoryBarrier::builder()
+        .src_access_mask(vk::AccessFlags::SHADER_WRITE)
+        .dst_access_mask(vk::AccessFlags::INDIRECT_COMMAND_READ);
+    device.cmd_pipeline_barrier(
+        cmd,
+        vk::PipelineStageFlags::COMPUTE_SHADER,
+        vk::PipelineStageFlags::DRAW_INDIRECT,
+        vk::DependencyFlags::empty(),
+        &[compute_barrier],
+        &[] as &[vk::BufferMemoryBarrier],
+        &[] as &[vk::ImageMemoryBarrier],
+    );
 }
 
 unsafe fn record_draw_commands(
@@ -73,7 +128,7 @@ unsafe fn record_draw_commands(
     cmd: vk::CommandBuffer,
     data: &VulkanApplicationData,
     framebuffer_index: usize,
-    draw_count: u32,
+    compute: &ComputeCullResources,
     vertex_buffer: vk::Buffer,
     index_buffer: vk::Buffer,
 ) {
@@ -97,14 +152,12 @@ unsafe fn record_draw_commands(
     device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, data.pipeline);
     device.cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::GRAPHICS, data.pipeline_layout, 0, &[data.descriptor_set], &[]);
 
-    // Bind the shared pool buffers once, then issue a single multi-draw indirect call
     device.cmd_bind_vertex_buffers(cmd, 0, &[vertex_buffer], &[0]);
     device.cmd_bind_index_buffer(cmd, index_buffer, 0, vk::IndexType::UINT32);
 
-    if draw_count > 0 {
-        let stride = std::mem::size_of::<DrawIndexedIndirectCommand>() as u32;
-        device.cmd_draw_indexed_indirect(cmd, data.indirect_buffer, 0, draw_count, stride);
-    }
+    let stride = std::mem::size_of::<DrawIndexedIndirectCommand>() as u32;
+    let max_draws = (crate::graphical_core::vulkan_object::MAX_INDIRECT_DRAWS) as u32;
+    device.cmd_draw_indexed_indirect_count(cmd, data.indirect_buffer, 0, compute.draw_count_buffer, 0, max_draws, stride);
 
     device.cmd_end_render_pass(cmd);
 }

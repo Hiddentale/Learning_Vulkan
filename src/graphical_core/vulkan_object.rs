@@ -1,6 +1,7 @@
 use crate::graphical_core::{
     camera::{create_uniform_buffer, destroy_uniform_buffer, update_uniform_buffer, view_projection_matrix, Camera, UniformBufferObject},
     commands::{allocate_command_buffers, create_command_pool, create_frame_buffers, create_sync_objects, record_command_buffer},
+    compute_cull::{self, ComputeCullResources, CullPushConstants},
     depth::{create_depth_image, destroy_depth_image},
     descriptors,
     frustum::Frustum,
@@ -10,7 +11,7 @@ use crate::graphical_core::{
     palette_buffer::{create_palette_buffer, destroy_palette_buffer},
     pipeline::create_pipeline,
     render_pass::create_render_pass,
-    scene::{SceneObject, Transform},
+    scene::Transform,
     swapchain::{create_swapchain, create_swapchain_image_views},
     texture_mapping::{create_texture_image, destroy_textures},
     MAX_FRAMES_IN_FLIGHT,
@@ -78,7 +79,7 @@ pub struct VulkanApplicationData {
 const RENDER_DISTANCE: i32 = 5;
 const MAX_LOADED_CHUNKS: usize = ((2 * RENDER_DISTANCE + 1) * (2 * RENDER_DISTANCE + 1)) as usize;
 /// Each chunk can emit up to 6 indirect draws (one per face-direction bucket).
-const MAX_INDIRECT_DRAWS: usize = MAX_LOADED_CHUNKS * 6;
+pub const MAX_INDIRECT_DRAWS: usize = MAX_LOADED_CHUNKS * 6;
 
 /// Mirrors VkDrawIndexedIndirectCommand.
 #[repr(C)]
@@ -98,9 +99,10 @@ pub struct VulkanApplication {
     device: Device,
     frame: usize,
     pub(crate) resized: bool,
-    scene: Vec<SceneObject>,
     world: World,
     mesh_pool: MeshPool,
+    compute_cull: ComputeCullResources,
+    chunk_count: u32,
     last_player_chunk: [i32; 2],
 }
 
@@ -126,7 +128,13 @@ impl VulkanApplication {
         let mut world = World::new(RENDER_DISTANCE);
         world.update(0, 0);
         let mut mesh_pool = MeshPool::new();
-        let scene = build_world_meshes(&world, &mut mesh_pool, &device, &instance, &mut data)?;
+        build_world_meshes(&world, &mut mesh_pool, &device, &instance, &mut data)?;
+
+        let indirect_buffer_size = (MAX_INDIRECT_DRAWS * std::mem::size_of::<DrawIndexedIndirectCommand>()) as u64;
+        let indirect_buffer = data.indirect_buffer;
+        let compute_cull =
+            compute_cull::create_compute_cull(&device, &instance, &mut data, MAX_LOADED_CHUNKS, indirect_buffer, indirect_buffer_size)?;
+        let chunk_count = compute_cull::write_chunk_info(&mesh_pool, compute_cull.chunk_info_ptr);
 
         Ok(Self {
             _vulkan_entry_point: entry,
@@ -135,9 +143,10 @@ impl VulkanApplication {
             device,
             frame: 0,
             resized: false,
-            scene,
             world,
             mesh_pool,
+            compute_cull,
+            chunk_count,
             last_player_chunk: [0, 0],
         })
     }
@@ -219,8 +228,14 @@ unsafe fn create_transform_and_indirect_buffers(device: &Device, instance: &Inst
     data.transform_buffer_ptr = tp;
 
     let indirect_size = (MAX_INDIRECT_DRAWS * std::mem::size_of::<DrawIndexedIndirectCommand>()) as u64;
-    let (ib, im, ip) =
-        allocate_buffer::<DrawIndexedIndirectCommand>(indirect_size, vk::BufferUsageFlags::INDIRECT_BUFFER, device, instance, data, host_visible)?;
+    let (ib, im, ip) = allocate_buffer::<DrawIndexedIndirectCommand>(
+        indirect_size,
+        vk::BufferUsageFlags::INDIRECT_BUFFER | vk::BufferUsageFlags::STORAGE_BUFFER,
+        device,
+        instance,
+        data,
+        host_visible,
+    )?;
     data.indirect_buffer = ib;
     data.indirect_buffer_memory = im;
     data.indirect_buffer_ptr = ip;
@@ -244,14 +259,14 @@ unsafe fn build_world_meshes(
     device: &Device,
     instance: &Instance,
     data: &mut VulkanApplicationData,
-) -> anyhow::Result<Vec<SceneObject>> {
+) -> anyhow::Result<u32> {
     for [cx, cz] in world.chunk_positions() {
         mesh_chunk_into_pool(world, cx, cz, pool);
     }
     pool.rebuild(device, instance, data)?;
     write_transforms_to_ssbo(pool, data);
 
-    Ok(build_scene_from_pool(pool))
+    Ok(0) // chunk_count set after compute_cull is created
 }
 
 /// Meshes a single chunk and adds its data to the pool (CPU-side only).
@@ -274,23 +289,6 @@ fn mesh_chunk_into_pool(world: &World, cx: i32, cz: i32, pool: &mut MeshPool) {
     pool.add_chunk([cx, cz], vertices, bucket_indices);
 }
 
-/// Builds the scene Vec from the pool's current draw params.
-fn build_scene_from_pool(pool: &MeshPool) -> Vec<SceneObject> {
-    pool.chunk_positions()
-        .filter_map(|&pos| {
-            let params = pool.draw_params(&pos)?;
-            let (aabb_min, aabb_max) = chunk_aabb(pos[0], pos[1]);
-            Some(SceneObject {
-                buckets: params.buckets,
-                vertex_offset: params.vertex_offset,
-                transform_index: params.transform_index,
-                aabb_min,
-                aabb_max,
-            })
-        })
-        .collect()
-}
-
 /// Writes all chunk model matrices into the persistently mapped transform SSBO.
 fn write_transforms_to_ssbo(pool: &MeshPool, data: &VulkanApplicationData) {
     for &pos in pool.chunk_positions() {
@@ -303,62 +301,11 @@ fn write_transforms_to_ssbo(pool: &MeshPool, data: &VulkanApplicationData) {
     }
 }
 
-/// Writes indirect draw commands for frustum-visible chunks into the mapped indirect buffer.
-/// For each visible chunk, emits up to 6 draws (one per face bucket), skipping buckets
-/// whose faces point away from the camera relative to the chunk's AABB.
-fn write_indirect_commands(scene: &[SceneObject], frustum: &Frustum, camera_pos: glam::Vec3, data: &VulkanApplicationData) -> u32 {
-    let mut draw_count: u32 = 0;
-    for obj in scene {
-        if !frustum.intersects_aabb(obj.aabb_min, obj.aabb_max) {
-            continue;
-        }
-        let visible_buckets = visible_face_buckets(camera_pos, obj.aabb_min, obj.aabb_max);
-        for (i, &visible) in visible_buckets.iter().enumerate() {
-            let bucket = &obj.buckets[i];
-            if !visible || bucket.index_count == 0 {
-                continue;
-            }
-            let cmd = DrawIndexedIndirectCommand {
-                index_count: bucket.index_count,
-                instance_count: 1,
-                first_index: bucket.first_index,
-                vertex_offset: obj.vertex_offset,
-                first_instance: obj.transform_index,
-            };
-            unsafe {
-                std::ptr::write(data.indirect_buffer_ptr.add(draw_count as usize), cmd);
-            }
-            draw_count += 1;
-        }
-    }
-    draw_count
-}
-
-/// Determines which face-direction buckets are potentially visible given the camera position
-/// and a chunk's AABB. Order: +X, -X, +Y, -Y, +Z, -Z.
-fn visible_face_buckets(camera: glam::Vec3, aabb_min: glam::Vec3, aabb_max: glam::Vec3) -> [bool; 6] {
-    [
-        camera.x > aabb_min.x, // +X faces visible if camera is not entirely to the -X side
-        camera.x < aabb_max.x, // -X faces visible if camera is not entirely to the +X side
-        camera.y > aabb_min.y, // +Y
-        camera.y < aabb_max.y, // -Y
-        camera.z > aabb_min.z, // +Z
-        camera.z < aabb_max.z, // -Z
-    ]
-}
-
 fn chunk_transform(cx: i32, cz: i32) -> Transform {
     Transform {
         position: glam::Vec3::new(cx as f32 * CHUNK_SIZE as f32, 0.0, cz as f32 * CHUNK_SIZE as f32),
         ..Default::default()
     }
-}
-
-/// Returns the world-space AABB for a chunk at grid position (cx, cz).
-fn chunk_aabb(cx: i32, cz: i32) -> (glam::Vec3, glam::Vec3) {
-    let min = glam::Vec3::new(cx as f32 * CHUNK_SIZE as f32, 0.0, cz as f32 * CHUNK_SIZE as f32);
-    let max = min + glam::Vec3::splat(CHUNK_SIZE as f32);
-    (min, max)
 }
 
 impl VulkanApplication {
@@ -377,13 +324,25 @@ impl VulkanApplication {
 
         let vp = view_projection_matrix(camera, self.vulkan_application_data.swapchain_extent);
         let frustum = Frustum::from_view_projection(&vp);
-        let draw_count = write_indirect_commands(&self.scene, &frustum, camera.position, &self.vulkan_application_data);
+        let cull_push = CullPushConstants {
+            planes: [
+                frustum.plane(0),
+                frustum.plane(1),
+                frustum.plane(2),
+                frustum.plane(3),
+                frustum.plane(4),
+                frustum.plane(5),
+            ],
+            camera_pos: camera.position.to_array(),
+            chunk_count: self.chunk_count,
+        };
 
         record_command_buffer(
             &self.device,
             &self.vulkan_application_data,
             image_index,
-            draw_count,
+            &self.compute_cull,
+            &cull_push,
             self.mesh_pool.vertex_buffer,
             self.mesh_pool.index_buffer,
         )?;
@@ -421,7 +380,7 @@ impl VulkanApplication {
         self.mesh_pool
             .rebuild(&self.device, &self.vulkan_instance, &mut self.vulkan_application_data)?;
         write_transforms_to_ssbo(&self.mesh_pool, &self.vulkan_application_data);
-        self.scene = build_scene_from_pool(&self.mesh_pool);
+        self.chunk_count = compute_cull::write_chunk_info(&self.mesh_pool, self.compute_cull.chunk_info_ptr);
 
         Ok(())
     }
@@ -549,6 +508,7 @@ impl VulkanApplication {
     }
 
     unsafe fn destroy_resources(&mut self) {
+        compute_cull::destroy_compute_cull(&self.device, &self.compute_cull);
         destroy_textures(&self.device, &mut self.vulkan_application_data);
         destroy_palette_buffer(&self.device, &mut self.vulkan_application_data);
         destroy_uniform_buffer(&self.device, &mut self.vulkan_application_data);

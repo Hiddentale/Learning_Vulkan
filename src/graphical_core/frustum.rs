@@ -37,25 +37,8 @@ impl Frustum {
         Self { planes }
     }
 
-    /// Returns true if an axis-aligned bounding box is at least partially inside the frustum.
-    /// Uses the "p-vertex" test: for each plane, find the box corner most aligned with
-    /// the plane normal. If that corner is outside, the entire box is outside.
-    pub fn intersects_aabb(&self, min: Vec3, max: Vec3) -> bool {
-        for plane in &self.planes {
-            let normal = Vec3::new(plane.x, plane.y, plane.z);
-
-            // p-vertex: the corner of the AABB furthest along the plane normal
-            let p = Vec3::new(
-                if normal.x >= 0.0 { max.x } else { min.x },
-                if normal.y >= 0.0 { max.y } else { min.y },
-                if normal.z >= 0.0 { max.z } else { min.z },
-            );
-
-            // If the most-positive corner is behind the plane, the box is fully outside
-            if normal.dot(p) + plane.w < 0.0 {
-                return false;
-            }
-        }
-        true
+    /// Returns a frustum plane as `[nx, ny, nz, d]` for passing to the GPU.
+    pub fn plane(&self, index: usize) -> [f32; 4] {
+        self.planes[index].to_array()
     }
 }
