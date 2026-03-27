@@ -11,12 +11,12 @@ impl BlockType {
         self != BlockType::Air
     }
 
-    pub fn color(self) -> [f32; 3] {
+    pub fn material_id(self) -> u8 {
         match self {
-            BlockType::Air => [0.0, 0.0, 0.0],
-            BlockType::Grass => [0.3, 0.7, 0.2],
-            BlockType::Dirt => [0.55, 0.35, 0.15],
-            BlockType::Stone => [0.5, 0.5, 0.5],
+            BlockType::Air => 0,
+            BlockType::Grass => 1,
+            BlockType::Dirt => 2,
+            BlockType::Stone => 3,
         }
     }
 }

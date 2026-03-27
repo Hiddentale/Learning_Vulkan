@@ -15,10 +15,16 @@ pub fn create_layout(device: &Device, data: &mut VulkanApplicationData) -> anyho
         .binding(1)
         .descriptor_count(1)
         .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-        .stage_flags(vk::ShaderStageFlags::VERTEX);
+        .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT);
+
+    let palette_binding = vk::DescriptorSetLayoutBinding::builder()
+        .binding(2)
+        .descriptor_count(1)
+        .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+        .stage_flags(vk::ShaderStageFlags::FRAGMENT);
 
     let create_info = vk::DescriptorSetLayoutCreateInfo::builder()
-        .bindings(&[sampler_binding, ubo_binding])
+        .bindings(&[sampler_binding, ubo_binding, palette_binding])
         .build();
     data.descriptor_set_layout = unsafe { device.create_descriptor_set_layout(&create_info, None)? };
     Ok(())
@@ -31,7 +37,7 @@ pub fn create_pool(device: &Device, data: &mut VulkanApplicationData) -> anyhow:
         .type_(vk::DescriptorType::COMBINED_IMAGE_SAMPLER);
 
     let ubo_pool_size = vk::DescriptorPoolSize::builder()
-        .descriptor_count(1)
+        .descriptor_count(2)
         .type_(vk::DescriptorType::UNIFORM_BUFFER);
 
     let pool_info = vk::DescriptorPoolCreateInfo::builder()
@@ -53,8 +59,15 @@ pub fn allocate_set(device: &Device, descriptor_pool: DescriptorPool, layout: De
     Ok(unsafe { device.allocate_descriptor_sets(&allocate_info)? })
 }
 
-/// Writes actual resources (texture sampler + UBO) into a descriptor set.
-pub fn update_set(device: &Device, descriptor_set: DescriptorSet, image_view: ImageView, sampler: Sampler, uniform_buffer: vk::Buffer) {
+/// Writes actual resources (texture sampler + camera UBO + palette UBO) into a descriptor set.
+pub fn update_set(
+    device: &Device,
+    descriptor_set: DescriptorSet,
+    image_view: ImageView,
+    sampler: Sampler,
+    uniform_buffer: vk::Buffer,
+    palette_buffer: vk::Buffer,
+) {
     let image_info = vk::DescriptorImageInfo::builder()
         .image_view(image_view)
         .sampler(sampler)
@@ -67,7 +80,7 @@ pub fn update_set(device: &Device, descriptor_set: DescriptorSet, image_view: Im
         .image_info(&[image_info])
         .build();
 
-    let buffer_info = vk::DescriptorBufferInfo::builder()
+    let ubo_info = vk::DescriptorBufferInfo::builder()
         .buffer(uniform_buffer)
         .offset(0)
         .range(std::mem::size_of::<crate::graphical_core::camera::UniformBufferObject>() as u64);
@@ -76,10 +89,22 @@ pub fn update_set(device: &Device, descriptor_set: DescriptorSet, image_view: Im
         .dst_set(descriptor_set)
         .dst_binding(1)
         .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-        .buffer_info(&[buffer_info])
+        .buffer_info(&[ubo_info])
+        .build();
+
+    let palette_info = vk::DescriptorBufferInfo::builder()
+        .buffer(palette_buffer)
+        .offset(0)
+        .range(std::mem::size_of::<crate::voxel::material::MaterialPalette>() as u64);
+
+    let palette_write = vk::WriteDescriptorSet::builder()
+        .dst_set(descriptor_set)
+        .dst_binding(2)
+        .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+        .buffer_info(&[palette_info])
         .build();
 
     unsafe {
-        device.update_descriptor_sets(&[sampler_write, ubo_write], &[] as &[CopyDescriptorSet]);
+        device.update_descriptor_sets(&[sampler_write, ubo_write, palette_write], &[] as &[CopyDescriptorSet]);
     }
 }

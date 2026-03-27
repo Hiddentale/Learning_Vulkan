@@ -9,7 +9,8 @@ use vulkanalia::{Device, Instance};
 pub struct Vertex {
     pub position: [f32; 3],
     pub uv_coordinate: [f32; 2],
-    pub color: [f32; 3],
+    pub normal: [f32; 3],
+    pub material_id: u32,
 }
 
 /// A GPU-uploaded mesh: vertex and index buffers with their backing memory.

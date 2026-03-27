@@ -100,7 +100,7 @@ pub unsafe fn create_pipeline(vulkan_logical_device: &Device, data: &mut VulkanA
     Ok(())
 }
 
-fn vertex_input_descriptions() -> (vk::VertexInputBindingDescription, [vk::VertexInputAttributeDescription; 3]) {
+fn vertex_input_descriptions() -> (vk::VertexInputBindingDescription, [vk::VertexInputAttributeDescription; 4]) {
     let binding = vk::VertexInputBindingDescription::builder()
         .binding(0)
         .stride(std::mem::size_of::<Vertex>() as u32)
@@ -121,14 +121,21 @@ fn vertex_input_descriptions() -> (vk::VertexInputBindingDescription, [vk::Verte
         .offset(std::mem::size_of::<[f32; 3]>() as u32)
         .build();
 
-    let color = vk::VertexInputAttributeDescription::builder()
+    let normal = vk::VertexInputAttributeDescription::builder()
         .binding(0)
         .location(2)
         .format(vk::Format::R32G32B32_SFLOAT)
         .offset(std::mem::size_of::<[f32; 5]>() as u32)
         .build();
 
-    (binding, [position, uv_coordinate, color])
+    let material_id = vk::VertexInputAttributeDescription::builder()
+        .binding(0)
+        .location(3)
+        .format(vk::Format::R32_UINT)
+        .offset(std::mem::size_of::<[f32; 8]>() as u32)
+        .build();
+
+    (binding, [position, uv_coordinate, normal, material_id])
 }
 
 fn color_blend_attachment() -> vk::PipelineColorBlendAttachmentState {

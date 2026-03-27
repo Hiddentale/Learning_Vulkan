@@ -62,12 +62,13 @@ pub fn mesh_chunk(chunk: &Chunk, neighbors: &ChunkNeighbors) -> (Vec<Vertex>, Ve
                 if !block.is_opaque() {
                     continue;
                 }
-                let color = block.color();
+                let material_id = block.material_id() as u32;
                 for face in &FACES {
                     if !is_face_visible(chunk, neighbors, x, y, z, face.normal) {
                         continue;
                     }
-                    emit_face(&mut vertices, &mut indices, x, y, z, face, color);
+                    let normal = [face.normal[0] as f32, face.normal[1] as f32, face.normal[2] as f32];
+                    emit_face(&mut vertices, &mut indices, x, y, z, face, normal, material_id);
                 }
             }
         }
@@ -117,16 +118,15 @@ fn check_neighbor(neighbors: &ChunkNeighbors, nx: i32, ny: usize, nz: i32) -> bo
 }
 
 /// Emits 4 vertices and 6 indices (2 triangles) for one block face.
-fn emit_face(vertices: &mut Vec<Vertex>, indices: &mut Vec<u32>, x: usize, y: usize, z: usize, face: &Face, color: [f32; 3]) {
+fn emit_face(vertices: &mut Vec<Vertex>, indices: &mut Vec<u32>, x: usize, y: usize, z: usize, face: &Face, normal: [f32; 3], material_id: u32) {
     let base_index = vertices.len() as u32;
 
     let center = [x as f32 + 0.5, y as f32 + 0.5, z as f32 + 0.5];
-    let n = [face.normal[0] as f32, face.normal[1] as f32, face.normal[2] as f32];
     let t = [face.tangent[0] as f32, face.tangent[1] as f32, face.tangent[2] as f32];
     let b = [face.bitangent[0] as f32, face.bitangent[1] as f32, face.bitangent[2] as f32];
 
     // Four corners of the face, offset 0.5 from center along normal
-    let face_center = [center[0] + n[0] * 0.5, center[1] + n[1] * 0.5, center[2] + n[2] * 0.5];
+    let face_center = [center[0] + normal[0] * 0.5, center[1] + normal[1] * 0.5, center[2] + normal[2] * 0.5];
 
     let corners = [
         [-0.5, -0.5], // bottom-left
@@ -151,7 +151,8 @@ fn emit_face(vertices: &mut Vec<Vertex>, indices: &mut Vec<u32>, x: usize, y: us
         vertices.push(Vertex {
             position,
             uv_coordinate: uv,
-            color,
+            normal,
+            material_id,
         });
     }
 
