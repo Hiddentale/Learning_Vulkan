@@ -22,10 +22,14 @@ impl Default for Transform {
     }
 }
 
-/// An object in the scene: a transform paired with an index into the mesh registry.
+/// An object in the scene: a transform paired with draw parameters into the shared mesh pool.
 pub struct SceneObject {
     pub transform: Transform,
-    pub mesh_index: usize,
+    /// Offset into the shared index buffer.
+    pub first_index: u32,
+    pub index_count: u32,
+    /// Added to each index value to locate vertices in the shared vertex buffer.
+    pub vertex_offset: i32,
     /// World-space axis-aligned bounding box for frustum culling.
     pub aabb_min: Vec3,
     pub aabb_max: Vec3,

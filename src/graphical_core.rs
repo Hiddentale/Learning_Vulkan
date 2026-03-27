@@ -9,6 +9,7 @@ pub mod input;
 pub mod instance;
 pub mod memory;
 pub mod mesh;
+pub mod mesh_pool;
 pub mod palette_buffer;
 pub mod pipeline;
 pub mod queue_families;
