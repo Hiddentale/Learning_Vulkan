@@ -513,7 +513,7 @@ pub unsafe fn destroy_compute_cull(device: &Device, res: &ComputeCullResources) 
 }
 
 // --- Testable occlusion math (mirrors the GLSL shader logic) ---
-
+#[cfg(test)]
 /// Result of projecting an AABB to screen space.
 pub struct ScreenProjection {
     pub uv_min: [f32; 2],
@@ -524,6 +524,7 @@ pub struct ScreenProjection {
     pub viewport_min_z: f32,
 }
 
+#[cfg(test)]
 /// Projects an AABB's 8 corners through a VP matrix to screen-space UVs and depth.
 /// Returns None if any corner is behind the camera (conservatively visible).
 pub fn project_aabb_to_screen(vp: &glam::Mat4, aabb_min: glam::Vec3, aabb_max: glam::Vec3) -> Option<ScreenProjection> {
@@ -567,6 +568,7 @@ pub fn project_aabb_to_screen(vp: &glam::Mat4, aabb_min: glam::Vec3, aabb_max: g
     })
 }
 
+#[cfg(test)]
 /// Selects the depth pyramid mip level for a given screen-space projection.
 pub fn select_mip_level(proj: &ScreenProjection, screen_width: f32, screen_height: f32) -> f32 {
     let size_x = (proj.uv_max[0] - proj.uv_min[0]) * screen_width;
@@ -575,6 +577,7 @@ pub fn select_mip_level(proj: &ScreenProjection, screen_width: f32, screen_heigh
     max_extent.log2().ceil()
 }
 
+#[cfg(test)]
 /// Returns true if the chunk is NOT occluded (visible).
 /// `pyramid_depth` is the max depth sampled from the Hi-Z pyramid.
 pub fn occlusion_test(viewport_min_z: f32, pyramid_depth: f32) -> bool {
