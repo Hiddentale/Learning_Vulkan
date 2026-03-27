@@ -575,3 +575,29 @@ impl VulkanApplication {
         self.vulkan_instance.destroy_instance(None);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn draw_indirect_command_size_matches_vulkan_spec() {
+        // VkDrawIndexedIndirectCommand is 5 × u32 = 20 bytes
+        assert_eq!(std::mem::size_of::<DrawIndexedIndirectCommand>(), 20);
+    }
+
+    #[test]
+    fn draw_indirect_command_field_offsets_match_vulkan_spec() {
+        assert_eq!(memoffset::offset_of!(DrawIndexedIndirectCommand, index_count), 0);
+        assert_eq!(memoffset::offset_of!(DrawIndexedIndirectCommand, instance_count), 4);
+        assert_eq!(memoffset::offset_of!(DrawIndexedIndirectCommand, first_index), 8);
+        assert_eq!(memoffset::offset_of!(DrawIndexedIndirectCommand, vertex_offset), 12);
+        assert_eq!(memoffset::offset_of!(DrawIndexedIndirectCommand, first_instance), 16);
+    }
+
+    #[test]
+    fn max_indirect_draws_accommodates_all_chunks() {
+        let max_chunks = ((2 * 5 + 1) * (2 * 5 + 1)) as usize; // RENDER_DISTANCE = 5
+        assert_eq!(MAX_INDIRECT_DRAWS, max_chunks * 6);
+    }
+}

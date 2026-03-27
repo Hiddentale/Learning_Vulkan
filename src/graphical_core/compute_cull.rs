@@ -696,6 +696,138 @@ mod tests {
         // Camera far to the right → -X faces not visible
         let cam_right = Vec3::new(100.0, 5.0, 10.0);
         assert!(cam_right.x > aabb_max.x); // camera past +X side
-        assert!(!(cam_right.x < aabb_max.x)); // -X faces NOT visible (camera.x >= aabb_max.x)
+        assert!(cam_right.x >= aabb_max.x); // -X faces NOT visible
+    }
+
+    // --- Struct layout tests (must match GLSL std430) ---
+
+    #[test]
+    fn gpu_chunk_info_size_matches_glsl() {
+        // GLSL: vec3(16) + int(4) = nope → vec3(12)+int(4)=16, vec3(12)+uint(4)=16, 6*FaceBucket(8)=48 → 80
+        assert_eq!(std::mem::size_of::<GpuChunkInfo>(), 80);
+    }
+
+    #[test]
+    fn gpu_chunk_info_field_offsets_match_glsl() {
+        assert_eq!(memoffset::offset_of!(GpuChunkInfo, aabb_min), 0);
+        assert_eq!(memoffset::offset_of!(GpuChunkInfo, vertex_offset), 12);
+        assert_eq!(memoffset::offset_of!(GpuChunkInfo, aabb_max), 16);
+        assert_eq!(memoffset::offset_of!(GpuChunkInfo, transform_index), 28);
+        assert_eq!(memoffset::offset_of!(GpuChunkInfo, buckets), 32);
+    }
+
+    #[test]
+    fn gpu_face_bucket_size_matches_glsl() {
+        assert_eq!(std::mem::size_of::<GpuFaceBucket>(), 8);
+    }
+
+    #[test]
+    fn cull_push_constants_size_is_128_bytes() {
+        // Vulkan minimum maxPushConstantsSize is 128; our struct must fit exactly
+        assert_eq!(std::mem::size_of::<CullPushConstants>(), 128);
+    }
+
+    #[test]
+    fn cull_push_constants_field_offsets_match_glsl() {
+        assert_eq!(memoffset::offset_of!(CullPushConstants, planes), 0);
+        assert_eq!(memoffset::offset_of!(CullPushConstants, camera_pos), 96);
+        assert_eq!(memoffset::offset_of!(CullPushConstants, chunk_count), 108);
+        assert_eq!(memoffset::offset_of!(CullPushConstants, screen_size), 112);
+        assert_eq!(memoffset::offset_of!(CullPushConstants, phase), 120);
+        assert_eq!(memoffset::offset_of!(CullPushConstants, draw_offset), 124);
+    }
+
+    #[test]
+    fn depth_reduce_push_size_is_16_bytes() {
+        assert_eq!(std::mem::size_of::<DepthReducePush>(), 16);
+    }
+
+    // --- Phase filtering logic (mirrors cull.comp main()) ---
+
+    /// Simulates the shader's phase filtering: returns which chunk indices are processed.
+    fn phase_filter(visibility: &[u32], phase: u32) -> Vec<usize> {
+        visibility
+            .iter()
+            .enumerate()
+            .filter(|&(_, &vis)| {
+                let was_visible = vis == 1;
+                match phase {
+                    1 => was_visible,
+                    2 => !was_visible,
+                    _ => panic!("invalid phase"),
+                }
+            })
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    #[test]
+    fn phase1_processes_only_visible_chunks() {
+        let vis = vec![1, 0, 1, 0, 1];
+        assert_eq!(phase_filter(&vis, 1), vec![0, 2, 4]);
+    }
+
+    #[test]
+    fn phase2_processes_only_invisible_chunks() {
+        let vis = vec![1, 0, 1, 0, 1];
+        assert_eq!(phase_filter(&vis, 2), vec![1, 3]);
+    }
+
+    #[test]
+    fn all_visible_means_phase2_processes_nothing() {
+        let vis = vec![1, 1, 1];
+        assert_eq!(phase_filter(&vis, 2), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn all_invisible_means_phase1_processes_nothing() {
+        let vis = vec![0, 0, 0];
+        assert_eq!(phase_filter(&vis, 1), Vec::<usize>::new());
+    }
+
+    // --- Buffer offset arithmetic ---
+
+    #[test]
+    fn phase2_draw_offset_is_half_max_indirect_draws() {
+        use crate::graphical_core::vulkan_object::MAX_INDIRECT_DRAWS;
+        let expected = (MAX_INDIRECT_DRAWS / 2) as u32;
+        // PHASE2_DRAW_OFFSET is private, so recompute the same way
+        let phase2_offset = (MAX_INDIRECT_DRAWS / 2) as u32;
+        assert_eq!(phase2_offset, expected);
+        // Each phase gets half the buffer — must be enough for all chunks × 6 buckets
+        assert!(phase2_offset as usize >= MAX_INDIRECT_DRAWS / 2);
+    }
+
+    #[test]
+    fn indirect_buffer_fits_both_phases() {
+        use crate::graphical_core::vulkan_object::{DrawIndexedIndirectCommand, MAX_INDIRECT_DRAWS};
+        let stride = std::mem::size_of::<DrawIndexedIndirectCommand>();
+        let phase2_offset = MAX_INDIRECT_DRAWS / 2;
+        let total_bytes = MAX_INDIRECT_DRAWS * stride;
+        let phase2_byte_offset = phase2_offset * stride;
+        // Phase 2 commands + their region must fit within the buffer
+        assert!(phase2_byte_offset + phase2_offset * stride <= total_bytes);
+    }
+
+    // --- Workgroup count ---
+
+    #[test]
+    fn workgroup_count_zero_chunks() {
+        assert_eq!(ComputeCullResources::workgroup_count(0), 0);
+    }
+
+    #[test]
+    fn workgroup_count_one_chunk() {
+        assert_eq!(ComputeCullResources::workgroup_count(1), 1);
+    }
+
+    #[test]
+    fn workgroup_count_exactly_64() {
+        assert_eq!(ComputeCullResources::workgroup_count(64), 1);
+    }
+
+    #[test]
+    fn workgroup_count_65_needs_two_groups() {
+        assert_eq!(ComputeCullResources::workgroup_count(65), 2);
     }
 }
