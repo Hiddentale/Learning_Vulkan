@@ -121,7 +121,16 @@ pub unsafe fn record_command_buffer(
     // Draw phase 1 (begins render pass with clear)
     begin_render_pass(device, cmd, data, image_index);
     bind_graphics_state(device, cmd, data, vertex_buffer, index_buffer);
-    draw_indirect(device, cmd, data.indirect_buffer, 0, compute.draw_count_buffer, 0, PHASE2_DRAW_OFFSET, stride);
+    draw_indirect(
+        device,
+        cmd,
+        data.indirect_buffer,
+        0,
+        compute.draw_count_buffer,
+        0,
+        PHASE2_DRAW_OFFSET,
+        stride,
+    );
     device.cmd_end_render_pass(cmd);
 
     // === Build depth pyramid from phase 1 depth ===
@@ -150,7 +159,16 @@ pub unsafe fn record_command_buffer(
     // Draw phase 2 (resume render pass WITHOUT clearing — append to existing depth+color)
     begin_render_pass_no_clear(device, cmd, data, image_index);
     bind_graphics_state(device, cmd, data, vertex_buffer, index_buffer);
-    draw_indirect(device, cmd, data.indirect_buffer, phase2_byte_offset, compute.draw_count_buffer, 4, PHASE2_DRAW_OFFSET, stride);
+    draw_indirect(
+        device,
+        cmd,
+        data.indirect_buffer,
+        phase2_byte_offset,
+        compute.draw_count_buffer,
+        4,
+        PHASE2_DRAW_OFFSET,
+        stride,
+    );
     device.cmd_end_render_pass(cmd);
 
     device.end_command_buffer(cmd)?;
