@@ -60,7 +60,11 @@ pub unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut VulkanA
 
     let mut debug_info = vk::DebugUtilsMessengerCreateInfoEXT::builder()
         .message_severity(vk::DebugUtilsMessageSeverityFlagsEXT::all())
-        .message_type(vk::DebugUtilsMessageTypeFlagsEXT::all())
+        .message_type(
+            vk::DebugUtilsMessageTypeFlagsEXT::GENERAL
+                | vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION
+                | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE,
+        )
         .user_callback(Some(debug_callback));
 
     if VALIDATION_ENABLED {
@@ -100,7 +104,10 @@ pub unsafe fn create_logical_device(entry: &Entry, instance: &Instance, data: &m
         extensions.push(vk::KHR_PORTABILITY_SUBSET_EXTENSION.name.as_ptr());
     }
     let features = vk::PhysicalDeviceFeatures::builder().multi_draw_indirect(true);
-    let mut features_1_2 = vk::PhysicalDeviceVulkan12Features::builder().draw_indirect_count(true);
+    let mut features_1_2 = vk::PhysicalDeviceVulkan12Features::builder();
+    if !cfg!(target_os = "macos") {
+        features_1_2 = features_1_2.draw_indirect_count(true);
+    }
     let info = vk::DeviceCreateInfo::builder()
         .queue_create_infos(&queue_infos)
         .enabled_layer_names(&layers)

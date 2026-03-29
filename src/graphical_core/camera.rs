@@ -61,7 +61,10 @@ pub struct UniformBufferObject {
 pub fn create_uniform_buffer(device: &Device, instance: &Instance, vulkan_application_data: &mut VulkanApplicationData) -> anyhow::Result<()> {
     let buffer_size_in_bytes = std::mem::size_of::<UniformBufferObject>() as u64;
     let buffer_usage_flags = vk::BufferUsageFlags::UNIFORM_BUFFER;
-    let properties = vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT | vk::MemoryPropertyFlags::DEVICE_LOCAL;
+    let mut properties = vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT;
+    if !cfg!(target_os = "macos") {
+        properties |= vk::MemoryPropertyFlags::DEVICE_LOCAL;
+    }
 
     let (uniform_buffer, uniform_memory, uniform_ptr) = unsafe {
         allocate_buffer::<UniformBufferObject>(
