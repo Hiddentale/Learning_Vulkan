@@ -243,7 +243,7 @@ unsafe fn create_transform_and_indirect_buffers(device: &Device, instance: &Inst
     let indirect_size = (MAX_INDIRECT_DRAWS * std::mem::size_of::<DrawIndexedIndirectCommand>()) as u64;
     let (ib, im, ip) = allocate_buffer::<DrawIndexedIndirectCommand>(
         indirect_size,
-        vk::BufferUsageFlags::INDIRECT_BUFFER | vk::BufferUsageFlags::STORAGE_BUFFER,
+        vk::BufferUsageFlags::INDIRECT_BUFFER | vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
         device,
         instance,
         data,

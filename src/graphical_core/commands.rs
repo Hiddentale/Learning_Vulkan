@@ -1,7 +1,9 @@
 use crate::graphical_core::compute_cull::{ComputeCullResources, CullPushConstants, DepthPyramidResources, DepthReducePush};
-use crate::graphical_core::vulkan_object::{DrawIndexedIndirectCommand, VulkanApplicationData};
+use crate::graphical_core::vulkan_object::{DrawIndexedIndirectCommand, VulkanApplicationData, MAX_INDIRECT_DRAWS};
 use crate::graphical_core::{self, MAX_FRAMES_IN_FLIGHT};
-use vulkanalia::vk::{DeviceV1_0, DeviceV1_2, Handle, HasBuilder};
+#[cfg(not(target_os = "macos"))]
+use vulkanalia::vk::DeviceV1_2;
+use vulkanalia::vk::{DeviceV1_0, Handle, HasBuilder};
 use vulkanalia::{vk, Device, Instance};
 
 /// Creates a framebuffer for each swapchain image view, attaching color and depth.
@@ -74,8 +76,12 @@ pub unsafe fn record_command_buffer(
         transition_pyramid_undefined_to_general(device, cmd, data);
     }
 
-    // Reset both draw counts to 0
+    // Reset draw counts (and on macOS, the indirect buffer) to 0
     device.cmd_fill_buffer(cmd, compute.draw_count_buffer, 0, 8, 0);
+    if cfg!(target_os = "macos") {
+        let indirect_size = (MAX_INDIRECT_DRAWS * std::mem::size_of::<DrawIndexedIndirectCommand>()) as u64;
+        device.cmd_fill_buffer(cmd, data.indirect_buffer, 0, indirect_size, 0);
+    }
     let fill_barrier = vk::MemoryBarrier::builder()
         .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
         .dst_access_mask(vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE);
@@ -115,7 +121,7 @@ pub unsafe fn record_command_buffer(
     // Draw phase 1 (begins render pass with clear)
     begin_render_pass(device, cmd, data, image_index);
     bind_graphics_state(device, cmd, data, vertex_buffer, index_buffer);
-    device.cmd_draw_indexed_indirect_count(cmd, data.indirect_buffer, 0, compute.draw_count_buffer, 0, PHASE2_DRAW_OFFSET, stride);
+    draw_indirect(device, cmd, data.indirect_buffer, 0, compute.draw_count_buffer, 0, PHASE2_DRAW_OFFSET, stride);
     device.cmd_end_render_pass(cmd);
 
     // === Build depth pyramid from phase 1 depth ===
@@ -144,15 +150,7 @@ pub unsafe fn record_command_buffer(
     // Draw phase 2 (resume render pass WITHOUT clearing — append to existing depth+color)
     begin_render_pass_no_clear(device, cmd, data, image_index);
     bind_graphics_state(device, cmd, data, vertex_buffer, index_buffer);
-    device.cmd_draw_indexed_indirect_count(
-        cmd,
-        data.indirect_buffer,
-        phase2_byte_offset,
-        compute.draw_count_buffer,
-        4,
-        PHASE2_DRAW_OFFSET,
-        stride,
-    );
+    draw_indirect(device, cmd, data.indirect_buffer, phase2_byte_offset, compute.draw_count_buffer, 4, PHASE2_DRAW_OFFSET, stride);
     device.cmd_end_render_pass(cmd);
 
     device.end_command_buffer(cmd)?;
@@ -204,6 +202,30 @@ unsafe fn compute_to_draw_barrier(device: &Device, cmd: vk::CommandBuffer) {
         &[] as &[vk::BufferMemoryBarrier],
         &[] as &[vk::ImageMemoryBarrier],
     );
+}
+
+/// On platforms with `draw_indirect_count`, uses the GPU-written count buffer.
+/// On macOS (MoltenVK), falls back to `cmd_draw_indexed_indirect` with a fixed max
+/// draw count — the indirect buffer is zeroed each frame so unused slots are no-ops.
+unsafe fn draw_indirect(
+    device: &Device,
+    cmd: vk::CommandBuffer,
+    buffer: vk::Buffer,
+    offset: u64,
+    _count_buffer: vk::Buffer,
+    _count_offset: u64,
+    max_draws: u32,
+    stride: u32,
+) {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = (_count_buffer, _count_offset);
+        device.cmd_draw_indexed_indirect(cmd, buffer, offset, max_draws, stride);
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        device.cmd_draw_indexed_indirect_count(cmd, buffer, offset, _count_buffer, _count_offset, max_draws, stride);
+    }
 }
 
 unsafe fn begin_render_pass(device: &Device, cmd: vk::CommandBuffer, data: &VulkanApplicationData, framebuffer_index: usize) {
