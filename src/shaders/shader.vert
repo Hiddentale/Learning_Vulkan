@@ -18,12 +18,15 @@ layout(binding = 3) readonly buffer TransformSSBO {
 layout(location = 0) out vec2 fragTexCoord;
 layout(location = 1) out vec3 fragNormalWorld;
 layout(location = 2) flat out uint fragMaterialId;
+layout(location = 3) out vec3 fragWorldPos;
 
 void main() {
     mat4 model = transforms.model_matrices[gl_InstanceIndex];
-    gl_Position = ubo.view_projection_matrix * model * vec4(inPosition, 1.0);
+    vec4 worldPos = model * vec4(inPosition, 1.0);
+    gl_Position = ubo.view_projection_matrix * worldPos;
     fragTexCoord = inTexCoord;
     // Chunk transforms are translation-only, so mat3(model) is safe
     fragNormalWorld = mat3(model) * inNormal;
     fragMaterialId = inMaterialId;
+    fragWorldPos = worldPos.xyz;
 }
