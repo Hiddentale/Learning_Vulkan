@@ -2,4 +2,4 @@
 
 mod session;
 
-pub use session::{VrContext, VrSupport};
+pub use session::{VrContext, VrSession, VrSupport};

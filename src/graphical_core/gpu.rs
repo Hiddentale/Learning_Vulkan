@@ -10,8 +10,22 @@ use vulkan_rust::{vk, Instance};
 #[error("Missing {0}.")]
 pub struct SuitabilityError(pub &'static str);
 
-/// Selects the first suitable physical device that supports required queues, extensions, and swapchain.
-pub unsafe fn choose_gpu(instance: &Instance, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
+/// Selects a suitable physical device. When VR is active, prefers the GPU
+/// that OpenXR requests; otherwise picks the first suitable one.
+pub unsafe fn choose_gpu(instance: &Instance, data: &mut VulkanApplicationData, vr_preferred: Option<vk::PhysicalDevice>) -> anyhow::Result<()> {
+    if let Some(preferred) = vr_preferred {
+        let properties = instance.get_physical_device_properties(preferred);
+        if is_gpu_suitable(instance, data, preferred) {
+            info!("Selected VR-preferred GPU (`{}`).", properties.device_name);
+            data.physical_device = preferred;
+            return Ok(());
+        }
+        warn!(
+            "VR-preferred GPU (`{}`) is not suitable — falling back to enumeration.",
+            properties.device_name
+        );
+    }
+
     for gpu in instance.enumerate_physical_devices()? {
         let properties = instance.get_physical_device_properties(gpu);
         if is_gpu_suitable(instance, data, gpu) {

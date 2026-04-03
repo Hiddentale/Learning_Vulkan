@@ -1,6 +1,7 @@
 use anyhow::Context;
 use log::{info, warn};
 use openxr as xr;
+use std::ffi::CString;
 use std::os::raw::c_void;
 use vk::Handle;
 use vulkan_rust::vk;
@@ -21,6 +22,17 @@ pub struct VrContext {
     pub xr_instance: xr::Instance,
     pub system: xr::SystemId,
     pub requirements: xr::vulkan::Requirements,
+    /// Whether the legacy `khr_vulkan_enable` extension is available for
+    /// querying required Vulkan extensions.
+    pub has_legacy_queries: bool,
+}
+
+/// Active OpenXR session bound to a Vulkan device.
+pub struct VrSession {
+    pub xr_instance: xr::Instance,
+    pub session: xr::Session<xr::Vulkan>,
+    pub frame_waiter: xr::FrameWaiter,
+    pub frame_stream: xr::FrameStream<xr::Vulkan>,
 }
 
 impl VrContext {
@@ -42,6 +54,7 @@ impl VrContext {
             return Ok(VrSupport::Unavailable("runtime does not support XR_KHR_vulkan_enable2".into()));
         }
 
+        let has_legacy_queries = extensions.khr_vulkan_enable;
         let xr_instance = create_xr_instance(&entry, &extensions)?;
         let system = match find_hmd(&xr_instance) {
             Ok(s) => s,
@@ -61,7 +74,88 @@ impl VrContext {
             xr_instance,
             system,
             requirements,
+            has_legacy_queries,
         }))
+    }
+
+    /// Query Vulkan instance extensions required by the OpenXR runtime.
+    pub fn required_instance_extensions(&self) -> Vec<CString> {
+        if !self.has_legacy_queries {
+            warn!("khr_vulkan_enable not available — cannot query required instance extensions");
+            return Vec::new();
+        }
+        match self.xr_instance.vulkan_legacy_instance_extensions(self.system) {
+            Ok(ext_string) => parse_extension_string(&ext_string),
+            Err(e) => {
+                warn!("Failed to query VR instance extensions: {e}");
+                Vec::new()
+            }
+        }
+    }
+
+    /// Query Vulkan device extensions required by the OpenXR runtime.
+    pub fn required_device_extensions(&self) -> Vec<CString> {
+        if !self.has_legacy_queries {
+            warn!("khr_vulkan_enable not available — cannot query required device extensions");
+            return Vec::new();
+        }
+        match self.xr_instance.vulkan_legacy_device_extensions(self.system) {
+            Ok(ext_string) => parse_extension_string(&ext_string),
+            Err(e) => {
+                warn!("Failed to query VR device extensions: {e}");
+                Vec::new()
+            }
+        }
+    }
+
+    /// Ask the OpenXR runtime which physical device it prefers.
+    ///
+    /// # Safety
+    /// `vk_instance` must be a valid Vulkan instance.
+    pub unsafe fn preferred_gpu(&self, vk_instance: vk::Instance) -> anyhow::Result<vk::PhysicalDevice> {
+        let xr_vk_instance = vk_handle_to_xr(vk_instance);
+        let raw_device = self
+            .xr_instance
+            .vulkan_graphics_device(self.system, xr_vk_instance)
+            .context("failed to query VR preferred GPU")?;
+        Ok(xr_ptr_to_vk_handle(raw_device))
+    }
+
+    /// Create an OpenXR session bound to the given Vulkan device.
+    ///
+    /// Consumes the `VrContext` and returns a `VrSession` ready for the
+    /// frame loop.
+    ///
+    /// # Safety
+    /// All Vulkan handles must be valid and the queue must support graphics.
+    pub unsafe fn create_session(
+        self,
+        vk_instance: vk::Instance,
+        vk_physical_device: vk::PhysicalDevice,
+        vk_device: vk::Device,
+        queue_family_index: u32,
+    ) -> anyhow::Result<VrSession> {
+        let session_create_info = xr::vulkan::SessionCreateInfo {
+            instance: vk_handle_to_xr(vk_instance),
+            physical_device: vk_handle_to_xr(vk_physical_device),
+            device: vk_handle_to_xr(vk_device),
+            queue_family_index,
+            queue_index: 0,
+        };
+
+        let (session, frame_waiter, frame_stream) = self
+            .xr_instance
+            .create_session::<xr::Vulkan>(self.system, &session_create_info)
+            .context("failed to create OpenXR session")?;
+
+        info!("OpenXR session created successfully");
+
+        Ok(VrSession {
+            xr_instance: self.xr_instance,
+            session,
+            frame_waiter,
+            frame_stream,
+        })
     }
 }
 
@@ -112,9 +206,23 @@ fn load_entry() -> Result<xr::Entry, String> {
     }
 }
 
+/// Parse a space-delimited extension string into a list of CStrings.
+fn parse_extension_string(extensions: &str) -> Vec<CString> {
+    extensions
+        .split_whitespace()
+        .filter(|s| !s.is_empty())
+        .filter_map(|s| CString::new(s).map_err(|e| warn!("Skipping malformed extension name: {e}")).ok())
+        .collect()
+}
+
 fn create_xr_instance(entry: &xr::Entry, available: &xr::ExtensionSet) -> anyhow::Result<xr::Instance> {
     let mut required = xr::ExtensionSet::default();
     required.khr_vulkan_enable2 = true;
+
+    // Enable legacy Vulkan extension for querying required Vulkan extensions.
+    if available.khr_vulkan_enable {
+        required.khr_vulkan_enable = true;
+    }
 
     // Opt in to depth layer submission if available (useful for reprojection).
     if available.khr_composition_layer_depth {

@@ -21,8 +21,10 @@ use crate::voxel::{
     meshing::{self, ChunkNeighbors},
     world::World,
 };
+use crate::vr::{VrContext, VrSession};
 use crate::VALIDATION_ENABLED;
 use anyhow::anyhow;
+use log::info;
 use vk::Handle;
 use vulkan_rust::{vk, Device, Entry, Instance, LibloadingLoader};
 use winit::window::Window;
@@ -111,6 +113,7 @@ pub struct VulkanApplication {
     chunk_count: u32,
     depth_pyramid_needs_init: bool,
     last_player_chunk: [i32; 2],
+    _vr_session: Option<VrSession>,
 }
 
 impl VulkanApplication {
@@ -125,8 +128,8 @@ impl VulkanApplication {
     /// # Safety
     /// Calls unsafe Vulkan APIs. The caller must call [`destroy_vulkan_application`]
     /// before dropping the returned value or closing the window.
-    pub unsafe fn create_vulkan_application(user_window: &Window) -> anyhow::Result<Self> {
-        let (entry, instance, device, mut data) = create_core_infrastructure(user_window)?;
+    pub unsafe fn create_vulkan_application(user_window: &Window, vr_context: Option<VrContext>) -> anyhow::Result<Self> {
+        let (entry, instance, device, mut data, vr_session) = create_core_infrastructure(user_window, vr_context)?;
         create_presentation_pipeline(user_window, &instance, &device, &mut data)?;
         create_resources(&device, &instance, &mut data)?;
         allocate_command_buffers(&device, &mut data)?;
@@ -158,19 +161,48 @@ impl VulkanApplication {
             chunk_count,
             depth_pyramid_needs_init: true,
             last_player_chunk: [0, 0],
+            _vr_session: vr_session,
         })
     }
 }
 
-unsafe fn create_core_infrastructure(window: &Window) -> anyhow::Result<(Entry, Instance, Device, VulkanApplicationData)> {
+unsafe fn create_core_infrastructure(
+    window: &Window,
+    vr_context: Option<VrContext>,
+) -> anyhow::Result<(Entry, Instance, Device, VulkanApplicationData, Option<VrSession>)> {
     let loader = LibloadingLoader::new().map_err(|e| anyhow!("{}", e))?;
     let entry = unsafe { Entry::new(loader) }.map_err(|b| anyhow!("{}", b))?;
     let mut data = VulkanApplicationData::default();
-    let instance = create_instance(window, &entry, &mut data)?;
+    let instance = create_instance(window, &entry, &mut data, vr_context.as_ref())?;
     data.surface = instance.create_surface(&window, &window, None).map_err(|e| anyhow!("{}", e))?;
-    choose_gpu(&instance, &mut data)?;
-    let device = create_logical_device(&entry, &instance, &mut data)?;
-    Ok((entry, instance, device, data))
+
+    let vr_preferred_gpu = match &vr_context {
+        Some(vr) => match vr.preferred_gpu(instance.handle()) {
+            Ok(gpu) => {
+                info!("OpenXR preferred GPU identified");
+                Some(gpu)
+            }
+            Err(e) => {
+                log::warn!("Could not query VR preferred GPU: {e:#} — falling back");
+                None
+            }
+        },
+        None => None,
+    };
+
+    choose_gpu(&instance, &mut data, vr_preferred_gpu)?;
+    let device = create_logical_device(&entry, &instance, &mut data, vr_context.as_ref())?;
+
+    let vr_session = match vr_context {
+        Some(vr) => {
+            let indices = crate::graphical_core::queue_families::RequiredQueueFamilies::get(&instance, &data, data.physical_device)?;
+            let session = vr.create_session(instance.handle(), data.physical_device, device.handle(), indices.graphics_queue_index)?;
+            Some(session)
+        }
+        None => None,
+    };
+
+    Ok((entry, instance, device, data, vr_session))
 }
 
 unsafe fn create_presentation_pipeline(
