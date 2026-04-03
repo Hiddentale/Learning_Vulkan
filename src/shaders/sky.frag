@@ -1,8 +1,9 @@
 #version 450
+#extension GL_EXT_multiview : enable
 
 layout(binding = 1) uniform UniformBufferObject {
-    mat4 view_projection_matrix;
-    mat4 inverse_view_projection;
+    mat4 view_projection[2];
+    mat4 inverse_view_projection[2];
     vec3 light_direction;
     float ambient_strength;
 } ubo;
@@ -25,8 +26,8 @@ void main() {
     vec2 ndc = (gl_FragCoord.xy / push.screen_size) * 2.0 - 1.0;
     vec4 clip = vec4(ndc, 1.0, 1.0);
 
-    // Unproject to world space, extract view direction
-    vec4 world_pos = ubo.inverse_view_projection * clip;
+    // Unproject to world space using this eye's inverse VP
+    vec4 world_pos = ubo.inverse_view_projection[gl_ViewIndex] * clip;
     vec3 dir = normalize(world_pos.xyz / world_pos.w);
 
     // Vertical gradient

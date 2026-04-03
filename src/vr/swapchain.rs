@@ -1,4 +1,7 @@
 use super::session::{xr_image_to_vk, VrSession};
+use crate::graphical_core::depth::depth_format;
+use crate::graphical_core::memory::find_memory_type;
+use crate::graphical_core::render_pass::create_multiview_render_pass;
 use anyhow::{anyhow, Context};
 use log::info;
 use openxr as xr;
@@ -11,7 +14,8 @@ pub struct ViewConfig {
     pub height: u32,
 }
 
-/// Stereo swapchain with `array_size = 2` (one layer per eye).
+/// Stereo swapchain with `array_size = 2` (one layer per eye),
+/// multiview render pass, stereo depth buffer, and per-image framebuffers.
 pub struct VrSwapchain {
     pub handle: xr::Swapchain<xr::Vulkan>,
     pub config: ViewConfig,
@@ -19,12 +23,17 @@ pub struct VrSwapchain {
     pub images: Vec<vk::Image>,
     /// Per-image view covering both array layers (for multiview framebuffer).
     pub image_views: Vec<vk::ImageView>,
+    pub render_pass: vk::RenderPass,
+    pub framebuffers: Vec<vk::Framebuffer>,
+    depth_image: vk::Image,
+    depth_memory: vk::DeviceMemory,
+    depth_view: vk::ImageView,
 }
 
 impl VrSwapchain {
     /// Query view configuration, pick a format, create the stereo swapchain,
     /// enumerate its images, and create Vulkan image views.
-    pub fn create(vr: &VrSession, device: &Device, _instance: &Instance, _physical_device: vk::PhysicalDevice) -> anyhow::Result<Self> {
+    pub fn create(vr: &VrSession, device: &Device, instance: &Instance, physical_device: vk::PhysicalDevice) -> anyhow::Result<Self> {
         let config = query_view_config(&vr.xr_instance, vr.system())?;
         let format = select_format(&vr.session)?;
 
@@ -47,10 +56,22 @@ impl VrSwapchain {
 
         let raw_images = handle.enumerate_images()?;
         let images: Vec<vk::Image> = raw_images.iter().map(|&img| xr_image_to_vk(img)).collect();
+        let image_views = create_color_views(device, &images, format)?;
 
-        let image_views = create_image_views(device, &images, format)?;
+        let render_pass = unsafe {
+            create_multiview_render_pass(
+                device,
+                format,
+                2,
+                vk::AttachmentLoadOp::CLEAR,
+                vk::ImageLayout::UNDEFINED,
+                vk::ImageLayout::UNDEFINED,
+            )?
+        };
+        let (depth_image, depth_memory, depth_view) = unsafe { create_stereo_depth(device, instance, physical_device, &config)? };
+        let framebuffers = unsafe { create_framebuffers(device, render_pass, &image_views, depth_view, &config)? };
 
-        info!("VR swapchain created with {} images", images.len());
+        info!("VR render target ready: {} images, multiview render pass", images.len());
 
         Ok(Self {
             handle,
@@ -58,14 +79,27 @@ impl VrSwapchain {
             format,
             images,
             image_views,
+            render_pass,
+            framebuffers,
+            depth_image,
+            depth_memory,
+            depth_view,
         })
     }
 
-    /// Destroy Vulkan image views. The swapchain images themselves are owned
-    /// by OpenXR and destroyed when the swapchain handle drops.
+    /// Destroy all Vulkan resources. Swapchain images are owned by OpenXR.
     pub fn destroy(&self, device: &Device) {
-        for &view in &self.image_views {
-            unsafe { device.destroy_image_view(view, None) };
+        unsafe {
+            for &fb in &self.framebuffers {
+                device.destroy_framebuffer(fb, None);
+            }
+            device.destroy_image_view(self.depth_view, None);
+            device.destroy_image(self.depth_image, None);
+            device.free_memory(self.depth_memory, None);
+            device.destroy_render_pass(self.render_pass, None);
+            for &view in &self.image_views {
+                device.destroy_image_view(view, None);
+            }
         }
     }
 }
@@ -113,26 +147,96 @@ fn select_format(session: &xr::Session<xr::Vulkan>) -> anyhow::Result<vk::Format
 }
 
 /// Create a 2D-array image view (both layers) per swapchain image for multiview.
-fn create_image_views(device: &Device, images: &[vk::Image], format: vk::Format) -> anyhow::Result<Vec<vk::ImageView>> {
+fn create_color_views(device: &Device, images: &[vk::Image], format: vk::Format) -> anyhow::Result<Vec<vk::ImageView>> {
     images
         .iter()
         .map(|&image| {
-            let subresource = vk::ImageSubresourceRange::builder()
-                .aspect_mask(vk::ImageAspectFlags::COLOR)
-                .base_mip_level(0)
-                .level_count(1)
-                .base_array_layer(0)
-                .layer_count(2);
-
             let info = vk::ImageViewCreateInfo::builder()
                 .image(image)
                 .view_type(vk::ImageViewType::_2D_ARRAY)
                 .format(format)
-                .subresource_range(*subresource);
-
+                .subresource_range(stereo_subresource(vk::ImageAspectFlags::COLOR));
             unsafe { device.create_image_view(&info, None).map_err(Into::into) }
         })
         .collect()
+}
+
+/// Allocate a 2-layer depth image for stereo rendering.
+unsafe fn create_stereo_depth(
+    device: &Device,
+    instance: &Instance,
+    physical_device: vk::PhysicalDevice,
+    config: &ViewConfig,
+) -> anyhow::Result<(vk::Image, vk::DeviceMemory, vk::ImageView)> {
+    let image_info = vk::ImageCreateInfo::builder()
+        .image_type(vk::ImageType::_2D)
+        .format(depth_format())
+        .extent(vk::Extent3D {
+            width: config.width,
+            height: config.height,
+            depth: 1,
+        })
+        .mip_levels(1)
+        .array_layers(2)
+        .samples(vk::SampleCountFlags::_1)
+        .tiling(vk::ImageTiling::OPTIMAL)
+        .usage(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT)
+        .sharing_mode(vk::SharingMode::EXCLUSIVE)
+        .initial_layout(vk::ImageLayout::UNDEFINED);
+
+    let image = device.create_image(&image_info, None)?;
+
+    let mem_req = device.get_image_memory_requirements(image);
+    let mem_props = instance.get_physical_device_memory_properties(physical_device);
+    let mem_type = find_memory_type(&mem_props, mem_req.memory_type_bits, vk::MemoryPropertyFlags::DEVICE_LOCAL)?;
+
+    let alloc_info = vk::MemoryAllocateInfo::builder()
+        .allocation_size(mem_req.size)
+        .memory_type_index(mem_type);
+    let memory = device.allocate_memory(&alloc_info, None)?;
+    device.bind_image_memory(image, memory, 0)?;
+
+    let view_info = vk::ImageViewCreateInfo::builder()
+        .image(image)
+        .view_type(vk::ImageViewType::_2D_ARRAY)
+        .format(depth_format())
+        .subresource_range(stereo_subresource(vk::ImageAspectFlags::DEPTH));
+    let view = device.create_image_view(&view_info, None)?;
+
+    Ok((image, memory, view))
+}
+
+/// Create one framebuffer per swapchain image, each referencing the shared depth.
+/// With multiview, `layers = 1` — the view mask selects array layers.
+unsafe fn create_framebuffers(
+    device: &Device,
+    render_pass: vk::RenderPass,
+    color_views: &[vk::ImageView],
+    depth_view: vk::ImageView,
+    config: &ViewConfig,
+) -> anyhow::Result<Vec<vk::Framebuffer>> {
+    color_views
+        .iter()
+        .map(|&color_view| {
+            let attachments = &[color_view, depth_view];
+            let info = vk::FramebufferCreateInfo::builder()
+                .render_pass(render_pass)
+                .attachments(attachments)
+                .width(config.width)
+                .height(config.height)
+                .layers(1);
+            device.create_framebuffer(&info, None).map_err(Into::into)
+        })
+        .collect()
+}
+
+fn stereo_subresource(aspect: vk::ImageAspectFlags) -> vk::ImageSubresourceRange {
+    *vk::ImageSubresourceRange::builder()
+        .aspect_mask(aspect)
+        .base_mip_level(0)
+        .level_count(1)
+        .base_array_layer(0)
+        .layer_count(2)
 }
 
 #[cfg(test)]

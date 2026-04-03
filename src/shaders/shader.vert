@@ -1,4 +1,5 @@
 #version 450
+#extension GL_EXT_multiview : enable
 
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec2 inTexCoord;
@@ -6,8 +7,8 @@ layout(location = 2) in vec3 inNormal;
 layout(location = 3) in uint inMaterialId;
 
 layout(binding = 1) uniform UniformBufferObject {
-    mat4 view_projection_matrix;
-    mat4 inverse_view_projection;
+    mat4 view_projection[2];
+    mat4 inverse_view_projection[2];
     vec3 light_direction;
     float ambient_strength;
 } ubo;
@@ -24,7 +25,7 @@ layout(location = 3) out vec3 fragWorldPos;
 void main() {
     mat4 model = transforms.model_matrices[gl_InstanceIndex];
     vec4 worldPos = model * vec4(inPosition, 1.0);
-    gl_Position = ubo.view_projection_matrix * worldPos;
+    gl_Position = ubo.view_projection[gl_ViewIndex] * worldPos;
     fragTexCoord = inTexCoord;
     // Chunk transforms are translation-only, so mat3(model) is safe
     fragNormalWorld = mat3(model) * inNormal;

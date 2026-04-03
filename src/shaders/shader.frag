@@ -8,8 +8,8 @@ layout(location = 3) in vec3 fragWorldPos;
 layout(binding = 0) uniform sampler2D texSampler;
 
 layout(binding = 1) uniform UniformBufferObject {
-    mat4 view_projection_matrix;
-    mat4 inverse_view_projection;
+    mat4 view_projection[2];
+    mat4 inverse_view_projection[2];
     vec3 light_direction;
     float ambient_strength;
 } ubo;

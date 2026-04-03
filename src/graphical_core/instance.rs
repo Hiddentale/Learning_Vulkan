@@ -120,10 +120,7 @@ pub unsafe fn create_logical_device(
     }
 
     let features = vk::PhysicalDeviceFeatures::builder().multi_draw_indirect(true);
-    let mut features_1_1 = vk::PhysicalDeviceVulkan11Features::builder();
-    if vr.is_some() {
-        features_1_1 = features_1_1.multiview(true);
-    }
+    let mut features_1_1 = vk::PhysicalDeviceVulkan11Features::builder().multiview(true);
     let mut features_1_2 = vk::PhysicalDeviceVulkan12Features::builder();
     if !cfg!(target_os = "macos") {
         features_1_2 = features_1_2.draw_indirect_count(true);

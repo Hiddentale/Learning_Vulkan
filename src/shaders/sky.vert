@@ -1,4 +1,5 @@
 #version 450
+#extension GL_EXT_multiview : enable
 
 // Fullscreen triangle — no vertex input needed.
 // gl_VertexIndex 0,1,2 produces a triangle covering the entire screen.

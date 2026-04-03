@@ -48,11 +48,15 @@ impl Default for Camera {
     }
 }
 
+/// Eye count for the VP matrix arrays. Desktop uses both slots with the
+/// same matrix; VR fills left eye at index 0, right eye at index 1.
+pub const MAX_VIEWS: usize = 2;
+
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct UniformBufferObject {
-    view_projection_matrix: [[f32; 4]; 4],
-    inverse_view_projection: [[f32; 4]; 4],
+    view_projection: [[[f32; 4]; 4]; MAX_VIEWS],
+    inverse_view_projection: [[[f32; 4]; 4]; MAX_VIEWS],
     light_direction: [f32; 3],
     ambient_strength: f32,
 }
@@ -88,9 +92,11 @@ pub fn update_uniform_buffer(vulkan_application_data: &VulkanApplicationData, ca
 
     let sun_direction = Vec3::new(0.3, -1.0, 0.5).normalize();
     let inverse_vp = view_projection.inverse();
+    let vp = view_projection.to_cols_array_2d();
+    let inv = inverse_vp.to_cols_array_2d();
     let ubo = UniformBufferObject {
-        view_projection_matrix: view_projection.to_cols_array_2d(),
-        inverse_view_projection: inverse_vp.to_cols_array_2d(),
+        view_projection: [vp, vp],
+        inverse_view_projection: [inv, inv],
         light_direction: sun_direction.to_array(),
         ambient_strength: 0.15,
     };
