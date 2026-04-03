@@ -22,11 +22,11 @@ pub unsafe fn create_pipeline(vulkan_logical_device: &Device, data: &mut VulkanA
     let vertex_stage = vk::PipelineShaderStageCreateInfo::builder()
         .stage(vk::ShaderStageFlags::VERTEX)
         .module(vertex_shader_module)
-        .p_name(c"main");
+        .name(c"main");
     let fragment_stage = vk::PipelineShaderStageCreateInfo::builder()
         .stage(vk::ShaderStageFlags::FRAGMENT)
         .module(fragment_shader_module)
-        .p_name(c"main");
+        .name(c"main");
     let input_assembly_state = vk::PipelineInputAssemblyStateCreateInfo::builder()
         .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
         .primitive_restart_enable(false);
@@ -74,13 +74,13 @@ pub unsafe fn create_pipeline(vulkan_logical_device: &Device, data: &mut VulkanA
     let stages = &[*vertex_stage, *fragment_stage];
     let info = vk::GraphicsPipelineCreateInfo::builder()
         .stages(stages)
-        .p_vertex_input_state(&vertex_input_state)
-        .p_input_assembly_state(&input_assembly_state)
-        .p_viewport_state(&viewport_state)
-        .p_rasterization_state(&rasterization_state)
-        .p_multisample_state(&multisample_state)
-        .p_depth_stencil_state(&depth_stencil_state)
-        .p_color_blend_state(&color_blend_state)
+        .vertex_input_state(&vertex_input_state)
+        .input_assembly_state(&input_assembly_state)
+        .viewport_state(&viewport_state)
+        .rasterization_state(&rasterization_state)
+        .multisample_state(&multisample_state)
+        .depth_stencil_state(&depth_stencil_state)
+        .color_blend_state(&color_blend_state)
         .layout(data.pipeline_layout)
         .render_pass(data.render_pass)
         .subpass(0);

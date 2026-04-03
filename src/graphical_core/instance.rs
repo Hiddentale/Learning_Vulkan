@@ -11,19 +11,19 @@ use winit::window::Window;
 /// Creates a Vulkan instance with validation layers and debug messaging if enabled.
 pub unsafe fn create_instance(_window: &Window, entry: &Entry, data: &mut VulkanApplicationData) -> anyhow::Result<Instance> {
     let application_info = vk::ApplicationInfo::builder()
-        .p_application_name(c"Vulkan Tutorial")
+        .application_name(c"Vulkan Tutorial")
         .application_version(Version::new(1, 0, 0).to_raw())
-        .p_engine_name(c"No Engine")
+        .engine_name(c"No Engine")
         .engine_version(Version::new(1, 0, 0).to_raw())
         .api_version(Version::new(1, 2, 0).to_raw());
 
     let available_layers = entry
         .enumerate_instance_layer_properties()?
         .iter()
-        .map(|l| unsafe { CStr::from_ptr(l.layer_name.as_ptr()) }.to_owned())
-        .collect::<HashSet<_>>();
+        .map(|l| l.layer_name)
+        .collect::<Vec<_>>();
 
-    if VALIDATION_ENABLED && !available_layers.contains(VALIDATION_LAYER) {
+    if VALIDATION_ENABLED && !available_layers.iter().any(|l| l == &VALIDATION_LAYER) {
         return Err(anyhow!("Validation layer requested but not supported."));
     }
 
@@ -48,7 +48,7 @@ pub unsafe fn create_instance(_window: &Window, entry: &Entry, data: &mut Vulkan
     }
 
     let mut info = vk::InstanceCreateInfo::builder()
-        .p_application_info(&application_info)
+        .application_info(&application_info)
         .enabled_layer_names(&layers)
         .enabled_extension_names(&extensions)
         .flags(flags);
@@ -107,7 +107,7 @@ pub unsafe fn create_logical_device(entry: &Entry, instance: &Instance, data: &m
         .queue_create_infos(&queue_infos)
         .enabled_layer_names(&layers)
         .enabled_extension_names(&extensions)
-        .p_enabled_features(&features)
+        .enabled_features(&features)
         .push_next(&mut *features_1_2);
     let device = instance.create_device(data.physical_device, &info, None)?;
 
@@ -126,11 +126,11 @@ unsafe extern "system" fn debug_callback(
     let data = *data;
     let message = CStr::from_ptr(data.p_message).to_string_lossy();
 
-    if severity.as_raw() >= vk::DebugUtilsMessageSeverityFlagBitsEXT::ERROR.as_raw() {
+    if severity >= vk::DebugUtilsMessageSeverityFlagBitsEXT::ERROR {
         error!("(VALIDATION) {}", message);
-    } else if severity.as_raw() >= vk::DebugUtilsMessageSeverityFlagBitsEXT::WARNING.as_raw() {
+    } else if severity >= vk::DebugUtilsMessageSeverityFlagBitsEXT::WARNING {
         warn!("(VALIDATION) {}", message);
-    } else if severity.as_raw() >= vk::DebugUtilsMessageSeverityFlagBitsEXT::INFO.as_raw() {
+    } else if severity >= vk::DebugUtilsMessageSeverityFlagBitsEXT::INFO {
         debug!("(VALIDATION) {}", message);
     } else {
         trace!("(VALIDATION) {}", message);

@@ -3,7 +3,6 @@ use crate::DEVICE_EXTENSIONS;
 use anyhow::anyhow;
 use log::{info, warn};
 use std::collections::HashSet;
-use std::ffi::CStr;
 use thiserror::Error;
 use vulkan_rust::{vk, Instance};
 
@@ -15,13 +14,12 @@ pub struct SuitabilityError(pub &'static str);
 pub unsafe fn choose_gpu(instance: &Instance, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
     for gpu in instance.enumerate_physical_devices()? {
         let properties = instance.get_physical_device_properties(gpu);
-        let name = CStr::from_ptr(properties.device_name.as_ptr()).to_string_lossy();
         if is_gpu_suitable(instance, data, gpu) {
-            info!("Selected GPU (`{}`).", name);
+            info!("Selected GPU (`{}`).", properties.device_name);
             data.physical_device = gpu;
             return Ok(());
         } else {
-            warn!("Skipping GPU (`{}.`)", name);
+            warn!("Skipping GPU (`{}.`)", properties.device_name);
         }
     }
     Err(anyhow!("Failed to find suitable GPU."))
@@ -42,9 +40,9 @@ unsafe fn check_gpu_extensions(instance: &Instance, gpu: vk::PhysicalDevice) -> 
     let extensions = instance
         .enumerate_device_extension_properties(gpu, None)?
         .iter()
-        .map(|e| CStr::from_ptr(e.extension_name.as_ptr()).to_owned())
+        .map(|e| e.extension_name)
         .collect::<HashSet<_>>();
-    if DEVICE_EXTENSIONS.iter().all(|e| extensions.contains(*e)) {
+    if DEVICE_EXTENSIONS.iter().all(|e| extensions.iter().any(|ext| ext == e)) {
         Ok(())
     } else {
         Err(anyhow!(SuitabilityError("Missing required GPU extensions.")))

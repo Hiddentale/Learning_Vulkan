@@ -36,7 +36,7 @@ pub unsafe fn create_render_pass(_instance: &Instance, device: &Device, data: &m
     let subpass = vk::SubpassDescription::builder()
         .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
         .color_attachments(color_attachments)
-        .p_depth_stencil_attachment(&depth_attachment_ref);
+        .depth_stencil_attachment(&depth_attachment_ref);
 
     let dependency = vk::SubpassDependency::builder()
         .src_subpass(vk::SUBPASS_EXTERNAL)

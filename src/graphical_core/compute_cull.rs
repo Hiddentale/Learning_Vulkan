@@ -210,7 +210,7 @@ pub unsafe fn create_compute_cull(
     let stage = vk::PipelineShaderStageCreateInfo::builder()
         .stage(vk::ShaderStageFlags::COMPUTE)
         .module(shader_module)
-        .p_name(c"main");
+        .name(c"main");
     let pipeline_info = vk::ComputePipelineCreateInfo::builder().stage(*stage).layout(pipeline_layout);
     let pipeline = device.create_compute_pipelines(vk::PipelineCache::null(), &[*pipeline_info], None)?[0];
     device.destroy_shader_module(shader_module, None);
@@ -458,7 +458,7 @@ pub unsafe fn create_depth_pyramid_pipeline(device: &Device, data: &VulkanApplic
     let stage = vk::PipelineShaderStageCreateInfo::builder()
         .stage(vk::ShaderStageFlags::COMPUTE)
         .module(shader_module)
-        .p_name(c"main");
+        .name(c"main");
     let pipeline_info = vk::ComputePipelineCreateInfo::builder().stage(*stage).layout(pipeline_layout);
     let pipeline = device.create_compute_pipelines(vk::PipelineCache::null(), &[*pipeline_info], None)?[0];
     device.destroy_shader_module(shader_module, None);
