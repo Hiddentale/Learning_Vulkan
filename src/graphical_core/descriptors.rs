@@ -48,10 +48,7 @@ pub fn create_pool(device: &Device, data: &mut VulkanApplicationData) -> anyhow:
         .r#type(vk::DescriptorType::STORAGE_BUFFER);
 
     let pool_sizes = [sampler_pool_size, ubo_pool_size, ssbo_pool_size];
-    let pool_info = vk::DescriptorPoolCreateInfo::builder()
-        .flags(vk::DescriptorPoolCreateFlags::empty())
-        .max_sets(1)
-        .pool_sizes(&pool_sizes);
+    let pool_info = vk::DescriptorPoolCreateInfo::builder().max_sets(1).pool_sizes(&pool_sizes);
 
     data.descriptor_pool = unsafe { device.create_descriptor_pool(&pool_info, None)? };
     Ok(())

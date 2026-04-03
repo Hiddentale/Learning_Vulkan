@@ -110,7 +110,7 @@ impl MeshPool {
             );
         }
 
-        let host_visible = vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT;
+        let host_visible = super::host_visible_coherent();
 
         let vertex_size = std::mem::size_of_val(all_vertices.as_slice()) as u64;
         let (vb, vm) = allocate_and_fill_buffer(

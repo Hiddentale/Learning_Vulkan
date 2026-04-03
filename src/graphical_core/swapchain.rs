@@ -95,29 +95,15 @@ fn get_swapchain_extent(window: &Window, capabilities: vk::SurfaceCapabilitiesKH
 }
 /// Creates a 2D image view for each swapchain image.
 pub unsafe fn create_swapchain_image_views(device: &Device, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
-    let normal_rgba_values = vk::ComponentSwizzle::IDENTITY;
-
     data.swapchain_image_views = data
         .swapchain_images
         .iter()
         .map(|i| {
-            let components = vk::ComponentMapping::builder()
-                .r(normal_rgba_values)
-                .g(normal_rgba_values)
-                .b(normal_rgba_values)
-                .a(normal_rgba_values);
-            let subresource_range = vk::ImageSubresourceRange::builder()
-                .aspect_mask(vk::ImageAspectFlags::COLOR)
-                .base_mip_level(0)
-                .level_count(1)
-                .base_array_layer(0)
-                .layer_count(1);
             let info = vk::ImageViewCreateInfo::builder()
                 .image(*i)
                 .view_type(vk::ImageViewType::_2D)
                 .format(data.swapchain_format)
-                .components(*components)
-                .subresource_range(*subresource_range);
+                .subresource_range(super::subresource_range(vk::ImageAspectFlags::COLOR, 1));
             device.create_image_view(&info, None)
         })
         .collect::<anyhow::Result<Vec<_>, _>>()?;

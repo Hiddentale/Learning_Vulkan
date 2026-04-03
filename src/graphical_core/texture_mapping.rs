@@ -57,7 +57,7 @@ fn create_and_fill_staging_buffer(
             device,
             instance,
             vulkan_application_data,
-            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+            super::host_visible_coherent(),
         )?
     };
     Ok(staging_buffer)
@@ -166,20 +166,13 @@ unsafe fn transition_image_layout(
         _ => panic!("Unsupported layout transition: {:?} -> {:?}", old_layout, new_layout),
     };
 
-    let subresource_range = vk::ImageSubresourceRange::builder()
-        .aspect_mask(vk::ImageAspectFlags::COLOR)
-        .base_mip_level(0)
-        .base_array_layer(0)
-        .level_count(1)
-        .layer_count(1);
-
     let barrier = vk::ImageMemoryBarrier::builder()
         .src_access_mask(src_access)
         .dst_access_mask(dst_access)
         .old_layout(old_layout)
         .new_layout(new_layout)
         .image(image)
-        .subresource_range(*subresource_range)
+        .subresource_range(super::subresource_range(vk::ImageAspectFlags::COLOR, 1))
         .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
         .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED);
 
@@ -213,21 +206,11 @@ unsafe fn copy_buffer_to_image(device: &Device, cmd: vk::CommandBuffer, buffer: 
 }
 
 fn create_image_view(device: &Device, image: vk::Image) -> anyhow::Result<vk::ImageView> {
-    let identity = vk::ComponentSwizzle::IDENTITY;
-    let components = vk::ComponentMapping::builder().r(identity).g(identity).b(identity).a(identity);
-    let subresource_range = vk::ImageSubresourceRange::builder()
-        .aspect_mask(vk::ImageAspectFlags::COLOR)
-        .base_mip_level(0)
-        .level_count(1)
-        .base_array_layer(0)
-        .layer_count(1);
-
     let view_info = vk::ImageViewCreateInfo::builder()
         .image(image)
         .format(TEXTURE_FORMAT)
         .view_type(vk::ImageViewType::_2D)
-        .components(*components)
-        .subresource_range(*subresource_range);
+        .subresource_range(super::subresource_range(vk::ImageAspectFlags::COLOR, 1));
 
     Ok(unsafe { device.create_image_view(&view_info, None)? })
 }

@@ -102,25 +102,25 @@ fn vertex_input_descriptions() -> (vk::VertexInputBindingDescription, [vk::Verte
         .binding(0)
         .location(0)
         .format(vk::Format::R32G32B32_SFLOAT)
-        .offset(0);
+        .offset(std::mem::offset_of!(Vertex, position) as u32);
 
     let uv_coordinate = *vk::VertexInputAttributeDescription::builder()
         .binding(0)
         .location(1)
         .format(vk::Format::R32G32_SFLOAT)
-        .offset(std::mem::size_of::<[f32; 3]>() as u32);
+        .offset(std::mem::offset_of!(Vertex, uv_coordinate) as u32);
 
     let normal = *vk::VertexInputAttributeDescription::builder()
         .binding(0)
         .location(2)
         .format(vk::Format::R32G32B32_SFLOAT)
-        .offset(std::mem::size_of::<[f32; 5]>() as u32);
+        .offset(std::mem::offset_of!(Vertex, normal) as u32);
 
     let material_id = *vk::VertexInputAttributeDescription::builder()
         .binding(0)
         .location(3)
         .format(vk::Format::R32_UINT)
-        .offset(std::mem::size_of::<[f32; 8]>() as u32);
+        .offset(std::mem::offset_of!(Vertex, material_id) as u32);
 
     (binding, [position, uv_coordinate, normal, material_id])
 }

@@ -46,14 +46,7 @@ pub unsafe fn create_depth_image(device: &Device, instance: &Instance, data: &mu
         .image(data.depth_image)
         .view_type(vk::ImageViewType::_2D)
         .format(DEPTH_FORMAT)
-        .subresource_range(
-            *vk::ImageSubresourceRange::builder()
-                .aspect_mask(vk::ImageAspectFlags::DEPTH)
-                .base_mip_level(0)
-                .level_count(1)
-                .base_array_layer(0)
-                .layer_count(1),
-        );
+        .subresource_range(super::subresource_range(vk::ImageAspectFlags::DEPTH, 1));
 
     data.depth_image_view = device.create_image_view(&view_info, None)?;
 
@@ -113,14 +106,7 @@ pub unsafe fn create_depth_pyramid(device: &Device, instance: &Instance, data: &
             .image(data.depth_pyramid_image)
             .view_type(vk::ImageViewType::_2D)
             .format(vk::Format::R32_SFLOAT)
-            .subresource_range(
-                *vk::ImageSubresourceRange::builder()
-                    .aspect_mask(vk::ImageAspectFlags::COLOR)
-                    .base_mip_level(mip)
-                    .level_count(1)
-                    .base_array_layer(0)
-                    .layer_count(1),
-            );
+            .subresource_range(super::subresource_range_mip(vk::ImageAspectFlags::COLOR, mip, 1));
         mip_views.push(device.create_image_view(&view_info, None)?);
     }
     data.depth_pyramid_mip_views = mip_views;
@@ -130,14 +116,7 @@ pub unsafe fn create_depth_pyramid(device: &Device, instance: &Instance, data: &
         .image(data.depth_pyramid_image)
         .view_type(vk::ImageViewType::_2D)
         .format(vk::Format::R32_SFLOAT)
-        .subresource_range(
-            *vk::ImageSubresourceRange::builder()
-                .aspect_mask(vk::ImageAspectFlags::COLOR)
-                .base_mip_level(0)
-                .level_count(mip_count)
-                .base_array_layer(0)
-                .layer_count(1),
-        );
+        .subresource_range(super::subresource_range(vk::ImageAspectFlags::COLOR, mip_count));
     data.depth_pyramid_full_view = device.create_image_view(&full_view_info, None)?;
 
     // Nearest-filter sampler with clamp-to-edge (min-reduction reads)

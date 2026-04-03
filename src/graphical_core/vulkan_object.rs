@@ -228,10 +228,15 @@ unsafe fn create_resources(device: &Device, instance: &Instance, data: &mut Vulk
 unsafe fn create_transform_and_indirect_buffers(device: &Device, instance: &Instance, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
     use crate::graphical_core::buffers::allocate_buffer;
 
-    let host_visible = vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT;
-
     let transform_size = (MAX_LOADED_CHUNKS * std::mem::size_of::<[[f32; 4]; 4]>()) as u64;
-    let (tb, tm, tp) = allocate_buffer::<[[f32; 4]; 4]>(transform_size, vk::BufferUsageFlags::STORAGE_BUFFER, device, instance, data, host_visible)?;
+    let (tb, tm, tp) = allocate_buffer::<[[f32; 4]; 4]>(
+        transform_size,
+        vk::BufferUsageFlags::STORAGE_BUFFER,
+        device,
+        instance,
+        data,
+        super::host_visible_coherent(),
+    )?;
     data.transform_buffer = tb;
     data.transform_buffer_memory = tm;
     data.transform_buffer_ptr = tp;
@@ -243,7 +248,7 @@ unsafe fn create_transform_and_indirect_buffers(device: &Device, instance: &Inst
         device,
         instance,
         data,
-        host_visible,
+        super::host_visible_coherent(),
     )?;
     data.indirect_buffer = ib;
     data.indirect_buffer_memory = im;
@@ -459,7 +464,6 @@ impl VulkanApplication {
             .swapchains(swapchains)
             .image_indices(image_indices);
 
-        self.device.queue_wait_idle(data.presentation_queue)?;
         let result = self.device.queue_present_khr(data.presentation_queue, &present_info);
 
         if result == Err(vk::Result::ERROR_OUT_OF_DATE) {

@@ -84,8 +84,6 @@ pub unsafe fn create_compute_cull(
     indirect_buffer: vk::Buffer,
     indirect_buffer_size: vk::DeviceSize,
 ) -> anyhow::Result<ComputeCullResources> {
-    let host_visible = vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT;
-
     // Chunk info buffer (input to compute)
     let chunk_info_size = (max_chunks * std::mem::size_of::<GpuChunkInfo>()) as u64;
     let (ci_buf, ci_mem, ci_ptr) = allocate_buffer::<GpuChunkInfo>(
@@ -94,7 +92,7 @@ pub unsafe fn create_compute_cull(
         device,
         instance,
         data,
-        host_visible,
+        super::host_visible_coherent(),
     )?;
 
     // Draw count buffer (2 atomic counters: phase1_count + phase2_count)
@@ -104,7 +102,7 @@ pub unsafe fn create_compute_cull(
         device,
         instance,
         data,
-        host_visible,
+        super::host_visible_coherent(),
     )?;
 
     // Visibility buffer (1 uint per chunk, persists across frames)
@@ -115,7 +113,7 @@ pub unsafe fn create_compute_cull(
         device,
         instance,
         data,
-        host_visible,
+        super::host_visible_coherent(),
     )?;
     // Initialize all to 1 (treat all chunks as "was visible" on first frame)
     for i in 0..max_chunks {
@@ -124,36 +122,12 @@ pub unsafe fn create_compute_cull(
 
     // Descriptor set layout: 4 SSBOs + depth pyramid sampler + camera UBO
     let bindings = [
-        *vk::DescriptorSetLayoutBinding::builder()
-            .binding(0)
-            .descriptor_count(1)
-            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-            .stage_flags(vk::ShaderStageFlags::COMPUTE),
-        *vk::DescriptorSetLayoutBinding::builder()
-            .binding(1)
-            .descriptor_count(1)
-            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-            .stage_flags(vk::ShaderStageFlags::COMPUTE),
-        *vk::DescriptorSetLayoutBinding::builder()
-            .binding(2)
-            .descriptor_count(1)
-            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-            .stage_flags(vk::ShaderStageFlags::COMPUTE),
-        *vk::DescriptorSetLayoutBinding::builder()
-            .binding(3)
-            .descriptor_count(1)
-            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-            .stage_flags(vk::ShaderStageFlags::COMPUTE),
-        *vk::DescriptorSetLayoutBinding::builder()
-            .binding(4)
-            .descriptor_count(1)
-            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-            .stage_flags(vk::ShaderStageFlags::COMPUTE),
-        *vk::DescriptorSetLayoutBinding::builder()
-            .binding(5)
-            .descriptor_count(1)
-            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-            .stage_flags(vk::ShaderStageFlags::COMPUTE),
+        compute_binding(0, vk::DescriptorType::STORAGE_BUFFER),
+        compute_binding(1, vk::DescriptorType::STORAGE_BUFFER),
+        compute_binding(2, vk::DescriptorType::STORAGE_BUFFER),
+        compute_binding(3, vk::DescriptorType::COMBINED_IMAGE_SAMPLER),
+        compute_binding(4, vk::DescriptorType::UNIFORM_BUFFER),
+        compute_binding(5, vk::DescriptorType::STORAGE_BUFFER),
     ];
     let layout_info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings);
     let desc_layout = device.create_descriptor_set_layout(&layout_info, None)?;
@@ -212,7 +186,7 @@ pub unsafe fn create_compute_cull(
         .module(shader_module)
         .name(c"main");
     let pipeline_info = vk::ComputePipelineCreateInfo::builder().stage(*stage).layout(pipeline_layout);
-    let pipeline = device.create_compute_pipelines(vk::PipelineCache::null(), &[*pipeline_info], None)?[0];
+    let pipeline = device.create_compute_pipeline(vk::PipelineCache::null(), &pipeline_info, None)?;
     device.destroy_shader_module(shader_module, None);
 
     Ok(ComputeCullResources {
@@ -460,7 +434,7 @@ pub unsafe fn create_depth_pyramid_pipeline(device: &Device, data: &VulkanApplic
         .module(shader_module)
         .name(c"main");
     let pipeline_info = vk::ComputePipelineCreateInfo::builder().stage(*stage).layout(pipeline_layout);
-    let pipeline = device.create_compute_pipelines(vk::PipelineCache::null(), &[*pipeline_info], None)?[0];
+    let pipeline = device.create_compute_pipeline(vk::PipelineCache::null(), &pipeline_info, None)?;
     device.destroy_shader_module(shader_module, None);
 
     Ok(DepthPyramidResources {
@@ -477,6 +451,14 @@ pub unsafe fn destroy_depth_pyramid_pipeline(device: &Device, res: &DepthPyramid
     device.destroy_pipeline_layout(res.pipeline_layout, None);
     device.destroy_descriptor_pool(res.descriptor_pool, None);
     device.destroy_descriptor_set_layout(res.descriptor_set_layout, None);
+}
+
+fn compute_binding(binding: u32, descriptor_type: vk::DescriptorType) -> vk::DescriptorSetLayoutBinding {
+    *vk::DescriptorSetLayoutBinding::builder()
+        .binding(binding)
+        .descriptor_count(1)
+        .descriptor_type(descriptor_type)
+        .stage_flags(vk::ShaderStageFlags::COMPUTE)
 }
 
 pub unsafe fn destroy_compute_cull(device: &Device, res: &ComputeCullResources) {

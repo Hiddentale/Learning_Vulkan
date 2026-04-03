@@ -22,3 +22,25 @@ pub mod texture_mapping;
 pub mod vulkan_object;
 
 const MAX_FRAMES_IN_FLIGHT: usize = 2;
+
+/// Builds an `ImageSubresourceRange` for a single base array layer.
+fn subresource_range(aspect: vulkan_rust::vk::ImageAspectFlags, level_count: u32) -> vulkan_rust::vk::ImageSubresourceRange {
+    *vulkan_rust::vk::ImageSubresourceRange::builder()
+        .aspect_mask(aspect)
+        .level_count(level_count)
+        .layer_count(1)
+}
+
+/// Builds an `ImageSubresourceRange` starting at a specific mip level.
+fn subresource_range_mip(aspect: vulkan_rust::vk::ImageAspectFlags, base_mip: u32, level_count: u32) -> vulkan_rust::vk::ImageSubresourceRange {
+    *vulkan_rust::vk::ImageSubresourceRange::builder()
+        .aspect_mask(aspect)
+        .base_mip_level(base_mip)
+        .level_count(level_count)
+        .layer_count(1)
+}
+
+/// Memory visible and coherent from the CPU — used for persistently mapped buffers.
+fn host_visible_coherent() -> vulkan_rust::vk::MemoryPropertyFlags {
+    vulkan_rust::vk::MemoryPropertyFlags::HOST_VISIBLE | vulkan_rust::vk::MemoryPropertyFlags::HOST_COHERENT
+}
