@@ -21,7 +21,7 @@ use crate::voxel::{
     meshing::{self, ChunkNeighbors},
     world::World,
 };
-use crate::vr::{VrContext, VrSession};
+use crate::vr::{VrContext, VrSession, VrSwapchain};
 use crate::VALIDATION_ENABLED;
 use anyhow::anyhow;
 use log::info;
@@ -114,6 +114,7 @@ pub struct VulkanApplication {
     depth_pyramid_needs_init: bool,
     last_player_chunk: [i32; 2],
     _vr_session: Option<VrSession>,
+    _vr_swapchain: Option<VrSwapchain>,
 }
 
 impl VulkanApplication {
@@ -129,7 +130,14 @@ impl VulkanApplication {
     /// Calls unsafe Vulkan APIs. The caller must call [`destroy_vulkan_application`]
     /// before dropping the returned value or closing the window.
     pub unsafe fn create_vulkan_application(user_window: &Window, vr_context: Option<VrContext>) -> anyhow::Result<Self> {
-        let (entry, instance, device, mut data, vr_session) = create_core_infrastructure(user_window, vr_context)?;
+        let CoreInfrastructure {
+            entry,
+            instance,
+            device,
+            mut data,
+            vr_session,
+            vr_swapchain,
+        } = create_core_infrastructure(user_window, vr_context)?;
         create_presentation_pipeline(user_window, &instance, &device, &mut data)?;
         create_resources(&device, &instance, &mut data)?;
         allocate_command_buffers(&device, &mut data)?;
@@ -162,14 +170,21 @@ impl VulkanApplication {
             depth_pyramid_needs_init: true,
             last_player_chunk: [0, 0],
             _vr_session: vr_session,
+            _vr_swapchain: vr_swapchain,
         })
     }
 }
 
-unsafe fn create_core_infrastructure(
-    window: &Window,
-    vr_context: Option<VrContext>,
-) -> anyhow::Result<(Entry, Instance, Device, VulkanApplicationData, Option<VrSession>)> {
+struct CoreInfrastructure {
+    entry: Entry,
+    instance: Instance,
+    device: Device,
+    data: VulkanApplicationData,
+    vr_session: Option<VrSession>,
+    vr_swapchain: Option<VrSwapchain>,
+}
+
+unsafe fn create_core_infrastructure(window: &Window, vr_context: Option<VrContext>) -> anyhow::Result<CoreInfrastructure> {
     let loader = LibloadingLoader::new().map_err(|e| anyhow!("{}", e))?;
     let entry = unsafe { Entry::new(loader) }.map_err(|b| anyhow!("{}", b))?;
     let mut data = VulkanApplicationData::default();
@@ -202,7 +217,19 @@ unsafe fn create_core_infrastructure(
         None => None,
     };
 
-    Ok((entry, instance, device, data, vr_session))
+    let vr_swapchain = match &vr_session {
+        Some(session) => Some(VrSwapchain::create(session, &device, &instance, data.physical_device)?),
+        None => None,
+    };
+
+    Ok(CoreInfrastructure {
+        entry,
+        instance,
+        device,
+        data,
+        vr_session,
+        vr_swapchain,
+    })
 }
 
 unsafe fn create_presentation_pipeline(
@@ -577,6 +604,9 @@ impl VulkanApplication {
     }
 
     unsafe fn destroy_resources(&mut self) {
+        if let Some(vr_sc) = self._vr_swapchain.take() {
+            vr_sc.destroy(&self.device);
+        }
         compute_cull::destroy_depth_pyramid_pipeline(&self.device, &self.depth_pyramid_pipeline);
         compute_cull::destroy_compute_cull(&self.device, &self.compute_cull);
         destroy_textures(&self.device, &mut self.vulkan_application_data);

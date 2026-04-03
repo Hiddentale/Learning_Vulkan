@@ -30,9 +30,16 @@ pub struct VrContext {
 /// Active OpenXR session bound to a Vulkan device.
 pub struct VrSession {
     pub xr_instance: xr::Instance,
+    system: xr::SystemId,
     pub session: xr::Session<xr::Vulkan>,
     pub frame_waiter: xr::FrameWaiter,
     pub frame_stream: xr::FrameStream<xr::Vulkan>,
+}
+
+impl VrSession {
+    pub fn system(&self) -> xr::SystemId {
+        self.system
+    }
 }
 
 impl VrContext {
@@ -152,6 +159,7 @@ impl VrContext {
 
         Ok(VrSession {
             xr_instance: self.xr_instance,
+            system: self.system,
             session,
             frame_waiter,
             frame_stream,
@@ -185,7 +193,7 @@ pub fn vk_image_to_xr(image: vk::Image) -> u64 {
 }
 
 /// Convert an openxr swapchain image handle (`u64`) to a vulkan-rs `vk::Image`.
-pub fn xr_image_to_vk(handle: u64) -> vk::Image {
+pub(crate) fn xr_image_to_vk(handle: u64) -> vk::Image {
     vk::Image::from_raw(handle)
 }
 
