@@ -1900,6 +1900,8 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 [[package]]
 name = "vulkan-rust"
 version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0a52f79dc4bbc769a57f6dad4c0bf478d80355ec6ee35cd3bc167ae21aaed545"
 dependencies = [
  "libloading 0.8.9",
  "raw-window-handle 0.6.2",
@@ -1909,6 +1911,8 @@ dependencies = [
 [[package]]
 name = "vulkan-rust-sys"
 version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a9c1d355e1fb05ca25fcfeb427caf9d3d6ce74cc2e04067bdb28a0873e628fa9"
 
 [[package]]
 name = "walkdir"
