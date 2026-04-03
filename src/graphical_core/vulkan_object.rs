@@ -1,5 +1,5 @@
 use crate::graphical_core::{
-    camera::{create_uniform_buffer, destroy_uniform_buffer, update_uniform_buffer, view_projection_matrix, Camera, UniformBufferObject},
+    camera::{create_uniform_buffer, destroy_uniform_buffer, update_uniform_buffer, Camera, EyeMatrices, UniformBufferObject},
     commands::{allocate_command_buffers, create_command_pool, create_frame_buffers, create_sync_objects, record_command_buffer},
     compute_cull::{self, ComputeCullResources, CullPushConstants, DepthPyramidResources},
     depth::{create_depth_image, create_depth_pyramid, destroy_depth_image, destroy_depth_pyramid},
@@ -120,6 +120,10 @@ pub struct VulkanApplication {
 impl VulkanApplication {
     pub fn world(&self) -> &World {
         &self.world
+    }
+
+    pub fn swapchain_extent(&self) -> vk::Extent2D {
+        self.vulkan_application_data.swapchain_extent
     }
 }
 
@@ -389,17 +393,16 @@ impl VulkanApplication {
     ///
     /// # Safety
     /// Calls unsafe Vulkan queue and synchronization APIs.
-    pub unsafe fn render_frame(&mut self, window: &Window, camera: &Camera) -> anyhow::Result<()> {
+    pub unsafe fn render_frame(&mut self, window: &Window, camera: &Camera, eyes: &EyeMatrices) -> anyhow::Result<()> {
         self.update_chunks(camera)?;
 
         let image_index = match self.acquire_next_image(window)? {
             Some(index) => index,
             None => return Ok(()), // swapchain was recreated, skip this frame
         };
-        update_uniform_buffer(&self.vulkan_application_data, camera)?;
+        update_uniform_buffer(&self.vulkan_application_data, eyes)?;
 
-        let vp = view_projection_matrix(camera, self.vulkan_application_data.swapchain_extent);
-        let frustum = Frustum::from_view_projection(&vp);
+        let frustum = Frustum::from_view_projection(&eyes.primary_vp());
         let cull_push = CullPushConstants {
             planes: [
                 frustum.plane(0),

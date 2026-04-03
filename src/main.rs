@@ -3,7 +3,7 @@ mod graphical_core;
 mod voxel;
 mod vr;
 use anyhow::Result;
-use graphical_core::camera::Camera;
+use graphical_core::camera::{Camera, EyeMatrices};
 use graphical_core::input::InputState;
 use graphical_core::vulkan_object::VulkanApplication;
 use log::info;
@@ -109,7 +109,8 @@ fn main() -> Result<()> {
                 ..
             } => {
                 if !destroy_application && !minimized {
-                    if let Err(e) = unsafe { application.render_frame(&user_window, &camera) } {
+                    let eyes = EyeMatrices::from_camera(&camera, application.swapchain_extent());
+                    if let Err(e) = unsafe { application.render_frame(&user_window, &camera, &eyes) } {
                         eprintln!("Render error: {e}");
                         exit_program(&mut destroy_application, current_window, &mut application);
                     }
