@@ -82,7 +82,7 @@ pub unsafe fn create_compute_cull(
     data: &mut VulkanApplicationData,
     max_chunks: usize,
     indirect_buffer: vk::Buffer,
-    indirect_buffer_size: u64,
+    indirect_buffer_size: vk::DeviceSize,
 ) -> anyhow::Result<ComputeCullResources> {
     let host_visible = vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT;
 
@@ -237,12 +237,12 @@ fn write_compute_descriptors(
     device: &Device,
     set: vk::DescriptorSet,
     chunk_info_buffer: vk::Buffer,
-    chunk_info_size: u64,
+    chunk_info_size: vk::DeviceSize,
     indirect_buffer: vk::Buffer,
-    indirect_buffer_size: u64,
+    indirect_buffer_size: vk::DeviceSize,
     draw_count_buffer: vk::Buffer,
     visibility_buffer: vk::Buffer,
-    visibility_size: u64,
+    visibility_size: vk::DeviceSize,
 ) {
     let ci_info = [*vk::DescriptorBufferInfo::builder()
         .buffer(chunk_info_buffer)

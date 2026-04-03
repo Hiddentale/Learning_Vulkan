@@ -7,7 +7,7 @@ use vulkan_rust::{vk, Device, Instance};
 /// Returns the buffer handle, backing memory, and a CPU pointer to the mapped region.
 /// The caller is responsible for unmapping and freeing resources at cleanup.
 pub unsafe fn allocate_buffer<T>(
-    buffer_size_in_bytes: u64,
+    buffer_size_in_bytes: vk::DeviceSize,
     buffer_usage_flags: vk::BufferUsageFlags,
     device: &Device,
     instance: &Instance,
@@ -43,7 +43,7 @@ pub unsafe fn allocate_buffer<T>(
 /// ongoing access. The buffer is filled and unmapped immediately.
 pub unsafe fn allocate_and_fill_buffer<T>(
     data_slice: &[T],
-    buffer_size_in_bytes: u64,
+    buffer_size_in_bytes: vk::DeviceSize,
     buffer_usage_flags: vk::BufferUsageFlags,
     device: &Device,
     instance: &Instance,

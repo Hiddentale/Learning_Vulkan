@@ -75,7 +75,7 @@ pub fn update_set(
     uniform_buffer: vk::Buffer,
     palette_buffer: vk::Buffer,
     transform_buffer: vk::Buffer,
-    transform_buffer_size: u64,
+    transform_buffer_size: vk::DeviceSize,
 ) {
     let image_info = *vk::DescriptorImageInfo::builder()
         .image_view(image_view)
