@@ -1,7 +1,6 @@
 use crate::graphical_core::memory::find_memory_type;
 use crate::graphical_core::vulkan_object::VulkanApplicationData;
-use vulkanalia::vk::{DeviceV1_0, HasBuilder, InstanceV1_0};
-use vulkanalia::{vk, Device, Instance};
+use vulkan_rust::{vk, Device, Instance};
 
 const DEPTH_FORMAT: vk::Format = vk::Format::D32_SFLOAT;
 
@@ -48,7 +47,7 @@ pub unsafe fn create_depth_image(device: &Device, instance: &Instance, data: &mu
         .view_type(vk::ImageViewType::_2D)
         .format(DEPTH_FORMAT)
         .subresource_range(
-            vk::ImageSubresourceRange::builder()
+            *vk::ImageSubresourceRange::builder()
                 .aspect_mask(vk::ImageAspectFlags::DEPTH)
                 .base_mip_level(0)
                 .level_count(1)
@@ -115,7 +114,7 @@ pub unsafe fn create_depth_pyramid(device: &Device, instance: &Instance, data: &
             .view_type(vk::ImageViewType::_2D)
             .format(vk::Format::R32_SFLOAT)
             .subresource_range(
-                vk::ImageSubresourceRange::builder()
+                *vk::ImageSubresourceRange::builder()
                     .aspect_mask(vk::ImageAspectFlags::COLOR)
                     .base_mip_level(mip)
                     .level_count(1)
@@ -132,7 +131,7 @@ pub unsafe fn create_depth_pyramid(device: &Device, instance: &Instance, data: &
         .view_type(vk::ImageViewType::_2D)
         .format(vk::Format::R32_SFLOAT)
         .subresource_range(
-            vk::ImageSubresourceRange::builder()
+            *vk::ImageSubresourceRange::builder()
                 .aspect_mask(vk::ImageAspectFlags::COLOR)
                 .base_mip_level(0)
                 .level_count(mip_count)

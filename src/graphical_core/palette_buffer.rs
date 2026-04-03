@@ -1,8 +1,7 @@
 use crate::graphical_core::buffers::allocate_and_fill_buffer;
 use crate::graphical_core::vulkan_object::VulkanApplicationData;
 use crate::voxel::material::{default_palette, MaterialPalette};
-use vulkanalia::vk::{self, DeviceV1_0};
-use vulkanalia::{Device, Instance};
+use vulkan_rust::{vk, Device, Instance};
 
 /// Allocates a GPU buffer and uploads the default material palette.
 ///

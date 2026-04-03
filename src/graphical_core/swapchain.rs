@@ -1,7 +1,7 @@
 use crate::graphical_core::queue_families::RequiredQueueFamilies;
 use crate::graphical_core::vulkan_object::VulkanApplicationData;
-use vulkanalia::vk::{DeviceV1_0, Handle, HasBuilder, KhrSurfaceExtension, KhrSwapchainExtension};
-use vulkanalia::{vk, Device, Instance};
+use vk::Handle;
+use vulkan_rust::{vk, Device, Instance};
 use winit::window::Window;
 
 /// Selects the best surface format, presentation mode, and extent, then creates the swapchain.
@@ -80,7 +80,7 @@ fn get_swapchain_extent(window: &Window, capabilities: vk::SurfaceCapabilitiesKH
     } else {
         let size = window.inner_size();
         let clamp = |min: u32, max: u32, v: u32| min.max(max.min(v));
-        vk::Extent2D::builder()
+        *vk::Extent2D::builder()
             .width(clamp(
                 capabilities.min_image_extent.width,
                 capabilities.max_image_extent.width,
@@ -91,7 +91,6 @@ fn get_swapchain_extent(window: &Window, capabilities: vk::SurfaceCapabilitiesKH
                 capabilities.max_image_extent.height,
                 size.height,
             ))
-            .build()
     }
 }
 /// Creates a 2D image view for each swapchain image.
@@ -117,8 +116,8 @@ pub unsafe fn create_swapchain_image_views(device: &Device, data: &mut VulkanApp
                 .image(*i)
                 .view_type(vk::ImageViewType::_2D)
                 .format(data.swapchain_format)
-                .components(components)
-                .subresource_range(subresource_range);
+                .components(*components)
+                .subresource_range(*subresource_range);
             device.create_image_view(&info, None)
         })
         .collect::<anyhow::Result<Vec<_>, _>>()?;

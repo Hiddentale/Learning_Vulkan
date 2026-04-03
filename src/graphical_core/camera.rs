@@ -1,8 +1,7 @@
 use crate::graphical_core::buffers::allocate_buffer;
 use crate::graphical_core::vulkan_object::VulkanApplicationData;
 use glam::{Mat4, Vec3};
-use vulkanalia::vk::{self, DeviceV1_0};
-use vulkanalia::{Device, Instance};
+use vulkan_rust::{vk, Device, Instance};
 
 const FOV_DEGREES: f32 = 90.0;
 const NEAR_PLANE: f32 = 0.1;
@@ -100,7 +99,7 @@ pub fn update_uniform_buffer(vulkan_application_data: &VulkanApplicationData, ca
 }
 
 /// Unmaps, destroys, and frees the uniform buffer and its memory.
-pub fn destroy_uniform_buffer(device: &vulkanalia::Device, vulkan_application_data: &mut VulkanApplicationData) {
+pub fn destroy_uniform_buffer(device: &Device, vulkan_application_data: &mut VulkanApplicationData) {
     unsafe {
         device.unmap_memory(vulkan_application_data.uniform_buffer_memory);
         device.destroy_buffer(vulkan_application_data.uniform_buffer, None);

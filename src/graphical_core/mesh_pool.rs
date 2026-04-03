@@ -3,8 +3,8 @@ use crate::graphical_core::mesh::Vertex;
 use crate::graphical_core::vulkan_object::VulkanApplicationData;
 use crate::voxel::meshing::BUCKET_COUNT;
 use std::collections::HashMap;
-use vulkanalia::vk::{self, DeviceV1_0, Handle};
-use vulkanalia::{Device, Instance};
+use vk::Handle;
+use vulkan_rust::{vk, Device, Instance};
 
 /// Index range for one face-direction bucket within the shared index buffer.
 #[derive(Copy, Clone, Debug, Default)]

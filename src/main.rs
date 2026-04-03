@@ -10,7 +10,7 @@ use log::info;
 use std::time::Instant;
 use voxel::player::Player;
 use vr::{VrContext, VrSupport};
-use vulkanalia::{prelude::v1_0::*, Version};
+use vulkan_rust::{vk, Version};
 use winit::{
     dpi::LogicalSize,
     event::{DeviceEvent, ElementState, Event, WindowEvent},
@@ -22,8 +22,8 @@ use winit::{
 const PORTABILITY_MACOS_VERSION: Version = Version::new(1, 3, 216);
 const VALIDATION_ENABLED: bool = cfg!(debug_assertions);
 
-const VALIDATION_LAYER: vk::ExtensionName = vk::ExtensionName::from_bytes(b"VK_LAYER_KHRONOS_validation");
-const DEVICE_EXTENSIONS: &[vk::ExtensionName] = &[vk::KHR_SWAPCHAIN_EXTENSION.name];
+const VALIDATION_LAYER: &std::ffi::CStr = c"VK_LAYER_KHRONOS_validation";
+const DEVICE_EXTENSIONS: &[&std::ffi::CStr] = &[vk::extension_names::KHR_SWAPCHAIN_EXTENSION_NAME];
 
 fn main() -> Result<()> {
     initialize_error_handler();

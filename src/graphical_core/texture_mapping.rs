@@ -1,7 +1,6 @@
 use crate::graphical_core::{buffers::allocate_and_fill_buffer, memory::find_memory_type, vulkan_object::VulkanApplicationData};
-use vulkanalia::vk;
-use vulkanalia::vk::{BufferUsageFlags, DeviceMemory, DeviceV1_0, Handle, HasBuilder, Image, ImageView, InstanceV1_0, Sampler};
-use vulkanalia::{Device, Instance};
+use vk::Handle;
+use vulkan_rust::{vk, Device, Instance};
 
 const TEXTURE_FORMAT: vk::Format = vk::Format::R8G8B8A8_SRGB;
 const BYTES_PER_PIXEL: u32 = 4;
@@ -16,7 +15,7 @@ pub fn create_texture_image(
     device: &Device,
     instance: &Instance,
     vulkan_application_data: &mut VulkanApplicationData,
-) -> anyhow::Result<(Image, DeviceMemory, ImageView, Sampler)> {
+) -> anyhow::Result<(vk::Image, vk::DeviceMemory, vk::ImageView, vk::Sampler)> {
     let texture_path = get_texture_path("red_grass.png");
     let (image_bytes, width, height) = load_texture_from_disk(&texture_path)?;
     let (staging_buffer, staging_buffer_memory) =
@@ -54,7 +53,7 @@ fn create_and_fill_staging_buffer(
         allocate_and_fill_buffer(
             &image_bytes,
             staging_buffer_size_in_bytes,
-            BufferUsageFlags::TRANSFER_SRC,
+            vk::BufferUsageFlags::TRANSFER_SRC,
             device,
             instance,
             vulkan_application_data,
@@ -126,7 +125,7 @@ fn transfer_image_data(
         .signal_semaphores(&[])
         .wait_dst_stage_mask(&[]);
 
-    unsafe { device.queue_submit(data.graphics_queue, &[submit_info], vk::Fence::null())? }
+    unsafe { device.queue_submit(data.graphics_queue, &[*submit_info], vk::Fence::null())? }
     unsafe { device.queue_wait_idle(data.graphics_queue)? }
     unsafe { device.free_command_buffers(data.command_pool, &[cmd]) }
     Ok(())
@@ -180,7 +179,7 @@ unsafe fn transition_image_layout(
         .old_layout(old_layout)
         .new_layout(new_layout)
         .image(image)
-        .subresource_range(subresource_range)
+        .subresource_range(*subresource_range)
         .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
         .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED);
 
@@ -191,7 +190,7 @@ unsafe fn transition_image_layout(
         vk::DependencyFlags::empty(),
         &[] as &[vk::MemoryBarrier],
         &[] as &[vk::BufferMemoryBarrier],
-        &[barrier],
+        &[*barrier],
     );
 }
 
@@ -206,11 +205,11 @@ unsafe fn copy_buffer_to_image(device: &Device, cmd: vk::CommandBuffer, buffer: 
         .buffer_offset(0)
         .buffer_row_length(0)
         .buffer_image_height(0)
-        .image_subresource(subresource)
-        .image_offset(vk::Offset3D::builder().x(0).y(0).z(0))
-        .image_extent(vk::Extent3D::builder().width(width).height(height).depth(1));
+        .image_subresource(*subresource)
+        .image_offset(*vk::Offset3D::builder().x(0).y(0).z(0))
+        .image_extent(*vk::Extent3D::builder().width(width).height(height).depth(1));
 
-    device.cmd_copy_buffer_to_image(cmd, buffer, image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[region]);
+    device.cmd_copy_buffer_to_image(cmd, buffer, image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[*region]);
 }
 
 fn create_image_view(device: &Device, image: vk::Image) -> anyhow::Result<vk::ImageView> {
@@ -227,8 +226,8 @@ fn create_image_view(device: &Device, image: vk::Image) -> anyhow::Result<vk::Im
         .image(image)
         .format(TEXTURE_FORMAT)
         .view_type(vk::ImageViewType::_2D)
-        .components(components)
-        .subresource_range(subresource_range);
+        .components(*components)
+        .subresource_range(*subresource_range);
 
     Ok(unsafe { device.create_image_view(&view_info, None)? })
 }
@@ -251,7 +250,7 @@ fn create_sampler(device: &Device) -> anyhow::Result<vk::Sampler> {
 }
 
 /// Destroys the texture sampler, image view, image, and frees its device memory.
-pub fn destroy_textures(device: &vulkanalia::Device, data: &mut VulkanApplicationData) {
+pub fn destroy_textures(device: &Device, data: &mut VulkanApplicationData) {
     unsafe {
         device.destroy_sampler(data.texture_sampler, None);
         device.destroy_image_view(data.texture_image_view, None);

@@ -4,8 +4,8 @@ use crate::graphical_core::shaders::create_shader_module;
 use crate::graphical_core::vulkan_object::VulkanApplicationData;
 use crate::voxel::chunk::CHUNK_SIZE;
 use crate::voxel::meshing::BUCKET_COUNT;
-use vulkanalia::vk::{self, DeviceV1_0, Handle, HasBuilder};
-use vulkanalia::{Device, Instance};
+use vk::Handle;
+use vulkan_rust::{vk, Device, Instance};
 
 /// Matches the GLSL FaceBucket struct (std430).
 #[repr(C)]
@@ -124,69 +124,60 @@ pub unsafe fn create_compute_cull(
 
     // Descriptor set layout: 4 SSBOs + depth pyramid sampler + camera UBO
     let bindings = [
-        vk::DescriptorSetLayoutBinding::builder()
+        *vk::DescriptorSetLayoutBinding::builder()
             .binding(0)
             .descriptor_count(1)
             .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-            .stage_flags(vk::ShaderStageFlags::COMPUTE)
-            .build(),
-        vk::DescriptorSetLayoutBinding::builder()
+            .stage_flags(vk::ShaderStageFlags::COMPUTE),
+        *vk::DescriptorSetLayoutBinding::builder()
             .binding(1)
             .descriptor_count(1)
             .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-            .stage_flags(vk::ShaderStageFlags::COMPUTE)
-            .build(),
-        vk::DescriptorSetLayoutBinding::builder()
+            .stage_flags(vk::ShaderStageFlags::COMPUTE),
+        *vk::DescriptorSetLayoutBinding::builder()
             .binding(2)
             .descriptor_count(1)
             .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-            .stage_flags(vk::ShaderStageFlags::COMPUTE)
-            .build(),
-        vk::DescriptorSetLayoutBinding::builder()
+            .stage_flags(vk::ShaderStageFlags::COMPUTE),
+        *vk::DescriptorSetLayoutBinding::builder()
             .binding(3)
             .descriptor_count(1)
             .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-            .stage_flags(vk::ShaderStageFlags::COMPUTE)
-            .build(),
-        vk::DescriptorSetLayoutBinding::builder()
+            .stage_flags(vk::ShaderStageFlags::COMPUTE),
+        *vk::DescriptorSetLayoutBinding::builder()
             .binding(4)
             .descriptor_count(1)
             .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-            .stage_flags(vk::ShaderStageFlags::COMPUTE)
-            .build(),
-        vk::DescriptorSetLayoutBinding::builder()
+            .stage_flags(vk::ShaderStageFlags::COMPUTE),
+        *vk::DescriptorSetLayoutBinding::builder()
             .binding(5)
             .descriptor_count(1)
             .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-            .stage_flags(vk::ShaderStageFlags::COMPUTE)
-            .build(),
+            .stage_flags(vk::ShaderStageFlags::COMPUTE),
     ];
-    let layout_info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings).build();
+    let layout_info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings);
     let desc_layout = device.create_descriptor_set_layout(&layout_info, None)?;
 
     // Descriptor pool
     let pool_sizes = [
-        vk::DescriptorPoolSize::builder()
+        *vk::DescriptorPoolSize::builder()
             .descriptor_count(4)
-            .type_(vk::DescriptorType::STORAGE_BUFFER)
-            .build(),
-        vk::DescriptorPoolSize::builder()
+            .r#type(vk::DescriptorType::STORAGE_BUFFER),
+        *vk::DescriptorPoolSize::builder()
             .descriptor_count(1)
-            .type_(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-            .build(),
-        vk::DescriptorPoolSize::builder()
+            .r#type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER),
+        *vk::DescriptorPoolSize::builder()
             .descriptor_count(1)
-            .type_(vk::DescriptorType::UNIFORM_BUFFER)
-            .build(),
+            .r#type(vk::DescriptorType::UNIFORM_BUFFER),
     ];
-    let pool_info = vk::DescriptorPoolCreateInfo::builder().max_sets(1).pool_sizes(&pool_sizes).build();
+    let pool_info = vk::DescriptorPoolCreateInfo::builder().max_sets(1).pool_sizes(&pool_sizes);
     let desc_pool = device.create_descriptor_pool(&pool_info, None)?;
 
     // Allocate descriptor set
+    let set_layouts = [desc_layout];
     let alloc_info = vk::DescriptorSetAllocateInfo::builder()
         .descriptor_pool(desc_pool)
-        .set_layouts(&[desc_layout])
-        .build();
+        .set_layouts(&set_layouts);
     let desc_set = device.allocate_descriptor_sets(&alloc_info)?[0];
 
     // Write descriptors
@@ -204,14 +195,14 @@ pub unsafe fn create_compute_cull(
     write_depth_pyramid_descriptors(device, desc_set, data);
 
     // Pipeline layout with push constants
-    let push_range = vk::PushConstantRange::builder()
+    let push_ranges = [*vk::PushConstantRange::builder()
         .stage_flags(vk::ShaderStageFlags::COMPUTE)
         .offset(0)
-        .size(std::mem::size_of::<CullPushConstants>() as u32);
+        .size(std::mem::size_of::<CullPushConstants>() as u32)];
+    let cull_set_layouts = [desc_layout];
     let pipeline_layout_info = vk::PipelineLayoutCreateInfo::builder()
-        .set_layouts(&[desc_layout])
-        .push_constant_ranges(&[push_range])
-        .build();
+        .set_layouts(&cull_set_layouts)
+        .push_constant_ranges(&push_ranges);
     let pipeline_layout = device.create_pipeline_layout(&pipeline_layout_info, None)?;
 
     // Compute pipeline
@@ -219,9 +210,9 @@ pub unsafe fn create_compute_cull(
     let stage = vk::PipelineShaderStageCreateInfo::builder()
         .stage(vk::ShaderStageFlags::COMPUTE)
         .module(shader_module)
-        .name(b"main\0");
-    let pipeline_info = vk::ComputePipelineCreateInfo::builder().stage(stage).layout(pipeline_layout);
-    let pipeline = device.create_compute_pipelines(vk::PipelineCache::null(), &[pipeline_info], None)?.0[0];
+        .p_name(c"main");
+    let pipeline_info = vk::ComputePipelineCreateInfo::builder().stage(*stage).layout(pipeline_layout);
+    let pipeline = device.create_compute_pipelines(vk::PipelineCache::null(), &[*pipeline_info], None)?[0];
     device.destroy_shader_module(shader_module, None);
 
     Ok(ComputeCullResources {
@@ -253,46 +244,42 @@ fn write_compute_descriptors(
     visibility_buffer: vk::Buffer,
     visibility_size: u64,
 ) {
-    let ci_info = vk::DescriptorBufferInfo::builder()
+    let ci_info = [*vk::DescriptorBufferInfo::builder()
         .buffer(chunk_info_buffer)
         .offset(0)
-        .range(chunk_info_size);
-    let ci_write = vk::WriteDescriptorSet::builder()
+        .range(chunk_info_size)];
+    let ci_write = *vk::WriteDescriptorSet::builder()
         .dst_set(set)
         .dst_binding(0)
         .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-        .buffer_info(&[ci_info])
-        .build();
+        .buffer_info(&ci_info);
 
-    let ind_info = vk::DescriptorBufferInfo::builder()
+    let ind_info = [*vk::DescriptorBufferInfo::builder()
         .buffer(indirect_buffer)
         .offset(0)
-        .range(indirect_buffer_size);
-    let ind_write = vk::WriteDescriptorSet::builder()
+        .range(indirect_buffer_size)];
+    let ind_write = *vk::WriteDescriptorSet::builder()
         .dst_set(set)
         .dst_binding(1)
         .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-        .buffer_info(&[ind_info])
-        .build();
+        .buffer_info(&ind_info);
 
-    let dc_info = vk::DescriptorBufferInfo::builder().buffer(draw_count_buffer).offset(0).range(8);
-    let dc_write = vk::WriteDescriptorSet::builder()
+    let dc_info = [*vk::DescriptorBufferInfo::builder().buffer(draw_count_buffer).offset(0).range(8)];
+    let dc_write = *vk::WriteDescriptorSet::builder()
         .dst_set(set)
         .dst_binding(2)
         .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-        .buffer_info(&[dc_info])
-        .build();
+        .buffer_info(&dc_info);
 
-    let vis_info = vk::DescriptorBufferInfo::builder()
+    let vis_info = [*vk::DescriptorBufferInfo::builder()
         .buffer(visibility_buffer)
         .offset(0)
-        .range(visibility_size);
-    let vis_write = vk::WriteDescriptorSet::builder()
+        .range(visibility_size)];
+    let vis_write = *vk::WriteDescriptorSet::builder()
         .dst_set(set)
         .dst_binding(5)
         .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-        .buffer_info(&[vis_info])
-        .build();
+        .buffer_info(&vis_info);
 
     unsafe {
         device.update_descriptor_sets(&[ci_write, ind_write, dc_write, vis_write], &[] as &[vk::CopyDescriptorSet]);
@@ -301,28 +288,26 @@ fn write_compute_descriptors(
 
 /// Writes depth pyramid sampler (binding 3) and camera UBO (binding 4) into the cull descriptor set.
 fn write_depth_pyramid_descriptors(device: &Device, set: vk::DescriptorSet, data: &VulkanApplicationData) {
-    let img_info = vk::DescriptorImageInfo::builder()
+    let img_info = [*vk::DescriptorImageInfo::builder()
         .sampler(data.depth_pyramid_sampler)
         .image_view(data.depth_pyramid_full_view)
-        .image_layout(vk::ImageLayout::GENERAL);
-    let img_write = vk::WriteDescriptorSet::builder()
+        .image_layout(vk::ImageLayout::GENERAL)];
+    let img_write = *vk::WriteDescriptorSet::builder()
         .dst_set(set)
         .dst_binding(3)
         .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-        .image_info(&[img_info])
-        .build();
+        .image_info(&img_info);
 
     // Binding 4: camera UBO (view-projection matrix)
-    let ubo_info = vk::DescriptorBufferInfo::builder()
+    let ubo_info = [*vk::DescriptorBufferInfo::builder()
         .buffer(data.uniform_buffer)
         .offset(0)
-        .range(std::mem::size_of::<crate::graphical_core::camera::UniformBufferObject>() as u64);
-    let ubo_write = vk::WriteDescriptorSet::builder()
+        .range(std::mem::size_of::<crate::graphical_core::camera::UniformBufferObject>() as u64)];
+    let ubo_write = *vk::WriteDescriptorSet::builder()
         .dst_set(set)
         .dst_binding(4)
         .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-        .buffer_info(&[ubo_info])
-        .build();
+        .buffer_info(&ubo_info);
 
     unsafe {
         device.update_descriptor_sets(&[img_write, ubo_write], &[] as &[vk::CopyDescriptorSet]);
@@ -394,45 +379,35 @@ pub unsafe fn create_depth_pyramid_pipeline(device: &Device, data: &VulkanApplic
 
     // Layout: binding 0 = combined image sampler (source), binding 1 = storage image (dest mip)
     let bindings = [
-        vk::DescriptorSetLayoutBinding::builder()
+        *vk::DescriptorSetLayoutBinding::builder()
             .binding(0)
             .descriptor_count(1)
             .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-            .stage_flags(vk::ShaderStageFlags::COMPUTE)
-            .build(),
-        vk::DescriptorSetLayoutBinding::builder()
+            .stage_flags(vk::ShaderStageFlags::COMPUTE),
+        *vk::DescriptorSetLayoutBinding::builder()
             .binding(1)
             .descriptor_count(1)
             .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
-            .stage_flags(vk::ShaderStageFlags::COMPUTE)
-            .build(),
+            .stage_flags(vk::ShaderStageFlags::COMPUTE),
     ];
-    let layout_info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings).build();
+    let layout_info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings);
     let desc_layout = device.create_descriptor_set_layout(&layout_info, None)?;
 
     // Pool: one sampler + one storage image per mip pass
     let pool_sizes = [
-        vk::DescriptorPoolSize::builder()
+        *vk::DescriptorPoolSize::builder()
             .descriptor_count(mip_count)
-            .type_(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-            .build(),
-        vk::DescriptorPoolSize::builder()
+            .r#type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER),
+        *vk::DescriptorPoolSize::builder()
             .descriptor_count(mip_count)
-            .type_(vk::DescriptorType::STORAGE_IMAGE)
-            .build(),
+            .r#type(vk::DescriptorType::STORAGE_IMAGE),
     ];
-    let pool_info = vk::DescriptorPoolCreateInfo::builder()
-        .max_sets(mip_count)
-        .pool_sizes(&pool_sizes)
-        .build();
+    let pool_info = vk::DescriptorPoolCreateInfo::builder().max_sets(mip_count).pool_sizes(&pool_sizes);
     let desc_pool = device.create_descriptor_pool(&pool_info, None)?;
 
     // Allocate one set per mip level
     let layouts: Vec<_> = (0..mip_count).map(|_| desc_layout).collect();
-    let alloc_info = vk::DescriptorSetAllocateInfo::builder()
-        .descriptor_pool(desc_pool)
-        .set_layouts(&layouts)
-        .build();
+    let alloc_info = vk::DescriptorSetAllocateInfo::builder().descriptor_pool(desc_pool).set_layouts(&layouts);
     let desc_sets = device.allocate_descriptor_sets(&alloc_info)?;
 
     // Write descriptors: set 0 reads depth buffer, sets 1+ read previous pyramid mip
@@ -445,39 +420,37 @@ pub unsafe fn create_depth_pyramid_pipeline(device: &Device, data: &VulkanApplic
             (data.depth_pyramid_mip_views[(mip - 1) as usize], vk::ImageLayout::GENERAL)
         };
 
-        let src_info = vk::DescriptorImageInfo::builder()
+        let src_info = [*vk::DescriptorImageInfo::builder()
             .sampler(data.depth_pyramid_sampler)
             .image_view(src_view)
-            .image_layout(src_layout);
-        let src_write = vk::WriteDescriptorSet::builder()
+            .image_layout(src_layout)];
+        let src_write = *vk::WriteDescriptorSet::builder()
             .dst_set(desc_sets[mip as usize])
             .dst_binding(0)
             .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-            .image_info(&[src_info])
-            .build();
+            .image_info(&src_info);
 
-        let dst_info = vk::DescriptorImageInfo::builder()
+        let dst_info = [*vk::DescriptorImageInfo::builder()
             .image_view(data.depth_pyramid_mip_views[mip as usize])
-            .image_layout(vk::ImageLayout::GENERAL);
-        let dst_write = vk::WriteDescriptorSet::builder()
+            .image_layout(vk::ImageLayout::GENERAL)];
+        let dst_write = *vk::WriteDescriptorSet::builder()
             .dst_set(desc_sets[mip as usize])
             .dst_binding(1)
             .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
-            .image_info(&[dst_info])
-            .build();
+            .image_info(&dst_info);
 
         device.update_descriptor_sets(&[src_write, dst_write], &[] as &[vk::CopyDescriptorSet]);
     }
 
     // Pipeline layout with push constants for dst_size
-    let push_range = vk::PushConstantRange::builder()
+    let push_ranges = [*vk::PushConstantRange::builder()
         .stage_flags(vk::ShaderStageFlags::COMPUTE)
         .offset(0)
-        .size(std::mem::size_of::<DepthReducePush>() as u32);
+        .size(std::mem::size_of::<DepthReducePush>() as u32)];
+    let pyramid_set_layouts = [desc_layout];
     let pipeline_layout_info = vk::PipelineLayoutCreateInfo::builder()
-        .set_layouts(&[desc_layout])
-        .push_constant_ranges(&[push_range])
-        .build();
+        .set_layouts(&pyramid_set_layouts)
+        .push_constant_ranges(&push_ranges);
     let pipeline_layout = device.create_pipeline_layout(&pipeline_layout_info, None)?;
 
     // Compute pipeline
@@ -485,9 +458,9 @@ pub unsafe fn create_depth_pyramid_pipeline(device: &Device, data: &VulkanApplic
     let stage = vk::PipelineShaderStageCreateInfo::builder()
         .stage(vk::ShaderStageFlags::COMPUTE)
         .module(shader_module)
-        .name(b"main\0");
-    let pipeline_info = vk::ComputePipelineCreateInfo::builder().stage(stage).layout(pipeline_layout);
-    let pipeline = device.create_compute_pipelines(vk::PipelineCache::null(), &[pipeline_info], None)?.0[0];
+        .p_name(c"main");
+    let pipeline_info = vk::ComputePipelineCreateInfo::builder().stage(*stage).layout(pipeline_layout);
+    let pipeline = device.create_compute_pipelines(vk::PipelineCache::null(), &[*pipeline_info], None)?[0];
     device.destroy_shader_module(shader_module, None);
 
     Ok(DepthPyramidResources {

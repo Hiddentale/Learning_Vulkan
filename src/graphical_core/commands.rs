@@ -1,10 +1,8 @@
 use crate::graphical_core::compute_cull::{ComputeCullResources, CullPushConstants, DepthPyramidResources, DepthReducePush};
 use crate::graphical_core::vulkan_object::{DrawIndexedIndirectCommand, VulkanApplicationData, MAX_INDIRECT_DRAWS};
 use crate::graphical_core::{self, MAX_FRAMES_IN_FLIGHT};
-#[cfg(not(target_os = "macos"))]
-use vulkanalia::vk::DeviceV1_2;
-use vulkanalia::vk::{DeviceV1_0, Handle, HasBuilder};
-use vulkanalia::{vk, Device, Instance};
+use vk::Handle;
+use vulkan_rust::{vk, Device, Instance};
 
 /// Creates a framebuffer for each swapchain image view, attaching color and depth.
 pub unsafe fn create_frame_buffers(device: &Device, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
@@ -90,7 +88,7 @@ pub unsafe fn record_command_buffer(
         vk::PipelineStageFlags::TRANSFER,
         vk::PipelineStageFlags::COMPUTE_SHADER,
         vk::DependencyFlags::empty(),
-        &[fill_barrier],
+        &[*fill_barrier],
         &[] as &[vk::BufferMemoryBarrier],
         &[] as &[vk::ImageMemoryBarrier],
     );
@@ -182,14 +180,7 @@ unsafe fn transition_pyramid_undefined_to_general(device: &Device, cmd: vk::Comm
         .src_access_mask(vk::AccessFlags::empty())
         .dst_access_mask(vk::AccessFlags::SHADER_READ)
         .image(data.depth_pyramid_image)
-        .subresource_range(
-            vk::ImageSubresourceRange::builder()
-                .aspect_mask(vk::ImageAspectFlags::COLOR)
-                .base_mip_level(0)
-                .level_count(data.depth_pyramid_mip_count)
-                .base_array_layer(0)
-                .layer_count(1),
-        );
+        .subresource_range(super::subresource_range(vk::ImageAspectFlags::COLOR, data.depth_pyramid_mip_count));
     device.cmd_pipeline_barrier(
         cmd,
         vk::PipelineStageFlags::TOP_OF_PIPE,
@@ -197,7 +188,7 @@ unsafe fn transition_pyramid_undefined_to_general(device: &Device, cmd: vk::Comm
         vk::DependencyFlags::empty(),
         &[] as &[vk::MemoryBarrier],
         &[] as &[vk::BufferMemoryBarrier],
-        &[barrier],
+        &[*barrier],
     );
 }
 
@@ -216,7 +207,7 @@ unsafe fn compute_to_draw_barrier(device: &Device, cmd: vk::CommandBuffer) {
         vk::PipelineStageFlags::COMPUTE_SHADER,
         vk::PipelineStageFlags::DRAW_INDIRECT,
         vk::DependencyFlags::empty(),
-        &[barrier],
+        &[*barrier],
         &[] as &[vk::BufferMemoryBarrier],
         &[] as &[vk::ImageMemoryBarrier],
     );
@@ -247,20 +238,14 @@ unsafe fn draw_indirect(
 }
 
 unsafe fn begin_render_pass(device: &Device, cmd: vk::CommandBuffer, data: &VulkanApplicationData, framebuffer_index: usize) {
-    let clear_values = &[
-        vk::ClearValue {
-            color: vk::ClearColorValue {
-                float32: [0.0, 0.0, 0.0, 1.0],
-            },
-        },
-        vk::ClearValue {
-            depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 },
-        },
-    ];
+    let clear_values = &[vk::ClearValue::color_f32([0.0, 0.0, 0.0, 1.0]), vk::ClearValue::depth_stencil(1.0, 0)];
     let info = vk::RenderPassBeginInfo::builder()
         .render_pass(data.render_pass)
         .framebuffer(data.framebuffers[framebuffer_index])
-        .render_area(vk::Rect2D::builder().offset(vk::Offset2D::default()).extent(data.swapchain_extent))
+        .render_area(vk::Rect2D {
+            offset: vk::Offset2D::default(),
+            extent: data.swapchain_extent,
+        })
         .clear_values(clear_values);
     device.cmd_begin_render_pass(cmd, &info, vk::SubpassContents::INLINE);
 }
@@ -269,7 +254,10 @@ unsafe fn begin_render_pass_no_clear(device: &Device, cmd: vk::CommandBuffer, da
     let info = vk::RenderPassBeginInfo::builder()
         .render_pass(data.render_pass_load)
         .framebuffer(data.framebuffers[framebuffer_index])
-        .render_area(vk::Rect2D::builder().offset(vk::Offset2D::default()).extent(data.swapchain_extent));
+        .render_area(vk::Rect2D {
+            offset: vk::Offset2D::default(),
+            extent: data.swapchain_extent,
+        });
     device.cmd_begin_render_pass(cmd, &info, vk::SubpassContents::INLINE);
 }
 
@@ -299,14 +287,7 @@ unsafe fn record_depth_pyramid_generation(device: &Device, cmd: vk::CommandBuffe
         .src_access_mask(vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE)
         .dst_access_mask(vk::AccessFlags::SHADER_READ)
         .image(data.depth_image)
-        .subresource_range(
-            vk::ImageSubresourceRange::builder()
-                .aspect_mask(vk::ImageAspectFlags::DEPTH)
-                .base_mip_level(0)
-                .level_count(1)
-                .base_array_layer(0)
-                .layer_count(1),
-        );
+        .subresource_range(super::subresource_range(vk::ImageAspectFlags::DEPTH, 1));
     device.cmd_pipeline_barrier(
         cmd,
         vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
@@ -314,7 +295,7 @@ unsafe fn record_depth_pyramid_generation(device: &Device, cmd: vk::CommandBuffe
         vk::DependencyFlags::empty(),
         &[] as &[vk::MemoryBarrier],
         &[] as &[vk::BufferMemoryBarrier],
-        &[depth_barrier],
+        &[*depth_barrier],
     );
 
     // Pyramid is already in GENERAL layout; ensure prior reads complete before writes
@@ -324,14 +305,7 @@ unsafe fn record_depth_pyramid_generation(device: &Device, cmd: vk::CommandBuffe
         .src_access_mask(vk::AccessFlags::SHADER_READ)
         .dst_access_mask(vk::AccessFlags::SHADER_WRITE)
         .image(data.depth_pyramid_image)
-        .subresource_range(
-            vk::ImageSubresourceRange::builder()
-                .aspect_mask(vk::ImageAspectFlags::COLOR)
-                .base_mip_level(0)
-                .level_count(mip_count)
-                .base_array_layer(0)
-                .layer_count(1),
-        );
+        .subresource_range(super::subresource_range(vk::ImageAspectFlags::COLOR, mip_count));
     device.cmd_pipeline_barrier(
         cmd,
         vk::PipelineStageFlags::COMPUTE_SHADER,
@@ -339,7 +313,7 @@ unsafe fn record_depth_pyramid_generation(device: &Device, cmd: vk::CommandBuffe
         vk::DependencyFlags::empty(),
         &[] as &[vk::MemoryBarrier],
         &[] as &[vk::BufferMemoryBarrier],
-        &[pyramid_barrier],
+        &[*pyramid_barrier],
     );
 
     device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pyramid.pipeline);
@@ -377,14 +351,7 @@ unsafe fn record_depth_pyramid_generation(device: &Device, cmd: vk::CommandBuffe
                 .src_access_mask(vk::AccessFlags::SHADER_WRITE)
                 .dst_access_mask(vk::AccessFlags::SHADER_READ)
                 .image(data.depth_pyramid_image)
-                .subresource_range(
-                    vk::ImageSubresourceRange::builder()
-                        .aspect_mask(vk::ImageAspectFlags::COLOR)
-                        .base_mip_level(mip)
-                        .level_count(1)
-                        .base_array_layer(0)
-                        .layer_count(1),
-                );
+                .subresource_range(super::subresource_range_mip(vk::ImageAspectFlags::COLOR, mip, 1));
             device.cmd_pipeline_barrier(
                 cmd,
                 vk::PipelineStageFlags::COMPUTE_SHADER,
@@ -392,7 +359,7 @@ unsafe fn record_depth_pyramid_generation(device: &Device, cmd: vk::CommandBuffe
                 vk::DependencyFlags::empty(),
                 &[] as &[vk::MemoryBarrier],
                 &[] as &[vk::BufferMemoryBarrier],
-                &[mip_barrier],
+                &[*mip_barrier],
             );
         }
     }
@@ -404,14 +371,7 @@ unsafe fn record_depth_pyramid_generation(device: &Device, cmd: vk::CommandBuffe
         .src_access_mask(vk::AccessFlags::SHADER_READ)
         .dst_access_mask(vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE)
         .image(data.depth_image)
-        .subresource_range(
-            vk::ImageSubresourceRange::builder()
-                .aspect_mask(vk::ImageAspectFlags::DEPTH)
-                .base_mip_level(0)
-                .level_count(1)
-                .base_array_layer(0)
-                .layer_count(1),
-        );
+        .subresource_range(super::subresource_range(vk::ImageAspectFlags::DEPTH, 1));
     device.cmd_pipeline_barrier(
         cmd,
         vk::PipelineStageFlags::COMPUTE_SHADER,
@@ -419,7 +379,7 @@ unsafe fn record_depth_pyramid_generation(device: &Device, cmd: vk::CommandBuffe
         vk::DependencyFlags::empty(),
         &[] as &[vk::MemoryBarrier],
         &[] as &[vk::BufferMemoryBarrier],
-        &[depth_restore],
+        &[*depth_restore],
     );
 }
 

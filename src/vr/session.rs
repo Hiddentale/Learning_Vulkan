@@ -2,7 +2,8 @@ use anyhow::Context;
 use log::{info, warn};
 use openxr as xr;
 use std::os::raw::c_void;
-use vulkanalia::vk::{self, Handle};
+use vk::Handle;
+use vulkan_rust::vk;
 
 /// Result of probing the system for VR support.
 pub enum VrSupport {
@@ -68,13 +69,13 @@ impl VrContext {
 // Handle conversion utilities
 // ---------------------------------------------------------------------------
 
-/// Convert a vulkanalia dispatchable handle to the `*const c_void` that
+/// Convert a vulkan-rs dispatchable handle to the `*const c_void` that
 /// openxr-sys expects.
 pub fn vk_handle_to_xr<H: Handle<Repr = usize>>(handle: H) -> *const c_void {
     handle.as_raw() as *const c_void
 }
 
-/// Convert an openxr-sys `*const c_void` back to a vulkanalia dispatchable
+/// Convert an openxr-sys `*const c_void` back to a vulkan-rs dispatchable
 /// handle.
 ///
 /// # Safety
@@ -83,13 +84,13 @@ pub unsafe fn xr_ptr_to_vk_handle<H: Handle<Repr = usize>>(ptr: *const c_void) -
     H::from_raw(ptr as usize)
 }
 
-/// Convert a vulkanalia `vk::Image` (non-dispatchable, `u64`) to the `u64`
+/// Convert a vulkan-rs `vk::Image` (non-dispatchable, `u64`) to the `u64`
 /// that openxr returns for swapchain images.
 pub fn vk_image_to_xr(image: vk::Image) -> u64 {
     image.as_raw()
 }
 
-/// Convert an openxr swapchain image handle (`u64`) to a vulkanalia `vk::Image`.
+/// Convert an openxr swapchain image handle (`u64`) to a vulkan-rs `vk::Image`.
 pub fn xr_image_to_vk(handle: u64) -> vk::Image {
     vk::Image::from_raw(handle)
 }

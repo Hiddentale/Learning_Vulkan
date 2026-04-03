@@ -1,9 +1,6 @@
 use crate::graphical_core::{memory::find_memory_type, vulkan_object::VulkanApplicationData};
 use std::ptr::copy_nonoverlapping;
-use vulkanalia::{
-    vk::{self, DeviceV1_0, HasBuilder, InstanceV1_0},
-    Device, Instance,
-};
+use vulkan_rust::{vk, Device, Instance};
 
 /// Allocates a GPU buffer with persistently mapped memory.
 ///
@@ -35,7 +32,7 @@ pub unsafe fn allocate_buffer<T>(
     let memory = device.allocate_memory(&alloc_info, None)?;
     device.bind_buffer_memory(buffer, memory, 0)?;
 
-    let mapped_ptr = device.map_memory(memory, vk::DeviceSize::default(), mem_requirements.size, vk::MemoryMapFlags::empty())? as *mut T;
+    let mapped_ptr = device.map_memory(memory, 0, mem_requirements.size, vk::MemoryMapFlags::empty())? as *mut T;
 
     Ok((buffer, memory, mapped_ptr))
 }
