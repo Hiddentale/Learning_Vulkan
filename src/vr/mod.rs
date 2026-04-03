@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+pub mod frame;
 mod session;
 mod swapchain;
 

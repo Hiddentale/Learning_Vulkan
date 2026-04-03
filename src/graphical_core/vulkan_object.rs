@@ -125,6 +125,30 @@ impl VulkanApplication {
     pub fn swapchain_extent(&self) -> vk::Extent2D {
         self.vulkan_application_data.swapchain_extent
     }
+
+    pub fn has_vr(&self) -> bool {
+        self._vr_session.is_some()
+    }
+
+    /// Run one VR frame. Returns eye matrices if the headset rendered.
+    ///
+    /// # Safety
+    /// Calls unsafe Vulkan and OpenXR APIs.
+    pub unsafe fn render_vr_frame(&mut self) -> anyhow::Result<Option<EyeMatrices>> {
+        let (Some(session), Some(swapchain)) = (&mut self._vr_session, &mut self._vr_swapchain) else {
+            return Ok(None);
+        };
+        crate::vr::frame::render_vr_frame(
+            &self.device,
+            &self.vulkan_application_data,
+            session,
+            swapchain,
+            self.mesh_pool.vertex_buffer,
+            self.mesh_pool.index_buffer,
+            self.vulkan_application_data.indirect_buffer,
+            self.chunk_count * 6,
+        )
+    }
 }
 
 impl VulkanApplication {
@@ -222,7 +246,7 @@ unsafe fn create_core_infrastructure(window: &Window, vr_context: Option<VrConte
     };
 
     let vr_swapchain = match &vr_session {
-        Some(session) => Some(VrSwapchain::create(session, &device, &instance, data.physical_device)?),
+        Some(session) => Some(VrSwapchain::create(session, &device, &instance, data.physical_device, data.command_pool)?),
         None => None,
     };
 

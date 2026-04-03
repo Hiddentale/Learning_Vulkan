@@ -25,6 +25,7 @@ pub struct VrSwapchain {
     pub image_views: Vec<vk::ImageView>,
     pub render_pass: vk::RenderPass,
     pub framebuffers: Vec<vk::Framebuffer>,
+    pub command_buffer: vk::CommandBuffer,
     depth_image: vk::Image,
     depth_memory: vk::DeviceMemory,
     depth_view: vk::ImageView,
@@ -33,7 +34,13 @@ pub struct VrSwapchain {
 impl VrSwapchain {
     /// Query view configuration, pick a format, create the stereo swapchain,
     /// enumerate its images, and create Vulkan image views.
-    pub fn create(vr: &VrSession, device: &Device, instance: &Instance, physical_device: vk::PhysicalDevice) -> anyhow::Result<Self> {
+    pub fn create(
+        vr: &VrSession,
+        device: &Device,
+        instance: &Instance,
+        physical_device: vk::PhysicalDevice,
+        command_pool: vk::CommandPool,
+    ) -> anyhow::Result<Self> {
         let config = query_view_config(&vr.xr_instance, vr.system())?;
         let format = select_format(&vr.session)?;
 
@@ -71,6 +78,12 @@ impl VrSwapchain {
         let (depth_image, depth_memory, depth_view) = unsafe { create_stereo_depth(device, instance, physical_device, &config)? };
         let framebuffers = unsafe { create_framebuffers(device, render_pass, &image_views, depth_view, &config)? };
 
+        let alloc_info = vk::CommandBufferAllocateInfo::builder()
+            .command_pool(command_pool)
+            .level(vk::CommandBufferLevel::PRIMARY)
+            .command_buffer_count(1);
+        let command_buffer = unsafe { device.allocate_command_buffers(&alloc_info)? }[0];
+
         info!("VR render target ready: {} images, multiview render pass", images.len());
 
         Ok(Self {
@@ -81,6 +94,7 @@ impl VrSwapchain {
             image_views,
             render_pass,
             framebuffers,
+            command_buffer,
             depth_image,
             depth_memory,
             depth_view,
@@ -123,14 +137,16 @@ fn query_view_config(xr_instance: &xr::Instance, system: xr::SystemId) -> anyhow
 }
 
 /// Pick the best sRGB color format from the runtime's supported list.
+/// Prefers B8G8R8A8_SRGB to match the desktop swapchain format, so both
+/// render passes are pipeline-compatible (one pipeline serves desktop + VR).
 fn select_format(session: &xr::Session<xr::Vulkan>) -> anyhow::Result<vk::Format> {
     let formats = session.enumerate_swapchain_formats()?;
 
     let preferred = [
-        vk::Format::R8G8B8A8_SRGB,
         vk::Format::B8G8R8A8_SRGB,
-        vk::Format::R8G8B8A8_UNORM,
+        vk::Format::R8G8B8A8_SRGB,
         vk::Format::B8G8R8A8_UNORM,
+        vk::Format::R8G8B8A8_UNORM,
     ];
 
     for pref in &preferred {

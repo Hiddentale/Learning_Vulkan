@@ -1,4 +1,5 @@
 use anyhow::Context;
+use glam::{Mat4, Quat, Vec3};
 use log::{info, warn};
 use openxr as xr;
 use std::ffi::CString;
@@ -34,12 +35,58 @@ pub struct VrSession {
     pub session: xr::Session<xr::Vulkan>,
     pub frame_waiter: xr::FrameWaiter,
     pub frame_stream: xr::FrameStream<xr::Vulkan>,
+    pub stage_space: xr::Space,
 }
 
 impl VrSession {
     pub fn system(&self) -> xr::SystemId {
         self.system
     }
+}
+
+// ---------------------------------------------------------------------------
+// OpenXR pose → glam matrix conversions
+// ---------------------------------------------------------------------------
+
+const NEAR_PLANE: f32 = 0.1;
+const FAR_PLANE: f32 = 500.0;
+
+/// Convert an OpenXR View (pose + FOV) to a view-projection matrix.
+pub fn view_to_vp(view: &xr::View) -> Mat4 {
+    let proj = projection_from_fov(&view.fov);
+    let view_mat = view_matrix_from_pose(&view.pose);
+    proj * view_mat
+}
+
+/// Build a Vulkan-compatible projection matrix from OpenXR asymmetric FOV.
+fn projection_from_fov(fov: &xr::Fovf) -> Mat4 {
+    let left = fov.angle_left.tan();
+    let right = fov.angle_right.tan();
+    let up = fov.angle_up.tan();
+    let down = fov.angle_down.tan();
+
+    let width = right - left;
+    let height = up - down;
+
+    // Reversed-depth or standard [0,1] Vulkan depth, right-handed
+    let mut m = Mat4::ZERO;
+    m.x_axis.x = 2.0 / width;
+    m.y_axis.y = -2.0 / height; // Vulkan Y-down
+    m.z_axis.x = (right + left) / width;
+    m.z_axis.y = -(up + down) / height; // Vulkan Y-down
+    m.z_axis.z = -FAR_PLANE / (FAR_PLANE - NEAR_PLANE);
+    m.z_axis.w = -1.0;
+    m.w_axis.z = -(FAR_PLANE * NEAR_PLANE) / (FAR_PLANE - NEAR_PLANE);
+    m
+}
+
+/// Convert an OpenXR pose (position + orientation) to a view matrix.
+fn view_matrix_from_pose(pose: &xr::Posef) -> Mat4 {
+    let q = &pose.orientation;
+    let p = &pose.position;
+    let rotation = Quat::from_xyzw(q.x, q.y, q.z, q.w);
+    let translation = Vec3::new(p.x, p.y, p.z);
+    Mat4::from_rotation_translation(rotation, translation).inverse()
 }
 
 impl VrContext {
@@ -155,6 +202,10 @@ impl VrContext {
             .create_session::<xr::Vulkan>(self.system, &session_create_info)
             .context("failed to create OpenXR session")?;
 
+        let stage_space = session
+            .create_reference_space(xr::ReferenceSpaceType::STAGE, xr::Posef::IDENTITY)
+            .context("failed to create STAGE reference space")?;
+
         info!("OpenXR session created successfully");
 
         Ok(VrSession {
@@ -163,6 +214,7 @@ impl VrContext {
             session,
             frame_waiter,
             frame_stream,
+            stage_space,
         })
     }
 }

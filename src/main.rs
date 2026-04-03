@@ -109,7 +109,21 @@ fn main() -> Result<()> {
                 ..
             } => {
                 if !destroy_application && !minimized {
-                    let eyes = EyeMatrices::from_camera(&camera, application.swapchain_extent());
+                    // VR frame: submit to headset, get eye matrices for spectator view
+                    let vr_eyes = if application.has_vr() {
+                        match unsafe { application.render_vr_frame() } {
+                            Ok(eyes) => eyes,
+                            Err(e) => {
+                                eprintln!("VR frame error: {e}");
+                                None
+                            }
+                        }
+                    } else {
+                        None
+                    };
+
+                    // Desktop frame: use VR eyes as spectator, or desktop camera
+                    let eyes = vr_eyes.unwrap_or_else(|| EyeMatrices::from_camera(&camera, application.swapchain_extent()));
                     if let Err(e) = unsafe { application.render_frame(&user_window, &camera, &eyes) } {
                         eprintln!("Render error: {e}");
                         exit_program(&mut destroy_application, current_window, &mut application);
