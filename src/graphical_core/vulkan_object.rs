@@ -23,12 +23,8 @@ use crate::voxel::{
 };
 use crate::VALIDATION_ENABLED;
 use anyhow::anyhow;
-use vulkanalia::{
-    loader::{LibloadingLoader, LIBRARY},
-    prelude::v1_0::*,
-    vk::{ExtDebugUtilsExtension, KhrSurfaceExtension, KhrSwapchainExtension},
-    window as vulkan_window,
-};
+use vk::Handle;
+use vulkan_rust::{vk, Device, Entry, Instance, LibloadingLoader};
 use winit::window::Window;
 
 #[derive(Clone, Debug, Default)]
@@ -165,11 +161,11 @@ impl VulkanApplication {
 }
 
 unsafe fn create_core_infrastructure(window: &Window) -> anyhow::Result<(Entry, Instance, Device, VulkanApplicationData)> {
-    let loader = LibloadingLoader::new(LIBRARY)?;
-    let entry = Entry::new(loader).map_err(|b| anyhow!("{}", b))?;
+    let loader = LibloadingLoader::new().map_err(|e| anyhow!("{}", e))?;
+    let entry = unsafe { Entry::new(loader) }.map_err(|b| anyhow!("{}", b))?;
     let mut data = VulkanApplicationData::default();
     let instance = create_instance(window, &entry, &mut data)?;
-    data.surface = vulkan_window::create_surface(&instance, &window, &window)?;
+    data.surface = instance.create_surface(&window, &window, None).map_err(|e| anyhow!("{}", e))?;
     choose_gpu(&instance, &mut data)?;
     let device = create_logical_device(&entry, &instance, &mut data)?;
     Ok((entry, instance, device, data))
@@ -232,10 +228,15 @@ unsafe fn create_resources(device: &Device, instance: &Instance, data: &mut Vulk
 unsafe fn create_transform_and_indirect_buffers(device: &Device, instance: &Instance, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
     use crate::graphical_core::buffers::allocate_buffer;
 
-    let host_visible = vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT;
-
     let transform_size = (MAX_LOADED_CHUNKS * std::mem::size_of::<[[f32; 4]; 4]>()) as u64;
-    let (tb, tm, tp) = allocate_buffer::<[[f32; 4]; 4]>(transform_size, vk::BufferUsageFlags::STORAGE_BUFFER, device, instance, data, host_visible)?;
+    let (tb, tm, tp) = allocate_buffer::<[[f32; 4]; 4]>(
+        transform_size,
+        vk::BufferUsageFlags::STORAGE_BUFFER,
+        device,
+        instance,
+        data,
+        super::host_visible_coherent(),
+    )?;
     data.transform_buffer = tb;
     data.transform_buffer_memory = tm;
     data.transform_buffer_ptr = tp;
@@ -247,7 +248,7 @@ unsafe fn create_transform_and_indirect_buffers(device: &Device, instance: &Inst
         device,
         instance,
         data,
-        host_visible,
+        super::host_visible_coherent(),
     )?;
     data.indirect_buffer = ib;
     data.indirect_buffer_memory = im;
@@ -418,12 +419,12 @@ impl VulkanApplication {
             .device
             .acquire_next_image_khr(data.swapchain, u64::MAX, data.image_available_semaphores[self.frame], vk::Fence::null());
         let image_index = match result {
-            Ok((index, _)) => index as usize,
-            Err(vk::ErrorCode::OUT_OF_DATE_KHR) => {
+            Ok(index) => index as usize,
+            Err(e) if e == vk::Result::ERROR_OUT_OF_DATE => {
                 self.recreate_swapchain(window)?;
                 return Ok(None);
             }
-            Err(e) => return Err(anyhow!(e)),
+            Err(e) => return Err(anyhow!("{e:?}")),
         };
 
         if !self.vulkan_application_data.images_in_flight[image_index].is_null() {
@@ -449,7 +450,7 @@ impl VulkanApplication {
 
         self.device.reset_fences(&[data.in_flight_fences[self.frame]])?;
         self.device
-            .queue_submit(data.graphics_queue, &[submit_info], data.in_flight_fences[self.frame])?;
+            .queue_submit(data.graphics_queue, &[*submit_info], data.in_flight_fences[self.frame])?;
         Ok(())
     }
 
@@ -463,10 +464,9 @@ impl VulkanApplication {
             .swapchains(swapchains)
             .image_indices(image_indices);
 
-        self.device.queue_wait_idle(data.presentation_queue)?;
         let result = self.device.queue_present_khr(data.presentation_queue, &present_info);
 
-        if result == Err(vk::ErrorCode::OUT_OF_DATE_KHR) {
+        if result == Err(vk::Result::ERROR_OUT_OF_DATE) {
             self.recreate_swapchain(window)?;
         }
         Ok(())
@@ -568,7 +568,7 @@ impl VulkanApplication {
 
     unsafe fn destroy_core_infrastructure(&mut self) {
         self.device.destroy_device(None);
-        self.vulkan_instance.destroy_surface_khr(self.vulkan_application_data.surface, None);
+        self.vulkan_instance.destroy_surface(self.vulkan_application_data.surface, None);
         if VALIDATION_ENABLED {
             self.vulkan_instance
                 .destroy_debug_utils_messenger_ext(self.vulkan_application_data.debug_messenger, None);

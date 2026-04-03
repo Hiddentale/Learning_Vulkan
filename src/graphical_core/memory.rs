@@ -1,5 +1,5 @@
 use anyhow;
-use vulkanalia::vk;
+use vulkan_rust::vk;
 
 /// Finds a memory type index that satisfies both hardware requirements and desired properties.
 pub fn find_memory_type(

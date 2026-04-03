@@ -1,13 +1,16 @@
 #![allow(clippy::too_many_arguments)]
 mod graphical_core;
 mod voxel;
+mod vr;
 use anyhow::Result;
 use graphical_core::camera::Camera;
 use graphical_core::input::InputState;
 use graphical_core::vulkan_object::VulkanApplication;
+use log::info;
 use std::time::Instant;
 use voxel::player::Player;
-use vulkanalia::{prelude::v1_0::*, Version};
+use vr::{VrContext, VrSupport};
+use vulkan_rust::{vk, Version};
 use winit::{
     dpi::LogicalSize,
     event::{DeviceEvent, ElementState, Event, WindowEvent},
@@ -19,11 +22,12 @@ use winit::{
 const PORTABILITY_MACOS_VERSION: Version = Version::new(1, 3, 216);
 const VALIDATION_ENABLED: bool = cfg!(debug_assertions);
 
-const VALIDATION_LAYER: vk::ExtensionName = vk::ExtensionName::from_bytes(b"VK_LAYER_KHRONOS_validation");
-const DEVICE_EXTENSIONS: &[vk::ExtensionName] = &[vk::KHR_SWAPCHAIN_EXTENSION.name];
+const VALIDATION_LAYER: &std::ffi::CStr = c"VK_LAYER_KHRONOS_validation";
+const DEVICE_EXTENSIONS: &[&std::ffi::CStr] = &[vk::extension_names::KHR_SWAPCHAIN_EXTENSION_NAME];
 
 fn main() -> Result<()> {
     initialize_error_handler();
+    let _vr_context = probe_vr();
 
     let event_handler = EventLoop::new()?;
     let user_window = WindowBuilder::new()
@@ -127,6 +131,23 @@ fn exit_program(destroy_application: &mut bool, current_window: &EventLoopWindow
     current_window.exit();
     unsafe { application.destroy_vulkan_application() }
 }
+fn probe_vr() -> Option<VrContext> {
+    match VrContext::probe() {
+        Ok(VrSupport::Available(ctx)) => {
+            info!("VR available — OpenXR session ready for creation");
+            Some(ctx)
+        }
+        Ok(VrSupport::Unavailable(reason)) => {
+            info!("VR unavailable: {reason} — running in desktop mode");
+            None
+        }
+        Err(e) => {
+            info!("VR probe failed: {e:#} — running in desktop mode");
+            None
+        }
+    }
+}
+
 fn initialize_error_handler() {
     pretty_env_logger::init();
 }

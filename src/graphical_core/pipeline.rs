@@ -1,8 +1,8 @@
 use crate::graphical_core::mesh::Vertex;
 use crate::graphical_core::shaders::create_shader_module;
 use crate::graphical_core::vulkan_object::VulkanApplicationData;
-use vulkanalia::vk::{DeviceV1_0, Handle, HasBuilder};
-use vulkanalia::{vk, Device};
+use vk::Handle;
+use vulkan_rust::{vk, Device};
 
 /// Creates the graphics pipeline and its layout from the current render pass and descriptor layout.
 ///
@@ -22,11 +22,11 @@ pub unsafe fn create_pipeline(vulkan_logical_device: &Device, data: &mut VulkanA
     let vertex_stage = vk::PipelineShaderStageCreateInfo::builder()
         .stage(vk::ShaderStageFlags::VERTEX)
         .module(vertex_shader_module)
-        .name(b"main\0");
+        .name(c"main");
     let fragment_stage = vk::PipelineShaderStageCreateInfo::builder()
         .stage(vk::ShaderStageFlags::FRAGMENT)
         .module(fragment_shader_module)
-        .name(b"main\0");
+        .name(c"main");
     let input_assembly_state = vk::PipelineInputAssemblyStateCreateInfo::builder()
         .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
         .primitive_restart_enable(false);
@@ -38,8 +38,8 @@ pub unsafe fn create_pipeline(vulkan_logical_device: &Device, data: &mut VulkanA
         .min_depth(0.0)
         .max_depth(1.0);
     let scissor = vk::Rect2D::builder().offset(vk::Offset2D { x: 0, y: 0 }).extent(data.swapchain_extent);
-    let viewports = &[viewport];
-    let scissors = &[scissor];
+    let viewports = &[*viewport];
+    let scissors = &[*scissor];
     let viewport_state = vk::PipelineViewportStateCreateInfo::builder().viewports(viewports).scissors(scissors);
     let rasterization_state = vk::PipelineRasterizationStateCreateInfo::builder()
         .depth_clamp_enable(false)
@@ -66,11 +66,12 @@ pub unsafe fn create_pipeline(vulkan_logical_device: &Device, data: &mut VulkanA
         .depth_bounds_test_enable(false)
         .stencil_test_enable(false);
 
-    let layout_info = vk::PipelineLayoutCreateInfo::builder().set_layouts(&[data.descriptor_set_layout]).build();
+    let set_layouts = [data.descriptor_set_layout];
+    let layout_info = vk::PipelineLayoutCreateInfo::builder().set_layouts(&set_layouts);
 
     data.pipeline_layout = vulkan_logical_device.create_pipeline_layout(&layout_info, None)?;
 
-    let stages = &[vertex_stage, fragment_stage];
+    let stages = &[*vertex_stage, *fragment_stage];
     let info = vk::GraphicsPipelineCreateInfo::builder()
         .stages(stages)
         .vertex_input_state(&vertex_input_state)
@@ -84,9 +85,7 @@ pub unsafe fn create_pipeline(vulkan_logical_device: &Device, data: &mut VulkanA
         .render_pass(data.render_pass)
         .subpass(0);
 
-    data.pipeline = vulkan_logical_device
-        .create_graphics_pipelines(vk::PipelineCache::null(), &[info], None)?
-        .0[0];
+    data.pipeline = vulkan_logical_device.create_graphics_pipeline(vk::PipelineCache::null(), &info, None)?;
 
     vulkan_logical_device.destroy_shader_module(vertex_shader_module, None);
     vulkan_logical_device.destroy_shader_module(fragment_shader_module, None);
@@ -94,45 +93,40 @@ pub unsafe fn create_pipeline(vulkan_logical_device: &Device, data: &mut VulkanA
 }
 
 fn vertex_input_descriptions() -> (vk::VertexInputBindingDescription, [vk::VertexInputAttributeDescription; 4]) {
-    let binding = vk::VertexInputBindingDescription::builder()
+    let binding = *vk::VertexInputBindingDescription::builder()
         .binding(0)
         .stride(std::mem::size_of::<Vertex>() as u32)
-        .input_rate(vk::VertexInputRate::VERTEX)
-        .build();
+        .input_rate(vk::VertexInputRate::VERTEX);
 
-    let position = vk::VertexInputAttributeDescription::builder()
+    let position = *vk::VertexInputAttributeDescription::builder()
         .binding(0)
         .location(0)
         .format(vk::Format::R32G32B32_SFLOAT)
-        .offset(0)
-        .build();
+        .offset(std::mem::offset_of!(Vertex, position) as u32);
 
-    let uv_coordinate = vk::VertexInputAttributeDescription::builder()
+    let uv_coordinate = *vk::VertexInputAttributeDescription::builder()
         .binding(0)
         .location(1)
         .format(vk::Format::R32G32_SFLOAT)
-        .offset(std::mem::size_of::<[f32; 3]>() as u32)
-        .build();
+        .offset(std::mem::offset_of!(Vertex, uv_coordinate) as u32);
 
-    let normal = vk::VertexInputAttributeDescription::builder()
+    let normal = *vk::VertexInputAttributeDescription::builder()
         .binding(0)
         .location(2)
         .format(vk::Format::R32G32B32_SFLOAT)
-        .offset(std::mem::size_of::<[f32; 5]>() as u32)
-        .build();
+        .offset(std::mem::offset_of!(Vertex, normal) as u32);
 
-    let material_id = vk::VertexInputAttributeDescription::builder()
+    let material_id = *vk::VertexInputAttributeDescription::builder()
         .binding(0)
         .location(3)
         .format(vk::Format::R32_UINT)
-        .offset(std::mem::size_of::<[f32; 8]>() as u32)
-        .build();
+        .offset(std::mem::offset_of!(Vertex, material_id) as u32);
 
     (binding, [position, uv_coordinate, normal, material_id])
 }
 
 fn color_blend_attachment() -> vk::PipelineColorBlendAttachmentState {
-    vk::PipelineColorBlendAttachmentState::builder()
+    *vk::PipelineColorBlendAttachmentState::builder()
         .color_write_mask(vk::ColorComponentFlags::all())
         .blend_enable(true)
         .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
@@ -141,5 +135,4 @@ fn color_blend_attachment() -> vk::PipelineColorBlendAttachmentState {
         .src_alpha_blend_factor(vk::BlendFactor::ONE)
         .dst_alpha_blend_factor(vk::BlendFactor::ZERO)
         .alpha_blend_op(vk::BlendOp::ADD)
-        .build()
 }

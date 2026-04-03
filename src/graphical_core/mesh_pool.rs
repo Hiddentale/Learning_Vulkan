@@ -3,8 +3,8 @@ use crate::graphical_core::mesh::Vertex;
 use crate::graphical_core::vulkan_object::VulkanApplicationData;
 use crate::voxel::meshing::BUCKET_COUNT;
 use std::collections::HashMap;
-use vulkanalia::vk::{self, DeviceV1_0, Handle};
-use vulkanalia::{Device, Instance};
+use vk::Handle;
+use vulkan_rust::{vk, Device, Instance};
 
 /// Index range for one face-direction bucket within the shared index buffer.
 #[derive(Copy, Clone, Debug, Default)]
@@ -110,7 +110,7 @@ impl MeshPool {
             );
         }
 
-        let host_visible = vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT;
+        let host_visible = super::host_visible_coherent();
 
         let vertex_size = std::mem::size_of_val(all_vertices.as_slice()) as u64;
         let (vb, vm) = allocate_and_fill_buffer(

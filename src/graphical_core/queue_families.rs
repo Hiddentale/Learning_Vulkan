@@ -1,8 +1,7 @@
 use crate::graphical_core::gpu::SuitabilityError;
 use crate::graphical_core::vulkan_object::VulkanApplicationData;
 use anyhow::anyhow;
-use vulkanalia::vk::{InstanceV1_0, KhrSurfaceExtension};
-use vulkanalia::{vk, Instance, VkResult};
+use vulkan_rust::{vk, Instance, VkResult};
 
 #[derive(Copy, Clone, Debug)]
 pub struct RequiredQueueFamilies {

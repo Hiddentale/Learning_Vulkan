@@ -4,8 +4,7 @@ use anyhow::anyhow;
 use log::{info, warn};
 use std::collections::HashSet;
 use thiserror::Error;
-use vulkanalia::vk::{InstanceV1_0, PhysicalDevice};
-use vulkanalia::Instance;
+use vulkan_rust::{vk, Instance};
 
 #[derive(Debug, Error)]
 #[error("Missing {0}.")]
@@ -27,7 +26,7 @@ pub unsafe fn choose_gpu(instance: &Instance, data: &mut VulkanApplicationData) 
 }
 
 /// Validates that a GPU has the required queue families, extensions, and swapchain support.
-pub unsafe fn check_gpu(instance: &Instance, data: &VulkanApplicationData, gpu: PhysicalDevice) -> anyhow::Result<()> {
+pub unsafe fn check_gpu(instance: &Instance, data: &VulkanApplicationData, gpu: vk::PhysicalDevice) -> anyhow::Result<()> {
     RequiredQueueFamilies::get(instance, data, gpu)?;
     check_gpu_extensions(instance, gpu)?;
     let support = crate::graphical_core::swapchain::SwapchainSupport::get(instance, data, gpu)?;
@@ -37,19 +36,19 @@ pub unsafe fn check_gpu(instance: &Instance, data: &VulkanApplicationData, gpu: 
     Ok(())
 }
 
-unsafe fn check_gpu_extensions(instance: &Instance, gpu: PhysicalDevice) -> anyhow::Result<()> {
+unsafe fn check_gpu_extensions(instance: &Instance, gpu: vk::PhysicalDevice) -> anyhow::Result<()> {
     let extensions = instance
         .enumerate_device_extension_properties(gpu, None)?
         .iter()
         .map(|e| e.extension_name)
         .collect::<HashSet<_>>();
-    if DEVICE_EXTENSIONS.iter().all(|e| extensions.contains(e)) {
+    if DEVICE_EXTENSIONS.iter().all(|e| extensions.iter().any(|ext| ext == e)) {
         Ok(())
     } else {
         Err(anyhow!(SuitabilityError("Missing required GPU extensions.")))
     }
 }
 
-unsafe fn is_gpu_suitable(instance: &Instance, data: &VulkanApplicationData, gpu: PhysicalDevice) -> bool {
+unsafe fn is_gpu_suitable(instance: &Instance, data: &VulkanApplicationData, gpu: vk::PhysicalDevice) -> bool {
     check_gpu(instance, data, gpu).is_ok()
 }
