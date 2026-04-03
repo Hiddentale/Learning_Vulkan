@@ -9,7 +9,7 @@ use crate::graphical_core::{
     instance::{create_instance, create_logical_device},
     mesh_pool::MeshPool,
     palette_buffer::{create_palette_buffer, destroy_palette_buffer},
-    pipeline::create_pipeline,
+    pipeline::{create_pipeline, create_sky_pipeline},
     render_pass::create_render_pass,
     scene::Transform,
     swapchain::{create_swapchain, create_swapchain_image_views},
@@ -77,6 +77,8 @@ pub struct VulkanApplicationData {
     pub indirect_buffer: vk::Buffer,
     pub indirect_buffer_memory: vk::DeviceMemory,
     pub indirect_buffer_ptr: *mut DrawIndexedIndirectCommand,
+    pub sky_pipeline: vk::Pipeline,
+    pub sky_pipeline_layout: vk::PipelineLayout,
 }
 
 const RENDER_DISTANCE: i32 = 5;
@@ -184,6 +186,7 @@ unsafe fn create_presentation_pipeline(
     create_render_pass(instance, device, data)?;
     descriptors::create_layout(device, data)?;
     create_pipeline(device, data)?;
+    create_sky_pipeline(device, data)?;
     create_frame_buffers(device, data)?;
     Ok(())
 }
@@ -492,6 +495,7 @@ impl VulkanApplication {
         self.depth_pyramid_needs_init = true;
         create_render_pass(&self.vulkan_instance, &self.device, &mut self.vulkan_application_data)?;
         create_pipeline(&self.device, &mut self.vulkan_application_data)?;
+        create_sky_pipeline(&self.device, &mut self.vulkan_application_data)?;
         create_frame_buffers(&self.device, &mut self.vulkan_application_data)?;
         allocate_command_buffers(&self.device, &mut self.vulkan_application_data)?;
         self.vulkan_application_data
@@ -511,6 +515,9 @@ impl VulkanApplication {
             .for_each(|framebuffer| self.device.destroy_framebuffer(*framebuffer, None));
         self.device
             .free_command_buffers(self.vulkan_application_data.command_pool, &self.vulkan_application_data.command_buffers);
+        self.device.destroy_pipeline(self.vulkan_application_data.sky_pipeline, None);
+        self.device
+            .destroy_pipeline_layout(self.vulkan_application_data.sky_pipeline_layout, None);
         self.device.destroy_pipeline(self.vulkan_application_data.pipeline, None);
         self.device.destroy_pipeline_layout(self.vulkan_application_data.pipeline_layout, None);
         self.device.destroy_render_pass(self.vulkan_application_data.render_pass, None);

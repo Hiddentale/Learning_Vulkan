@@ -52,6 +52,7 @@ impl Default for Camera {
 #[derive(Copy, Clone, Debug)]
 pub struct UniformBufferObject {
     view_projection_matrix: [[f32; 4]; 4],
+    inverse_view_projection: [[f32; 4]; 4],
     light_direction: [f32; 3],
     ambient_strength: f32,
 }
@@ -86,8 +87,10 @@ pub fn update_uniform_buffer(vulkan_application_data: &VulkanApplicationData, ca
     let view_projection = view_projection_matrix(camera, vulkan_application_data.swapchain_extent);
 
     let sun_direction = Vec3::new(0.3, -1.0, 0.5).normalize();
+    let inverse_vp = view_projection.inverse();
     let ubo = UniformBufferObject {
         view_projection_matrix: view_projection.to_cols_array_2d(),
+        inverse_view_projection: inverse_vp.to_cols_array_2d(),
         light_direction: sun_direction.to_array(),
         ambient_strength: 0.15,
     };
