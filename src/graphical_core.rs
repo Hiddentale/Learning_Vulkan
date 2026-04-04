@@ -15,6 +15,7 @@ pub mod pipeline;
 pub mod queue_families;
 pub mod render_pass;
 mod shaders;
+pub mod svdag_pipeline;
 pub mod svdag_pool;
 pub mod swapchain;
 pub mod texture_mapping;

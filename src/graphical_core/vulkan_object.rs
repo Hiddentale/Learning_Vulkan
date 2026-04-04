@@ -11,11 +11,14 @@ use crate::graphical_core::{
     palette_buffer::{create_palette_buffer, destroy_palette_buffer},
     pipeline::create_sky_pipeline,
     render_pass::create_render_pass,
+    svdag_pipeline::{SvdagPipeline, SvdagPushConstants},
+    svdag_pool::SvdagPool,
     swapchain::{create_swapchain, create_swapchain_image_views},
     texture_mapping::{create_texture_image, destroy_textures},
     voxel_pool::VoxelPool,
     MAX_FRAMES_IN_FLIGHT,
 };
+use crate::voxel::svdag_compressor::SvdagCompressor;
 use crate::voxel::{chunk::CHUNK_SIZE, world::World};
 use crate::vr::{VrContext, VrSession, VrSwapchain};
 use crate::VALIDATION_ENABLED;
@@ -92,6 +95,9 @@ pub struct VulkanApplication {
     _vr_swapchain: Option<VrSwapchain>,
     voxel_pool: VoxelPool,
     mesh_shader_pipeline: MeshShaderPipeline,
+    svdag_pool: SvdagPool,
+    svdag_pipeline: SvdagPipeline,
+    svdag_compressor: SvdagCompressor,
 }
 
 impl VulkanApplication {
@@ -183,6 +189,10 @@ impl VulkanApplication {
         }
         let mesh_shader_pipeline = MeshShaderPipeline::create(&device, &data, &voxel_pool)?;
 
+        let svdag_pool = SvdagPool::new(MAX_LOADED_CHUNKS as u32, &device, &instance, &mut data)?;
+        let svdag_pipeline = SvdagPipeline::create(&device, &data, &svdag_pool)?;
+        let svdag_compressor = SvdagCompressor::new();
+
         Ok(Self {
             _vulkan_entry_point: entry,
             vulkan_instance: instance,
@@ -198,6 +208,9 @@ impl VulkanApplication {
             _vr_swapchain: vr_swapchain,
             voxel_pool,
             mesh_shader_pipeline,
+            svdag_pool,
+            svdag_pipeline,
+            svdag_compressor,
         })
     }
 }
@@ -344,6 +357,14 @@ impl VulkanApplication {
             phase: 1,
             draw_offset: crate::voxel::block::BlockType::opaque_mask(),
         };
+        let svdag_push = SvdagPushConstants {
+            camera_pos: camera.position.to_array(),
+            chunk_count: self.svdag_pool.chunk_count(),
+            screen_size: [
+                self.vulkan_application_data.swapchain_extent.width,
+                self.vulkan_application_data.swapchain_extent.height,
+            ],
+        };
         record_mesh_shader_command_buffer(
             &self.device,
             &self.vulkan_application_data,
@@ -352,6 +373,8 @@ impl VulkanApplication {
             &self.depth_pyramid_pipeline,
             &cull_push,
             self.depth_pyramid_needs_init,
+            Some(&self.svdag_pipeline),
+            Some(&svdag_push),
         )?;
         self.depth_pyramid_needs_init = false;
         self.submit_command_buffer(image_index)?;
@@ -367,11 +390,32 @@ impl VulkanApplication {
 
         // Always run update — even if player hasn't moved, there may be pending chunks
         let delta = self.world.update(player_cx, player_cz);
-        if delta.loaded.is_empty() && delta.unloaded.is_empty() {
+
+        // Process completed SVDAG compressions
+        for result in self.svdag_compressor.receive() {
+            if self.world.get_chunk(result.pos[0], result.pos[1], result.pos[2]).is_some() {
+                self.svdag_pool.upload_chunk(result.pos, &result.dag_data, &result.material_data, 0);
+            }
+        }
+
+        // Remove SVDAG data for unloaded chunks
+        for pos in &delta.unloaded {
+            self.svdag_pool.remove_chunk(pos);
+        }
+
+        if delta.loaded.is_empty() && delta.unloaded.is_empty() && delta.promoted.is_empty() && delta.demoted.is_empty() {
             self.last_player_chunk = [player_cx, player_cz];
             return Ok(());
         }
         self.last_player_chunk = [player_cx, player_cz];
+
+        // Queue demoted chunks for SVDAG compression
+        for pos in &delta.demoted {
+            let [cx, cy, cz] = *pos;
+            if let Some(chunk) = self.world.get_chunk(cx, cy, cz) {
+                self.svdag_compressor.request(*pos, chunk.clone());
+            }
+        }
 
         self.update_chunks_mesh_shader(&delta)?;
 
@@ -538,6 +582,8 @@ impl VulkanApplication {
         if let Some(vr_sc) = self._vr_swapchain.take() {
             vr_sc.destroy(&self.device);
         }
+        self.svdag_pipeline.destroy(&self.device);
+        self.svdag_pool.destroy(&self.device);
         self.mesh_shader_pipeline.destroy(&self.device);
         self.voxel_pool.destroy(&self.device);
         compute_cull::destroy_depth_pyramid_pipeline(&self.device, &self.depth_pyramid_pipeline);

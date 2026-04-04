@@ -3,6 +3,7 @@ use super::block::BlockType;
 pub const CHUNK_SIZE: usize = 16;
 const CHUNK_VOLUME: usize = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
 
+#[derive(Clone)]
 pub struct Chunk {
     blocks: [BlockType; CHUNK_VOLUME],
 }

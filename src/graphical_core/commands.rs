@@ -1,4 +1,5 @@
 use crate::graphical_core::compute_cull::{CullPushConstants, DepthPyramidResources, DepthReducePush};
+use crate::graphical_core::svdag_pipeline::{SvdagPipeline, SvdagPushConstants};
 use crate::graphical_core::vulkan_object::VulkanApplicationData;
 use crate::graphical_core::{self, MAX_FRAMES_IN_FLIGHT};
 use vk::Handle;
@@ -228,6 +229,8 @@ pub unsafe fn record_mesh_shader_command_buffer(
     depth_pyramid: &DepthPyramidResources,
     cull_push: &CullPushConstants,
     pyramid_needs_init: bool,
+    svdag_pipeline: Option<&SvdagPipeline>,
+    svdag_push: Option<&SvdagPushConstants>,
 ) -> anyhow::Result<()> {
     let cmd = data.command_buffers[image_index];
     device.reset_command_buffer(cmd, vk::CommandBufferResetFlags::empty())?;
@@ -285,8 +288,80 @@ pub unsafe fn record_mesh_shader_command_buffer(
     device.cmd_draw_mesh_tasks_ext(cmd, push2.chunk_count, 1, 1);
 
     device.cmd_end_render_pass(cmd);
+
+    // === Phase 3: SVDAG ray march for far-field chunks ===
+    if let (Some(svdag_pipe), Some(svdag_pc)) = (svdag_pipeline, svdag_push) {
+        if svdag_pc.chunk_count > 0 {
+            record_svdag_raymarch(device, cmd, data, svdag_pipe, svdag_pc);
+        }
+    }
+
     device.end_command_buffer(cmd)?;
     Ok(())
+}
+
+/// Records the SVDAG ray march compute pass after the mesh shader render passes.
+/// Reads the depth buffer for early-out and writes to the color attachment.
+unsafe fn record_svdag_raymarch(
+    device: &Device,
+    cmd: vk::CommandBuffer,
+    data: &VulkanApplicationData,
+    svdag_pipeline: &SvdagPipeline,
+    push: &SvdagPushConstants,
+) {
+    // Transition depth: ATTACHMENT → SHADER_READ for the ray marcher
+    let depth_barrier = vk::ImageMemoryBarrier::builder()
+        .old_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+        .new_layout(vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL)
+        .src_access_mask(vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE)
+        .dst_access_mask(vk::AccessFlags::SHADER_READ)
+        .image(data.depth_image)
+        .subresource_range(super::subresource_range(vk::ImageAspectFlags::DEPTH, 1));
+    device.cmd_pipeline_barrier(
+        cmd,
+        vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+        vk::PipelineStageFlags::COMPUTE_SHADER,
+        vk::DependencyFlags::empty(),
+        &[] as &[vk::MemoryBarrier],
+        &[] as &[vk::BufferMemoryBarrier],
+        &[*depth_barrier],
+    );
+
+    // Bind SVDAG compute pipeline
+    device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, svdag_pipeline.pipeline);
+    device.cmd_bind_descriptor_sets(
+        cmd,
+        vk::PipelineBindPoint::COMPUTE,
+        svdag_pipeline.pipeline_layout,
+        0,
+        &[svdag_pipeline.descriptor_set],
+        &[],
+    );
+
+    let push_bytes: &[u8] = std::slice::from_raw_parts(push as *const SvdagPushConstants as *const u8, std::mem::size_of::<SvdagPushConstants>());
+    device.cmd_push_constants(cmd, svdag_pipeline.pipeline_layout, vk::ShaderStageFlags::COMPUTE, 0, push_bytes);
+
+    let wg_x = push.screen_size[0].div_ceil(8);
+    let wg_y = push.screen_size[1].div_ceil(8);
+    device.cmd_dispatch(cmd, wg_x, wg_y, 1);
+
+    // Transition depth back to ATTACHMENT for next frame
+    let depth_restore = vk::ImageMemoryBarrier::builder()
+        .old_layout(vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL)
+        .new_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+        .src_access_mask(vk::AccessFlags::SHADER_READ)
+        .dst_access_mask(vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE)
+        .image(data.depth_image)
+        .subresource_range(super::subresource_range(vk::ImageAspectFlags::DEPTH, 1));
+    device.cmd_pipeline_barrier(
+        cmd,
+        vk::PipelineStageFlags::COMPUTE_SHADER,
+        vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+        vk::DependencyFlags::empty(),
+        &[] as &[vk::MemoryBarrier],
+        &[] as &[vk::BufferMemoryBarrier],
+        &[*depth_restore],
+    );
 }
 
 /// Creates semaphores and fences for each frame in flight.
