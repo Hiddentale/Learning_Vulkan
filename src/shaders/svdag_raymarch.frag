@@ -1,21 +1,5 @@
 #version 450
-#extension GL_EXT_multiview : enable
 
-layout(local_size_x = 8, local_size_y = 8) in;
-
-// SVDAG chunk metadata
-struct SvdagChunkInfo {
-    vec3 aabb_min;
-    uint dag_offset;
-    vec3 aabb_max;
-    uint material_offset;
-    uint dag_size;
-    uint lod_level;
-    uint _pad0;
-    uint _pad1;
-};
-
-// Camera UBO (shared with mesh pipeline)
 layout(set = 0, binding = 0) uniform CameraUBO {
     mat4 view_projection[2];
     mat4 inverse_view_projection[2];
@@ -23,32 +7,29 @@ layout(set = 0, binding = 0) uniform CameraUBO {
     float ambient_strength;
 } camera;
 
-// SVDAG geometry data
+// SVDAG geometry data (materials embedded in 64-byte leaf nodes)
 layout(set = 0, binding = 1) readonly buffer SvdagGeometry {
     uint geometry_data[];
 };
 
-// SVDAG material data
-layout(set = 0, binding = 2) readonly buffer SvdagMaterials {
-    uint material_data[];
+struct SvdagChunkInfo {
+    vec3 aabb_min;
+    uint dag_offset;
+    vec3 aabb_max;
+    uint dag_size;
 };
 
-// SVDAG chunk info array
-layout(set = 0, binding = 3) readonly buffer SvdagChunkInfoSSBO {
+layout(set = 0, binding = 2) readonly buffer SvdagChunkInfoSSBO {
     SvdagChunkInfo chunks[];
 };
-
-// Color output image
-layout(set = 0, binding = 4, rgba8) writeonly uniform image2D color_output;
-
-// Depth buffer for early-out against near-field geometry
-layout(set = 0, binding = 5) uniform sampler2D depth_input;
 
 layout(push_constant) uniform PushConstants {
     vec3 camera_pos;
     uint chunk_count;
-    uvec2 screen_size;
+    vec2 screen_size;
 };
+
+layout(location = 0) out vec4 out_color;
 
 // --- Ray-AABB intersection ---
 bool ray_aabb(vec3 ro, vec3 inv_rd, vec3 aabb_min, vec3 aabb_max, out float t_near, out float t_far) {
@@ -68,9 +49,8 @@ uint read_byte(uint byte_offset) {
     return (word >> shift) & 0xFFu;
 }
 
-// --- Read a u32 from the geometry SSBO (unaligned) ---
+// --- Read a u32 from the geometry SSBO ---
 uint read_u32(uint byte_offset) {
-    // Handle alignment: read from the right word boundaries
     uint b0 = read_byte(byte_offset);
     uint b1 = read_byte(byte_offset + 1u);
     uint b2 = read_byte(byte_offset + 2u);
@@ -78,12 +58,7 @@ uint read_u32(uint byte_offset) {
     return b0 | (b1 << 8u) | (b2 << 16u) | (b3 << 24u);
 }
 
-// --- Read a u64 as two u32s from the geometry SSBO ---
-uvec2 read_u64(uint byte_offset) {
-    return uvec2(read_u32(byte_offset), read_u32(byte_offset + 4u));
-}
-
-// --- Compute octant index from local position and half-size ---
+// --- Compute octant index ---
 uint octant_index(uvec3 pos, uint half_size) {
     uint xi = pos.x >= half_size ? 1u : 0u;
     uint yi = pos.y >= half_size ? 1u : 0u;
@@ -91,9 +66,8 @@ uint octant_index(uvec3 pos, uint half_size) {
     return xi | (yi << 1u) | (zi << 2u);
 }
 
-// --- SVDAG lookup: returns true if the voxel at (x,y,z) is solid ---
-bool svdag_lookup(uint dag_base, uint x, uint y, uint z) {
-    // Read root offset from 4-byte header
+// --- SVDAG lookup: returns material ID (0 = air) ---
+uint svdag_lookup(uint dag_base, uint x, uint y, uint z) {
     uint offset = dag_base + read_u32(dag_base);
     uint size = 16u;
 
@@ -103,10 +77,9 @@ bool svdag_lookup(uint dag_base, uint x, uint y, uint z) {
         uint octant = octant_index(uvec3(x, y, z), half_size);
 
         if ((child_mask & (1u << octant)) == 0u) {
-            return false; // air
+            return 0u; // air
         }
 
-        // Count set bits below this octant to find the child pointer index
         uint bits_below = child_mask & ((1u << octant) - 1u);
         uint child_rank = bitCount(bits_below);
         uint child_offset = read_u32(offset + 1u + child_rank * 4u);
@@ -118,33 +91,17 @@ bool svdag_lookup(uint dag_base, uint x, uint y, uint z) {
         size = half_size;
     }
 
-    // Leaf: 64-bit bitmap for 4x4x4 voxels
-    uvec2 bitmap = read_u64(offset);
-    uint bit = x + z * 4u + y * 16u;
-    if (bit < 32u) {
-        return (bitmap.x & (1u << bit)) != 0u;
-    } else {
-        return (bitmap.y & (1u << (bit - 32u))) != 0u;
-    }
-}
-
-// --- Read material byte from material SSBO ---
-uint read_material_byte(uint byte_offset) {
-    uint word = material_data[byte_offset >> 2];
-    uint shift = (byte_offset & 3u) * 8u;
-    return (word >> shift) & 0xFFu;
+    // Leaf: 64 bytes, one u8 per voxel. Layout: x + z*4 + y*16
+    uint idx = x + z * 4u + y * 16u;
+    return read_byte(offset + idx);
 }
 
 // --- DDA through a chunk's SVDAG ---
 bool trace_chunk(vec3 ro, vec3 rd, vec3 aabb_min, float t_enter, float t_exit,
                  uint dag_base, out float t_hit, out vec3 hit_normal, out uint hit_material) {
-    float voxel_size = 1.0;
     vec3 pos = ro + rd * (t_enter + 0.001);
-
-    // Convert to local chunk coordinates
     vec3 local = pos - aabb_min;
-    ivec3 voxel = ivec3(floor(local));
-    voxel = clamp(voxel, ivec3(0), ivec3(15));
+    ivec3 voxel = clamp(ivec3(floor(local)), ivec3(0), ivec3(15));
 
     ivec3 step_dir = ivec3(sign(rd));
     vec3 t_delta = abs(1.0 / rd);
@@ -164,9 +121,9 @@ bool trace_chunk(vec3 ro, vec3 rd, vec3 aabb_min, float t_enter, float t_exit,
             return false;
         }
 
-        if (svdag_lookup(dag_base, uint(voxel.x), uint(voxel.y), uint(voxel.z))) {
+        uint mat = svdag_lookup(dag_base, uint(voxel.x), uint(voxel.y), uint(voxel.z));
+        if (mat != 0u) {
             t_hit = min(min(t_max_val.x, t_max_val.y), t_max_val.z);
-            // Determine which face was hit
             if (t_max_val.x < t_max_val.y && t_max_val.x < t_max_val.z) {
                 hit_normal = vec3(-float(step_dir.x), 0.0, 0.0);
             } else if (t_max_val.y < t_max_val.z) {
@@ -174,11 +131,10 @@ bool trace_chunk(vec3 ro, vec3 rd, vec3 aabb_min, float t_enter, float t_exit,
             } else {
                 hit_normal = vec3(0.0, 0.0, -float(step_dir.z));
             }
-            hit_material = 3u; // Stone as default (material lookup from RLE can be added later)
+            hit_material = mat;
             return true;
         }
 
-        // Step to next voxel
         if (t_max_val.x < t_max_val.y) {
             if (t_max_val.x < t_max_val.z) {
                 voxel.x += step_dir.x;
@@ -204,39 +160,42 @@ bool trace_chunk(vec3 ro, vec3 rd, vec3 aabb_min, float t_enter, float t_exit,
     return false;
 }
 
-// Simple material color palette (matches MaterialPalette on CPU)
 vec3 material_color(uint mat_id) {
     if (mat_id == 1u) return vec3(0.24, 0.60, 0.15); // Grass
     if (mat_id == 2u) return vec3(0.55, 0.35, 0.17); // Dirt
     if (mat_id == 3u) return vec3(0.50, 0.50, 0.50); // Stone
+    if (mat_id == 4u) return vec3(0.20, 0.50, 0.95); // Water
     if (mat_id == 5u) return vec3(0.82, 0.75, 0.52); // Sand
     if (mat_id == 6u) return vec3(0.90, 0.92, 0.95); // Snow
     if (mat_id == 7u) return vec3(0.55, 0.55, 0.55); // Gravel
     return vec3(0.50, 0.50, 0.50);
 }
 
+// --- Simple frustum check: is an AABB at least partially in front of the camera? ---
+bool aabb_in_front(vec3 aabb_min, vec3 aabb_max, vec3 cam_pos, vec3 cam_fwd) {
+    // Test the AABB corner most in the forward direction
+    vec3 p = mix(aabb_min, aabb_max, vec3(greaterThan(cam_fwd, vec3(0.0))));
+    return dot(p - cam_pos, cam_fwd) > 0.0;
+}
+
 void main() {
-    uvec2 pixel = gl_GlobalInvocationID.xy;
-    if (pixel.x >= screen_size.x || pixel.y >= screen_size.y) return;
+    vec2 uv = gl_FragCoord.xy / screen_size;
+    uint view_index = 0;
 
-    uint view_index = 0; // TODO: multiview for VR
-
-    // Check depth buffer for early-out
-    vec2 uv = (vec2(pixel) + 0.5) / vec2(screen_size);
-    float existing_depth = texture(depth_input, uv).r;
-
-    // Reconstruct world-space ray from inverse VP matrix
     vec2 ndc = uv * 2.0 - 1.0;
-    vec4 clip_near = vec4(ndc, 0.0, 1.0);
-    vec4 clip_far = vec4(ndc, 1.0, 1.0);
-    vec4 world_near = camera.inverse_view_projection[view_index] * clip_near;
-    vec4 world_far = camera.inverse_view_projection[view_index] * clip_far;
+    vec4 world_near = camera.inverse_view_projection[view_index] * vec4(ndc, 0.0, 1.0);
+    vec4 world_far = camera.inverse_view_projection[view_index] * vec4(ndc, 1.0, 1.0);
     world_near /= world_near.w;
     world_far /= world_far.w;
 
     vec3 ro = world_near.xyz;
     vec3 rd = normalize(world_far.xyz - world_near.xyz);
     vec3 inv_rd = 1.0 / rd;
+
+    // Camera forward from inverse VP (center pixel direction)
+    vec4 center_far = camera.inverse_view_projection[view_index] * vec4(0.0, 0.0, 1.0, 1.0);
+    center_far /= center_far.w;
+    vec3 cam_fwd = normalize(center_far.xyz - ro);
 
     float best_t = 1e30;
     vec3 best_normal = vec3(0.0);
@@ -245,12 +204,16 @@ void main() {
     for (uint ci = 0; ci < chunk_count; ci++) {
         SvdagChunkInfo chunk = chunks[ci];
 
+        // Frustum cull: skip chunks entirely behind the camera
+        if (!aabb_in_front(chunk.aabb_min, chunk.aabb_max, camera_pos, cam_fwd)) {
+            continue;
+        }
+
         float t_near, t_far;
         if (!ray_aabb(ro, inv_rd, chunk.aabb_min, chunk.aabb_max, t_near, t_far)) {
             continue;
         }
-
-        if (t_near > best_t) continue; // Already found closer hit
+        if (t_near > best_t) continue;
 
         float t_hit;
         vec3 hit_normal;
@@ -265,12 +228,17 @@ void main() {
         }
     }
 
-    if (best_t < 1e29) {
-        // Simple directional lighting
-        vec3 base_color = material_color(best_material);
-        float ndl = max(dot(best_normal, camera.light_direction), 0.0);
-        vec3 color = base_color * (camera.ambient_strength + ndl * (1.0 - camera.ambient_strength));
-        imageStore(color_output, ivec2(pixel), vec4(color, 1.0));
+    if (best_t >= 1e29) {
+        discard;
     }
-    // If no hit, leave the pixel as-is (already rendered by mesh shader or sky)
+
+    // Project hit position to clip space for depth write
+    vec3 hit_world = ro + rd * best_t;
+    vec4 hit_clip = camera.view_projection[view_index] * vec4(hit_world, 1.0);
+    gl_FragDepth = hit_clip.z / hit_clip.w;
+
+    vec3 base_color = material_color(best_material);
+    float ndl = max(dot(best_normal, camera.light_direction), 0.0);
+    vec3 color = base_color * (camera.ambient_strength + ndl * (1.0 - camera.ambient_strength));
+    out_color = vec4(color, 1.0);
 }

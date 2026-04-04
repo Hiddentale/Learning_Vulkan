@@ -292,171 +292,30 @@ pub unsafe fn record_mesh_shader_command_buffer(
     // === Phase 3: SVDAG ray march for far-field chunks ===
     if let (Some(svdag_pipe), Some(svdag_pc)) = (svdag_pipeline, svdag_push) {
         if svdag_pc.chunk_count > 0 {
-            record_svdag_raymarch(device, cmd, data, image_index, svdag_pipe, svdag_pc, data.svdag_output_needs_init);
+            begin_render_pass_no_clear(device, cmd, data, image_index);
+
+            device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, svdag_pipe.pipeline);
+            device.cmd_bind_descriptor_sets(
+                cmd,
+                vk::PipelineBindPoint::GRAPHICS,
+                svdag_pipe.pipeline_layout,
+                0,
+                &[svdag_pipe.descriptor_set],
+                &[],
+            );
+            let push_bytes: &[u8] = std::slice::from_raw_parts(
+                svdag_pc as *const SvdagPushConstants as *const u8,
+                std::mem::size_of::<SvdagPushConstants>(),
+            );
+            device.cmd_push_constants(cmd, svdag_pipe.pipeline_layout, vk::ShaderStageFlags::FRAGMENT, 0, push_bytes);
+            device.cmd_draw(cmd, 3, 1, 0, 0);
+
+            device.cmd_end_render_pass(cmd);
         }
     }
 
     device.end_command_buffer(cmd)?;
     Ok(())
-}
-
-/// Records the SVDAG ray march compute pass after the mesh shader render passes.
-/// Writes to dedicated SVDAG output image, then blits onto the swapchain.
-unsafe fn record_svdag_raymarch(
-    device: &Device,
-    cmd: vk::CommandBuffer,
-    data: &VulkanApplicationData,
-    image_index: usize,
-    svdag_pipeline: &SvdagPipeline,
-    push: &SvdagPushConstants,
-    svdag_output_needs_init: bool,
-) {
-    let extent = data.swapchain_extent;
-    let empty_mem: &[vk::MemoryBarrier] = &[];
-    let empty_buf: &[vk::BufferMemoryBarrier] = &[];
-
-    // Transition SVDAG output image to GENERAL for compute write
-    let svdag_out_barrier = vk::ImageMemoryBarrier::builder()
-        .old_layout(if svdag_output_needs_init {
-            vk::ImageLayout::UNDEFINED
-        } else {
-            vk::ImageLayout::TRANSFER_SRC_OPTIMAL
-        })
-        .new_layout(vk::ImageLayout::GENERAL)
-        .src_access_mask(vk::AccessFlags::empty())
-        .dst_access_mask(vk::AccessFlags::SHADER_WRITE)
-        .image(data.svdag_output_image)
-        .subresource_range(super::subresource_range(vk::ImageAspectFlags::COLOR, 1));
-
-    // Transition depth: ATTACHMENT → SHADER_READ for the ray marcher
-    let depth_barrier = vk::ImageMemoryBarrier::builder()
-        .old_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
-        .new_layout(vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL)
-        .src_access_mask(vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE)
-        .dst_access_mask(vk::AccessFlags::SHADER_READ)
-        .image(data.depth_image)
-        .subresource_range(super::subresource_range(vk::ImageAspectFlags::DEPTH, 1));
-
-    device.cmd_pipeline_barrier(
-        cmd,
-        vk::PipelineStageFlags::LATE_FRAGMENT_TESTS | vk::PipelineStageFlags::TRANSFER,
-        vk::PipelineStageFlags::COMPUTE_SHADER,
-        vk::DependencyFlags::empty(),
-        empty_mem,
-        empty_buf,
-        &[*svdag_out_barrier, *depth_barrier],
-    );
-
-    // Dispatch compute
-    device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, svdag_pipeline.pipeline);
-    device.cmd_bind_descriptor_sets(
-        cmd,
-        vk::PipelineBindPoint::COMPUTE,
-        svdag_pipeline.pipeline_layout,
-        0,
-        &[svdag_pipeline.descriptor_set],
-        &[],
-    );
-
-    let push_bytes: &[u8] = std::slice::from_raw_parts(push as *const SvdagPushConstants as *const u8, std::mem::size_of::<SvdagPushConstants>());
-    device.cmd_push_constants(cmd, svdag_pipeline.pipeline_layout, vk::ShaderStageFlags::COMPUTE, 0, push_bytes);
-
-    let wg_x = push.screen_size[0].div_ceil(8);
-    let wg_y = push.screen_size[1].div_ceil(8);
-    device.cmd_dispatch(cmd, wg_x, wg_y, 1);
-
-    // After compute: transition SVDAG output → TRANSFER_SRC, swapchain → TRANSFER_DST
-    let svdag_to_src = vk::ImageMemoryBarrier::builder()
-        .old_layout(vk::ImageLayout::GENERAL)
-        .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
-        .src_access_mask(vk::AccessFlags::SHADER_WRITE)
-        .dst_access_mask(vk::AccessFlags::TRANSFER_READ)
-        .image(data.svdag_output_image)
-        .subresource_range(super::subresource_range(vk::ImageAspectFlags::COLOR, 1));
-
-    let swap_to_dst = vk::ImageMemoryBarrier::builder()
-        .old_layout(vk::ImageLayout::PRESENT_SRC)
-        .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-        .src_access_mask(vk::AccessFlags::empty())
-        .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-        .image(data.swapchain_images[image_index])
-        .subresource_range(super::subresource_range(vk::ImageAspectFlags::COLOR, 1));
-
-    device.cmd_pipeline_barrier(
-        cmd,
-        vk::PipelineStageFlags::COMPUTE_SHADER | vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-        vk::PipelineStageFlags::TRANSFER,
-        vk::DependencyFlags::empty(),
-        empty_mem,
-        empty_buf,
-        &[*svdag_to_src, *swap_to_dst],
-    );
-
-    // Blit SVDAG output → swapchain
-    let region = vk::ImageBlit::builder()
-        .src_subresource(
-            *vk::ImageSubresourceLayers::builder()
-                .aspect_mask(vk::ImageAspectFlags::COLOR)
-                .layer_count(1),
-        )
-        .src_offsets([
-            vk::Offset3D { x: 0, y: 0, z: 0 },
-            vk::Offset3D {
-                x: extent.width as i32,
-                y: extent.height as i32,
-                z: 1,
-            },
-        ])
-        .dst_subresource(
-            *vk::ImageSubresourceLayers::builder()
-                .aspect_mask(vk::ImageAspectFlags::COLOR)
-                .layer_count(1),
-        )
-        .dst_offsets([
-            vk::Offset3D { x: 0, y: 0, z: 0 },
-            vk::Offset3D {
-                x: extent.width as i32,
-                y: extent.height as i32,
-                z: 1,
-            },
-        ]);
-
-    device.cmd_blit_image(
-        cmd,
-        data.svdag_output_image,
-        vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-        data.swapchain_images[image_index],
-        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-        &[*region],
-        vk::Filter::NEAREST,
-    );
-
-    // Transition swapchain back to PRESENT_SRC and depth back to ATTACHMENT
-    let swap_to_present = vk::ImageMemoryBarrier::builder()
-        .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-        .new_layout(vk::ImageLayout::PRESENT_SRC)
-        .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-        .dst_access_mask(vk::AccessFlags::empty())
-        .image(data.swapchain_images[image_index])
-        .subresource_range(super::subresource_range(vk::ImageAspectFlags::COLOR, 1));
-
-    let depth_restore = vk::ImageMemoryBarrier::builder()
-        .old_layout(vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL)
-        .new_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
-        .src_access_mask(vk::AccessFlags::SHADER_READ)
-        .dst_access_mask(vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE)
-        .image(data.depth_image)
-        .subresource_range(super::subresource_range(vk::ImageAspectFlags::DEPTH, 1));
-
-    device.cmd_pipeline_barrier(
-        cmd,
-        vk::PipelineStageFlags::TRANSFER | vk::PipelineStageFlags::COMPUTE_SHADER,
-        vk::PipelineStageFlags::BOTTOM_OF_PIPE | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
-        vk::DependencyFlags::empty(),
-        empty_mem,
-        empty_buf,
-        &[*swap_to_present, *depth_restore],
-    );
 }
 
 /// Creates semaphores and fences for each frame in flight.

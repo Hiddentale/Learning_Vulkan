@@ -72,10 +72,6 @@ pub struct VulkanApplicationData {
     pub palette_buffer_memory: vk::DeviceMemory,
     pub sky_pipeline: vk::Pipeline,
     pub sky_pipeline_layout: vk::PipelineLayout,
-    pub svdag_output_image: vk::Image,
-    pub svdag_output_memory: vk::DeviceMemory,
-    pub svdag_output_view: vk::ImageView,
-    pub svdag_output_needs_init: bool,
 }
 
 use crate::voxel::world::{MAX_CHUNK_Y, MIN_CHUNK_Y};
@@ -102,6 +98,8 @@ pub struct VulkanApplication {
     svdag_pool: SvdagPool,
     svdag_pipeline: SvdagPipeline,
     svdag_compressor: SvdagCompressor,
+    /// Far chunks awaiting SVDAG compression. Drained in distance order each frame.
+    svdag_pending: std::collections::HashSet<[i32; 3]>,
 }
 
 impl VulkanApplication {
@@ -200,7 +198,6 @@ impl VulkanApplication {
         }
         let mesh_shader_pipeline = MeshShaderPipeline::create(&device, &data, &voxel_pool)?;
 
-        create_svdag_output_image(&device, &instance, &mut data)?;
         let svdag_pool = SvdagPool::new(MAX_LOADED_CHUNKS as u32, &device, &instance, &mut data)?;
         let svdag_pipeline = SvdagPipeline::create(&device, &data, &svdag_pool)?;
         let svdag_compressor = SvdagCompressor::new();
@@ -223,6 +220,7 @@ impl VulkanApplication {
             svdag_pool,
             svdag_pipeline,
             svdag_compressor,
+            svdag_pending: std::collections::HashSet::new(),
         })
     }
 }
@@ -332,58 +330,6 @@ unsafe fn create_resources(device: &Device, instance: &Instance, data: &mut Vulk
     Ok(())
 }
 
-unsafe fn create_svdag_output_image(device: &Device, instance: &Instance, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
-    let extent = data.swapchain_extent;
-    let format = vk::Format::R8G8B8A8_UNORM;
-
-    let image_info = vk::ImageCreateInfo::builder()
-        .image_type(vk::ImageType::_2D)
-        .format(format)
-        .extent(vk::Extent3D {
-            width: extent.width,
-            height: extent.height,
-            depth: 1,
-        })
-        .mip_levels(1)
-        .array_layers(1)
-        .samples(vk::SampleCountFlags::_1)
-        .tiling(vk::ImageTiling::OPTIMAL)
-        .usage(vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::TRANSFER_SRC)
-        .sharing_mode(vk::SharingMode::EXCLUSIVE)
-        .initial_layout(vk::ImageLayout::UNDEFINED);
-
-    data.svdag_output_image = device.create_image(&image_info, None)?;
-
-    let mem_requirements = device.get_image_memory_requirements(data.svdag_output_image);
-    let mem_properties = instance.get_physical_device_memory_properties(data.physical_device);
-    let mem_type_index =
-        crate::graphical_core::memory::find_memory_type(&mem_properties, mem_requirements.memory_type_bits, vk::MemoryPropertyFlags::DEVICE_LOCAL)?;
-
-    let alloc_info = vk::MemoryAllocateInfo::builder()
-        .allocation_size(mem_requirements.size)
-        .memory_type_index(mem_type_index);
-
-    data.svdag_output_memory = device.allocate_memory(&alloc_info, None)?;
-    device.bind_image_memory(data.svdag_output_image, data.svdag_output_memory, 0)?;
-
-    let view_info = vk::ImageViewCreateInfo::builder()
-        .image(data.svdag_output_image)
-        .view_type(vk::ImageViewType::_2D)
-        .format(format)
-        .subresource_range(super::subresource_range(vk::ImageAspectFlags::COLOR, 1));
-
-    data.svdag_output_view = device.create_image_view(&view_info, None)?;
-    data.svdag_output_needs_init = true;
-
-    Ok(())
-}
-
-unsafe fn destroy_svdag_output_image(device: &Device, data: &mut VulkanApplicationData) {
-    device.destroy_image_view(data.svdag_output_view, None);
-    device.destroy_image(data.svdag_output_image, None);
-    device.free_memory(data.svdag_output_memory, None);
-}
-
 impl VulkanApplication {
     /// Acquires a swapchain image, submits the command buffer, and presents the result.
     ///
@@ -425,8 +371,8 @@ impl VulkanApplication {
             camera_pos: camera.position.to_array(),
             chunk_count: self.svdag_pool.chunk_count(),
             screen_size: [
-                self.vulkan_application_data.swapchain_extent.width,
-                self.vulkan_application_data.swapchain_extent.height,
+                self.vulkan_application_data.swapchain_extent.width as f32,
+                self.vulkan_application_data.swapchain_extent.height as f32,
             ],
         };
         record_mesh_shader_command_buffer(
@@ -441,7 +387,6 @@ impl VulkanApplication {
             Some(&svdag_push),
         )?;
         self.depth_pyramid_needs_init = false;
-        self.vulkan_application_data.svdag_output_needs_init = false;
         self.submit_command_buffer(image_index)?;
         self.present_frame(image_index, window)?;
         self.frame = (self.frame + 1) % MAX_FRAMES_IN_FLIGHT;
@@ -456,53 +401,72 @@ impl VulkanApplication {
         // Always run update — even if player hasn't moved, there may be pending chunks
         let delta = self.world.update(player_cx, player_cz);
 
-        // Process completed SVDAG compressions
+        // Process completed SVDAG compressions — only upload if chunk is still Far
         for result in self.svdag_compressor.receive() {
-            if self.world.get_chunk(result.pos[0], result.pos[1], result.pos[2]).is_some() {
-                self.svdag_pool
-                    .upload_chunk(result.pos, &result.dag_data, &result.material_data, result.lod_level);
+            let tier = self.world.chunk_tier(&result.pos);
+            if tier == Some(crate::voxel::world::ChunkTier::Far) {
+                if self.svdag_pool.is_near_budget() {
+                    self.svdag_pool.evict_chunks(8);
+                }
+                self.svdag_pool.upload_chunk(result.pos, &result.dag_data, result.lod_level);
+                self.voxel_pool.remove_chunk(&result.pos);
             }
         }
 
-        // VRAM budget: evict LOD-0 chunks when approaching the limit
-        if self.svdag_pool.is_near_budget() {
-            self.svdag_pool.evict_lod0_chunks(16);
-        }
-
-        // Remove SVDAG data for unloaded chunks
+        // Remove SVDAG data for unloaded or promoted chunks
         for pos in &delta.unloaded {
             self.svdag_pool.remove_chunk(pos);
+            self.svdag_pending.remove(pos);
         }
-
-        if delta.loaded.is_empty()
-            && delta.unloaded.is_empty()
-            && delta.promoted.is_empty()
-            && delta.demoted.is_empty()
-            && delta.entered_transition.is_empty()
-        {
-            self.last_player_chunk = [player_cx, player_cz];
-            return Ok(());
-        }
-        self.last_player_chunk = [player_cx, player_cz];
-
-        // Pre-compress transition chunks so SVDAG is ready before they become far
-        for pos in &delta.entered_transition {
-            let [cx, cy, cz] = *pos;
-            if let Some(chunk) = self.world.get_chunk(cx, cy, cz) {
-                self.svdag_compressor.request(*pos, chunk.clone());
-            }
-        }
-
-        // Queue demoted chunks for SVDAG compression (if not already in transition)
-        for pos in &delta.demoted {
-            let [cx, cy, cz] = *pos;
-            if !self.svdag_pool.has_chunk(pos) {
+        for pos in &delta.promoted {
+            self.svdag_pending.remove(pos);
+            if self.svdag_pool.has_chunk(pos) {
+                self.svdag_pool.remove_chunk(pos);
+                let [cx, cy, cz] = *pos;
                 if let Some(chunk) = self.world.get_chunk(cx, cy, cz) {
-                    self.svdag_compressor.request(*pos, chunk.clone());
+                    let tier = self.world.chunk_tier(pos).unwrap_or(crate::voxel::world::ChunkTier::Near);
+                    self.voxel_pool.upload_chunk(*pos, chunk, &self.world, tier);
+                    self.voxel_pool.invalidate_neighbor_boundaries(*pos, &self.world);
                 }
             }
         }
 
+        // Add newly far chunks to the pending set (not compressed yet)
+        for pos in &delta.demoted {
+            if !self.svdag_pool.has_chunk(pos) {
+                self.svdag_pending.insert(*pos);
+            }
+        }
+        for pos in &delta.entered_transition {
+            self.svdag_pending.insert(*pos);
+        }
+        // Newly loaded far chunks go to pending
+        for pos in &delta.loaded {
+            let tier = self.world.chunk_tier(pos);
+            if tier == Some(crate::voxel::world::ChunkTier::Far) {
+                self.svdag_pending.insert(*pos);
+            }
+        }
+
+        // Budget: pick up to N closest pending chunks per frame and queue for compression
+        const COMPRESSIONS_PER_FRAME: usize = 16;
+        if !self.svdag_pending.is_empty() {
+            let mut candidates: Vec<[i32; 3]> = self.svdag_pending.iter().copied().collect();
+            candidates.sort_by_key(|pos| {
+                let dx = pos[0] - player_cx;
+                let dz = pos[2] - player_cz;
+                dx * dx + dz * dz
+            });
+            for pos in candidates.into_iter().take(COMPRESSIONS_PER_FRAME) {
+                let [cx, cy, cz] = pos;
+                if let Some(chunk) = self.world.get_chunk(cx, cy, cz) {
+                    self.svdag_compressor.request(pos, chunk.clone());
+                    self.svdag_pending.remove(&pos);
+                }
+            }
+        }
+
+        self.last_player_chunk = [player_cx, player_cz];
         self.update_chunks_mesh_shader(&delta)?;
 
         Ok(())
@@ -510,25 +474,27 @@ impl VulkanApplication {
 
     /// Incremental slot writes, no GPU stall.
     unsafe fn update_chunks_mesh_shader(&mut self, delta: &crate::voxel::world::WorldDelta) -> anyhow::Result<()> {
-        let voxel_pool = &mut self.voxel_pool;
+        use crate::voxel::world::ChunkTier;
 
         for pos in &delta.unloaded {
-            voxel_pool.invalidate_neighbor_boundaries(*pos, &self.world);
-            voxel_pool.remove_chunk(pos);
+            self.voxel_pool.invalidate_neighbor_boundaries(*pos, &self.world);
+            self.voxel_pool.remove_chunk(pos);
         }
         for pos in &delta.loaded {
             let [cx, cy, cz] = *pos;
+            let tier = self.world.chunk_tier(pos).unwrap_or(ChunkTier::Near);
             if let Some(chunk) = self.world.get_chunk(cx, cy, cz) {
-                let tier = self.world.chunk_tier(pos).unwrap_or(crate::voxel::world::ChunkTier::Near);
-                voxel_pool.upload_chunk(*pos, chunk, &self.world, tier);
-                voxel_pool.invalidate_neighbor_boundaries(*pos, &self.world);
+                match tier {
+                    ChunkTier::Near | ChunkTier::Transition => {
+                        self.voxel_pool.upload_chunk(*pos, chunk, &self.world, tier);
+                        self.voxel_pool.invalidate_neighbor_boundaries(*pos, &self.world);
+                    }
+                    ChunkTier::Far => {
+                        // Far chunks go straight to SVDAG compression, skip VoxelPool
+                        self.svdag_compressor.request(*pos, chunk.clone());
+                    }
+                }
             }
-        }
-        for pos in &delta.promoted {
-            voxel_pool.set_chunk_tier(pos, crate::voxel::world::ChunkTier::Near);
-        }
-        for pos in &delta.demoted {
-            voxel_pool.set_chunk_tier(pos, crate::voxel::world::ChunkTier::Far);
         }
 
         Ok(())
@@ -608,7 +574,6 @@ impl VulkanApplication {
         use crate::graphical_core::compute_cull;
         self.device.device_wait_idle()?;
         compute_cull::destroy_depth_pyramid_pipeline(&self.device, &self.depth_pyramid_pipeline);
-        destroy_svdag_output_image(&self.device, &mut self.vulkan_application_data);
         self.destroy_swapchain();
         create_swapchain(user_window, &self.vulkan_instance, &self.device, &mut self.vulkan_application_data)?;
         create_swapchain_image_views(&self.device, &mut self.vulkan_application_data)?;
@@ -616,7 +581,6 @@ impl VulkanApplication {
         create_depth_pyramid(&self.device, &self.vulkan_instance, &mut self.vulkan_application_data)?;
         self.depth_pyramid_pipeline = compute_cull::create_depth_pyramid_pipeline(&self.device, &self.vulkan_application_data)?;
         self.depth_pyramid_needs_init = true;
-        create_svdag_output_image(&self.device, &self.vulkan_instance, &mut self.vulkan_application_data)?;
         create_render_pass(&self.vulkan_instance, &self.device, &mut self.vulkan_application_data)?;
         create_sky_pipeline(&self.device, &mut self.vulkan_application_data)?;
         create_frame_buffers(&self.device, &mut self.vulkan_application_data)?;
@@ -672,7 +636,6 @@ impl VulkanApplication {
         }
         self.svdag_pipeline.destroy(&self.device);
         self.svdag_pool.destroy(&self.device);
-        destroy_svdag_output_image(&self.device, &mut self.vulkan_application_data);
         self.mesh_shader_pipeline.destroy(&self.device);
         self.voxel_pool.destroy(&self.device);
         compute_cull::destroy_depth_pyramid_pipeline(&self.device, &self.depth_pyramid_pipeline);

@@ -10,6 +10,7 @@ use std::collections::HashMap;
 //   Level 2 (leaf):  4³  → 64-bit occupancy bitmap
 
 const LEAF_SIZE: usize = 4;
+const LEAF_BYTES: usize = LEAF_SIZE * LEAF_SIZE * LEAF_SIZE; // 64
 const HEADER_SIZE: usize = 4;
 
 /// Compresses a dense chunk into an SVDAG byte buffer with subtree deduplication.
@@ -124,43 +125,46 @@ fn build_node(buf: &mut Vec<u8>, dedup: &mut HashMap<Vec<u8>, u32>, chunk: &Chun
     offset
 }
 
+/// Leaf: 64 bytes — one u8 material ID per voxel in 4³ block. 0 = air.
+/// Layout: x + z * 4 + y * 16 (same as occupancy bitmap bit order).
 fn build_leaf(buf: &mut Vec<u8>, dedup: &mut HashMap<Vec<u8>, u32>, chunk: &Chunk, ox: usize, oy: usize, oz: usize) -> u32 {
-    let mut bitmap = 0u64;
+    let mut leaf = [0u8; LEAF_BYTES];
     for y in 0..LEAF_SIZE {
         for z in 0..LEAF_SIZE {
             for x in 0..LEAF_SIZE {
-                let block = chunk.get(ox + x, oy + y, oz + z);
-                if block.is_opaque() {
-                    let bit = x + z * LEAF_SIZE + y * LEAF_SIZE * LEAF_SIZE;
-                    bitmap |= 1 << bit;
-                }
+                let idx = x + z * LEAF_SIZE + y * LEAF_SIZE * LEAF_SIZE;
+                leaf[idx] = chunk.get(ox + x, oy + y, oz + z) as u8;
             }
         }
     }
-    build_leaf_raw(buf, dedup, bitmap)
-}
-
-fn build_leaf_raw(buf: &mut Vec<u8>, dedup: &mut HashMap<Vec<u8>, u32>, bitmap: u64) -> u32 {
-    let leaf_bytes = bitmap.to_le_bytes().to_vec();
-    if let Some(&existing) = dedup.get(&leaf_bytes) {
+    let leaf_vec = leaf.to_vec();
+    if let Some(&existing) = dedup.get(&leaf_vec) {
         return existing;
     }
     let offset = buf.len() as u32;
-    buf.extend_from_slice(&leaf_bytes);
-    dedup.insert(leaf_bytes, offset);
+    buf.extend_from_slice(&leaf);
+    dedup.insert(leaf_vec, offset);
+    offset
+}
+
+fn build_leaf_raw(buf: &mut Vec<u8>, dedup: &mut HashMap<Vec<u8>, u32>, fill: u8) -> u32 {
+    let leaf = [fill; LEAF_BYTES];
+    let leaf_vec = leaf.to_vec();
+    if let Some(&existing) = dedup.get(&leaf_vec) {
+        return existing;
+    }
+    let offset = buf.len() as u32;
+    buf.extend_from_slice(&leaf);
+    dedup.insert(leaf_vec, offset);
     offset
 }
 
 fn lookup_node(dag: &[u8], offset: usize, x: usize, y: usize, z: usize, size: usize) -> BlockType {
     if size == LEAF_SIZE {
-        let bitmap = u64::from_le_bytes(dag[offset..offset + 8].try_into().unwrap());
-        let bit = x + z * LEAF_SIZE + y * LEAF_SIZE * LEAF_SIZE;
-        if bitmap & (1 << bit) != 0 {
-            // Solid, but we only know occupancy from the DAG — material needs the material array
-            BlockType::Stone
-        } else {
-            BlockType::Air
-        }
+        let idx = x + z * LEAF_SIZE + y * LEAF_SIZE * LEAF_SIZE;
+        let mat = dag[offset + idx];
+        // Safety: BlockType is repr(u8) with values 0..=7
+        unsafe { std::mem::transmute::<u8, BlockType>(mat) }
     } else {
         let child_mask = dag[offset];
         let half = size / 2;

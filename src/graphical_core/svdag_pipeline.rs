@@ -1,4 +1,4 @@
-#![allow(dead_code)] // Wired up when SVDAG chunks exist
+#![allow(dead_code)]
 
 use crate::graphical_core::camera::UniformBufferObject;
 use crate::graphical_core::shaders::create_shader_module;
@@ -7,16 +7,17 @@ use crate::graphical_core::vulkan_object::VulkanApplicationData;
 use vk::Handle;
 use vulkan_rust::{vk, Device};
 
-/// Push constants for the SVDAG ray march compute shader.
+/// Push constants for the SVDAG ray march fragment shader.
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct SvdagPushConstants {
     pub camera_pos: [f32; 3],
     pub chunk_count: u32,
-    pub screen_size: [u32; 2],
+    pub screen_size: [f32; 2],
 }
 
-/// Compute pipeline for SVDAG ray marching of far-field chunks.
+/// Graphics pipeline for SVDAG ray marching of far-field chunks.
+/// Fullscreen triangle + fragment shader ray march, alpha-blended over mesh output.
 pub struct SvdagPipeline {
     pub descriptor_set_layout: vk::DescriptorSetLayout,
     pub descriptor_pool: vk::DescriptorPool,
@@ -30,11 +31,10 @@ impl SvdagPipeline {
         let descriptor_set_layout = create_descriptor_layout(device)?;
         let descriptor_pool = create_descriptor_pool(device)?;
         let descriptor_set = allocate_descriptor_set(device, descriptor_pool, descriptor_set_layout)?;
-
         write_descriptors(device, descriptor_set, data, svdag_pool);
 
         let push_range = *vk::PushConstantRange::builder()
-            .stage_flags(vk::ShaderStageFlags::COMPUTE)
+            .stage_flags(vk::ShaderStageFlags::FRAGMENT)
             .offset(0)
             .size(std::mem::size_of::<SvdagPushConstants>() as u32);
 
@@ -43,17 +43,9 @@ impl SvdagPipeline {
         let layout_info = vk::PipelineLayoutCreateInfo::builder()
             .set_layouts(&set_layouts)
             .push_constant_ranges(&push_ranges);
-
         let pipeline_layout = device.create_pipeline_layout(&layout_info, None)?;
 
-        let shader_module = create_shader_module(device, include_bytes!("../shaders/svdag_raymarch.comp.spv"))?;
-        let stage = vk::PipelineShaderStageCreateInfo::builder()
-            .stage(vk::ShaderStageFlags::COMPUTE)
-            .module(shader_module)
-            .name(c"main");
-        let pipeline_info = vk::ComputePipelineCreateInfo::builder().stage(*stage).layout(pipeline_layout);
-        let pipeline = device.create_compute_pipeline(vk::PipelineCache::null(), &pipeline_info, None)?;
-        device.destroy_shader_module(shader_module, None);
+        let pipeline = create_graphics_pipeline(device, data, pipeline_layout)?;
 
         Ok(Self {
             descriptor_set_layout,
@@ -79,37 +71,19 @@ unsafe fn create_descriptor_layout(device: &Device) -> anyhow::Result<vk::Descri
             .binding(0)
             .descriptor_count(1)
             .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-            .stage_flags(vk::ShaderStageFlags::COMPUTE),
-        // Binding 1: SVDAG geometry SSBO
+            .stage_flags(vk::ShaderStageFlags::FRAGMENT),
+        // Binding 1: SVDAG geometry SSBO (includes embedded materials in leaves)
         *vk::DescriptorSetLayoutBinding::builder()
             .binding(1)
             .descriptor_count(1)
             .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-            .stage_flags(vk::ShaderStageFlags::COMPUTE),
-        // Binding 2: SVDAG material SSBO
+            .stage_flags(vk::ShaderStageFlags::FRAGMENT),
+        // Binding 2: SVDAG chunk info SSBO
         *vk::DescriptorSetLayoutBinding::builder()
             .binding(2)
             .descriptor_count(1)
             .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-            .stage_flags(vk::ShaderStageFlags::COMPUTE),
-        // Binding 3: SVDAG chunk info SSBO
-        *vk::DescriptorSetLayoutBinding::builder()
-            .binding(3)
-            .descriptor_count(1)
-            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-            .stage_flags(vk::ShaderStageFlags::COMPUTE),
-        // Binding 4: Color output image
-        *vk::DescriptorSetLayoutBinding::builder()
-            .binding(4)
-            .descriptor_count(1)
-            .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
-            .stage_flags(vk::ShaderStageFlags::COMPUTE),
-        // Binding 5: Depth input sampler
-        *vk::DescriptorSetLayoutBinding::builder()
-            .binding(5)
-            .descriptor_count(1)
-            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-            .stage_flags(vk::ShaderStageFlags::COMPUTE),
+            .stage_flags(vk::ShaderStageFlags::FRAGMENT),
     ];
 
     let create_info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings);
@@ -119,17 +93,11 @@ unsafe fn create_descriptor_layout(device: &Device) -> anyhow::Result<vk::Descri
 unsafe fn create_descriptor_pool(device: &Device) -> anyhow::Result<vk::DescriptorPool> {
     let pool_sizes = [
         *vk::DescriptorPoolSize::builder()
-            .descriptor_count(1) // Camera UBO
+            .descriptor_count(1)
             .r#type(vk::DescriptorType::UNIFORM_BUFFER),
         *vk::DescriptorPoolSize::builder()
-            .descriptor_count(3) // geometry + material + chunk info
+            .descriptor_count(2)
             .r#type(vk::DescriptorType::STORAGE_BUFFER),
-        *vk::DescriptorPoolSize::builder()
-            .descriptor_count(1) // color output
-            .r#type(vk::DescriptorType::STORAGE_IMAGE),
-        *vk::DescriptorPoolSize::builder()
-            .descriptor_count(1) // depth input
-            .r#type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER),
     ];
     let pool_info = vk::DescriptorPoolCreateInfo::builder().max_sets(1).pool_sizes(&pool_sizes);
     Ok(device.create_descriptor_pool(&pool_info, None)?)
@@ -143,30 +111,11 @@ unsafe fn allocate_descriptor_set(device: &Device, pool: vk::DescriptorPool, lay
 }
 
 unsafe fn write_descriptors(device: &Device, set: vk::DescriptorSet, data: &VulkanApplicationData, pool: &SvdagPool) {
-    // Binding 0: Camera UBO
     let ubo_info = [*vk::DescriptorBufferInfo::builder()
         .buffer(data.uniform_buffer)
         .range(std::mem::size_of::<UniformBufferObject>() as u64)];
-
-    // Binding 1: SVDAG geometry
     let geo_info = [*vk::DescriptorBufferInfo::builder().buffer(pool.geometry_buffer).range(vk::WHOLE_SIZE)];
-
-    // Binding 2: SVDAG materials
-    let mat_info = [*vk::DescriptorBufferInfo::builder().buffer(pool.material_buffer).range(vk::WHOLE_SIZE)];
-
-    // Binding 3: SVDAG chunk info
     let chunk_info = [*vk::DescriptorBufferInfo::builder().buffer(pool.chunk_info_buffer).range(vk::WHOLE_SIZE)];
-
-    // Binding 4: Color output (dedicated SVDAG storage image)
-    let color_info = [*vk::DescriptorImageInfo::builder()
-        .image_view(data.svdag_output_view)
-        .image_layout(vk::ImageLayout::GENERAL)];
-
-    // Binding 5: Depth input
-    let depth_info = [*vk::DescriptorImageInfo::builder()
-        .sampler(data.depth_pyramid_sampler)
-        .image_view(data.depth_image_view)
-        .image_layout(vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL)];
 
     let writes = [
         *vk::WriteDescriptorSet::builder()
@@ -183,25 +132,89 @@ unsafe fn write_descriptors(device: &Device, set: vk::DescriptorSet, data: &Vulk
             .dst_set(set)
             .dst_binding(2)
             .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-            .buffer_info(&mat_info),
-        *vk::WriteDescriptorSet::builder()
-            .dst_set(set)
-            .dst_binding(3)
-            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
             .buffer_info(&chunk_info),
-        *vk::WriteDescriptorSet::builder()
-            .dst_set(set)
-            .dst_binding(4)
-            .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
-            .image_info(&color_info),
-        *vk::WriteDescriptorSet::builder()
-            .dst_set(set)
-            .dst_binding(5)
-            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-            .image_info(&depth_info),
     ];
 
     device.update_descriptor_sets(&writes, &[] as &[vk::CopyDescriptorSet]);
+}
+
+unsafe fn create_graphics_pipeline(
+    device: &Device,
+    data: &VulkanApplicationData,
+    pipeline_layout: vk::PipelineLayout,
+) -> anyhow::Result<vk::Pipeline> {
+    // Reuse sky.vert for fullscreen triangle
+    let vert_module = create_shader_module(device, include_bytes!("../shaders/sky.vert.spv"))?;
+    let frag_module = create_shader_module(device, include_bytes!("../shaders/svdag_raymarch.frag.spv"))?;
+
+    let vert_stage = vk::PipelineShaderStageCreateInfo::builder()
+        .stage(vk::ShaderStageFlags::VERTEX)
+        .module(vert_module)
+        .name(c"main");
+    let frag_stage = vk::PipelineShaderStageCreateInfo::builder()
+        .stage(vk::ShaderStageFlags::FRAGMENT)
+        .module(frag_module)
+        .name(c"main");
+
+    let vertex_input = vk::PipelineVertexInputStateCreateInfo::builder();
+    let input_assembly = vk::PipelineInputAssemblyStateCreateInfo::builder().topology(vk::PrimitiveTopology::TRIANGLE_LIST);
+
+    let viewport = *vk::Viewport::builder()
+        .width(data.swapchain_extent.width as f32)
+        .height(data.swapchain_extent.height as f32)
+        .min_depth(0.0)
+        .max_depth(1.0);
+    let scissor = *vk::Rect2D::builder().extent(data.swapchain_extent);
+    let viewports = [viewport];
+    let scissors = [scissor];
+    let viewport_state = vk::PipelineViewportStateCreateInfo::builder().viewports(&viewports).scissors(&scissors);
+
+    let rasterization = vk::PipelineRasterizationStateCreateInfo::builder()
+        .polygon_mode(vk::PolygonMode::FILL)
+        .line_width(1.0)
+        .cull_mode(vk::CullModeFlags::NONE);
+
+    let multisample = vk::PipelineMultisampleStateCreateInfo::builder().rasterization_samples(vk::SampleCountFlags::_1);
+
+    let blend_attachment = *vk::PipelineColorBlendAttachmentState::builder()
+        .color_write_mask(vk::ColorComponentFlags::all())
+        .blend_enable(true)
+        .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
+        .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+        .color_blend_op(vk::BlendOp::ADD)
+        .src_alpha_blend_factor(vk::BlendFactor::ONE)
+        .dst_alpha_blend_factor(vk::BlendFactor::ZERO)
+        .alpha_blend_op(vk::BlendOp::ADD);
+    let blend_attachments = [blend_attachment];
+    let color_blend = vk::PipelineColorBlendStateCreateInfo::builder().attachments(&blend_attachments);
+
+    // Depth test rejects SVDAG fragments behind mesh shader geometry.
+    // Fragment shader writes gl_FragDepth from the ray march hit position.
+    let depth_stencil = vk::PipelineDepthStencilStateCreateInfo::builder()
+        .depth_test_enable(true)
+        .depth_write_enable(true)
+        .depth_compare_op(vk::CompareOp::LESS);
+
+    let stages = [*vert_stage, *frag_stage];
+    let info = vk::GraphicsPipelineCreateInfo::builder()
+        .stages(&stages)
+        .vertex_input_state(&vertex_input)
+        .input_assembly_state(&input_assembly)
+        .viewport_state(&viewport_state)
+        .rasterization_state(&rasterization)
+        .multisample_state(&multisample)
+        .depth_stencil_state(&depth_stencil)
+        .color_blend_state(&color_blend)
+        .layout(pipeline_layout)
+        .render_pass(data.render_pass_load)
+        .subpass(0);
+
+    let pipeline = device.create_graphics_pipeline(vk::PipelineCache::null(), &info, None)?;
+
+    device.destroy_shader_module(vert_module, None);
+    device.destroy_shader_module(frag_module, None);
+
+    Ok(pipeline)
 }
 
 #[cfg(test)]

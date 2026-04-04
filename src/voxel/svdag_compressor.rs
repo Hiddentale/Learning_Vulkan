@@ -1,7 +1,7 @@
 #![allow(dead_code)] // Wired up in Phase 3
 
 use super::chunk::Chunk;
-use super::svdag::{rle_encode, svdag_from_chunk, svdag_lod_merge, svdag_materials};
+use super::svdag::{svdag_from_chunk, svdag_lod_merge};
 use crossbeam_channel::{Receiver, Sender};
 use std::thread;
 
@@ -23,7 +23,6 @@ pub enum CompressionRequest {
 pub struct CompressionResult {
     pub pos: [i32; 3],
     pub dag_data: Vec<u8>,
-    pub material_data: Vec<u8>,
     pub lod_level: u32,
 }
 
@@ -48,14 +47,7 @@ impl SvdagCompressor {
                     let result = match req {
                         CompressionRequest::Single { pos, chunk } => {
                             let dag_data = svdag_from_chunk(&chunk);
-                            let materials = svdag_materials(&chunk);
-                            let material_data = rle_encode(&materials);
-                            CompressionResult {
-                                pos,
-                                dag_data,
-                                material_data,
-                                lod_level: 0,
-                            }
+                            CompressionResult { pos, dag_data, lod_level: 0 }
                         }
                         CompressionRequest::LodMerge { pos, children, lod_level } => {
                             let refs: [&Chunk; 8] = [
@@ -69,13 +61,7 @@ impl SvdagCompressor {
                                 &children[7],
                             ];
                             let dag_data = svdag_lod_merge(refs);
-                            // Materials from merged chunk not supported yet — empty
-                            CompressionResult {
-                                pos,
-                                dag_data,
-                                material_data: Vec::new(),
-                                lod_level,
-                            }
+                            CompressionResult { pos, dag_data, lod_level }
                         }
                     };
                     if tx.send(result).is_err() {
