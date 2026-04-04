@@ -97,12 +97,12 @@ unsafe fn create_descriptor_layout(device: &Device) -> anyhow::Result<vk::Descri
             .descriptor_count(1)
             .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
             .stage_flags(MESH_STAGE),
-        // Binding 5: ChunkInfoSSBO (TASK, read-only)
+        // Binding 5: ChunkInfoSSBO (TASK | MESH, read-only)
         *vk::DescriptorSetLayoutBinding::builder()
             .binding(5)
             .descriptor_count(1)
             .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-            .stage_flags(TASK_STAGE),
+            .stage_flags(TASK_STAGE | MESH_STAGE),
         // Binding 6: VisibilitySSBO (TASK, read/write)
         *vk::DescriptorSetLayoutBinding::builder()
             .binding(6)
