@@ -125,13 +125,18 @@ pub unsafe fn create_logical_device(
     if !cfg!(target_os = "macos") {
         features_1_2 = features_1_2.draw_indirect_count(true);
     }
+    let mut mesh_shader_features = vk::PhysicalDeviceMeshShaderFeaturesEXT::builder()
+        .task_shader(true)
+        .mesh_shader(true)
+        .multiview_mesh_shader(true);
     let info = vk::DeviceCreateInfo::builder()
         .queue_create_infos(&queue_infos)
         .enabled_layer_names(&layers)
         .enabled_extension_names(&extensions)
         .enabled_features(&features)
         .push_next(&mut *features_1_1)
-        .push_next(&mut *features_1_2);
+        .push_next(&mut *features_1_2)
+        .push_next(&mut *mesh_shader_features);
     let device = instance.create_device(data.physical_device, &info, None)?;
 
     data.graphics_queue = device.get_device_queue(indices.graphics_queue_index, 0);

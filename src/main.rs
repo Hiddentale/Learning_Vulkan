@@ -23,7 +23,10 @@ const PORTABILITY_MACOS_VERSION: Version = Version::new(1, 3, 216);
 const VALIDATION_ENABLED: bool = cfg!(debug_assertions);
 
 const VALIDATION_LAYER: &std::ffi::CStr = c"VK_LAYER_KHRONOS_validation";
-const DEVICE_EXTENSIONS: &[&std::ffi::CStr] = &[vk::extension_names::KHR_SWAPCHAIN_EXTENSION_NAME];
+const DEVICE_EXTENSIONS: &[&std::ffi::CStr] = &[
+    vk::extension_names::KHR_SWAPCHAIN_EXTENSION_NAME,
+    vk::extension_names::EXT_MESH_SHADER_EXTENSION_NAME,
+];
 
 fn main() -> Result<()> {
     initialize_error_handler();
