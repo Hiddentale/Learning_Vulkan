@@ -1,3 +1,4 @@
+use super::block::BlockType;
 use super::chunk::{Chunk, CHUNK_SIZE};
 use crate::graphical_core::mesh::Vertex;
 
@@ -41,10 +42,12 @@ struct Face {
     bitangent: [i32; 3],
 }
 
-/// Optional references to the 4 horizontal neighbor chunks for boundary culling.
+/// Optional references to the 6 neighbor chunks for boundary culling.
 pub struct ChunkNeighbors<'a> {
     pub pos_x: Option<&'a Chunk>,
     pub neg_x: Option<&'a Chunk>,
+    pub pos_y: Option<&'a Chunk>,
+    pub neg_y: Option<&'a Chunk>,
     pub pos_z: Option<&'a Chunk>,
     pub neg_z: Option<&'a Chunk>,
 }
@@ -80,30 +83,56 @@ pub fn mesh_chunk(chunk: &Chunk, neighbors: &ChunkNeighbors) -> (Vec<Vertex>, [V
     (vertices, bucket_indices)
 }
 
-/// A face is visible when its neighbor is air or outside the world.
+/// A face is visible when the neighboring block does not hide it.
+/// Opaque faces show when neighbor is non-opaque.
+/// Water faces show only when neighbor is Air.
 fn is_face_visible(chunk: &Chunk, neighbors: &ChunkNeighbors, x: usize, y: usize, z: usize, normal: [i32; 3]) -> bool {
+    let block = chunk.get(x, y, z);
+    let neighbor_block = get_neighbor_block(chunk, neighbors, x, y, z, normal);
+    should_emit_face(block, neighbor_block)
+}
+
+/// Returns whether a face on `block` should be drawn given the adjacent `neighbor`.
+fn should_emit_face(block: BlockType, neighbor: BlockType) -> bool {
+    if block.is_opaque() {
+        !neighbor.is_opaque()
+    } else if block.is_transparent() {
+        // Water: only show face against air
+        neighbor == BlockType::Air
+    } else {
+        false
+    }
+}
+
+/// Looks up the block adjacent to (x,y,z) in the given normal direction.
+/// Returns Air if the neighbor chunk is not loaded.
+fn get_neighbor_block(chunk: &Chunk, neighbors: &ChunkNeighbors, x: usize, y: usize, z: usize, normal: [i32; 3]) -> BlockType {
     let nx = x as i32 + normal[0];
     let ny = y as i32 + normal[1];
     let nz = z as i32 + normal[2];
 
-    // Vertical out-of-bounds: always visible (no vertical neighbors)
-    if ny < 0 || ny >= CHUNK_SIZE as i32 {
-        return true;
+    // Inside this chunk
+    if nx >= 0 && nx < CHUNK_SIZE as i32 && ny >= 0 && ny < CHUNK_SIZE as i32 && nz >= 0 && nz < CHUNK_SIZE as i32 {
+        return chunk.get(nx as usize, ny as usize, nz as usize);
     }
 
-    // Horizontal out-of-bounds: check neighbor chunk
-    if nx < 0 || nx >= CHUNK_SIZE as i32 || nz < 0 || nz >= CHUNK_SIZE as i32 {
-        return check_neighbor(neighbors, nx, ny as usize, nz);
-    }
-
-    !chunk.get(nx as usize, ny as usize, nz as usize).is_opaque()
-}
-
-/// Checks a neighboring chunk for the block at the wrapped coordinate.
-/// Returns true (face visible) if no neighbor exists.
-fn check_neighbor(neighbors: &ChunkNeighbors, nx: i32, ny: usize, nz: i32) -> bool {
     let last = CHUNK_SIZE - 1;
 
+    // Vertical boundary
+    if ny < 0 {
+        return match neighbors.neg_y {
+            Some(c) => c.get(x, last, z),
+            None => BlockType::Air,
+        };
+    }
+    if ny >= CHUNK_SIZE as i32 {
+        return match neighbors.pos_y {
+            Some(c) => c.get(x, 0, z),
+            None => BlockType::Air,
+        };
+    }
+
+    // Horizontal boundary
     let (neighbor, lx, lz) = if nx < 0 {
         (neighbors.neg_x, last, nz as usize)
     } else if nx >= CHUNK_SIZE as i32 {
@@ -115,8 +144,8 @@ fn check_neighbor(neighbors: &ChunkNeighbors, nx: i32, ny: usize, nz: i32) -> bo
     };
 
     match neighbor {
-        Some(chunk) => !chunk.get(lx, ny, lz).is_opaque(),
-        None => true,
+        Some(c) => c.get(lx, ny as usize, lz),
+        None => BlockType::Air,
     }
 }
 
