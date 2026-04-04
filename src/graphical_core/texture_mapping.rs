@@ -17,8 +17,8 @@ const TEXTURE_FILES: &[Option<&str>] = &[
     Some("stone.png"), // 3: Stone
     Some("water.png"), // 4: Water
     Some("sand.png"),  // 5: Sand
-    None,              // 6: Snow
-    None,              // 7: Gravel
+    Some("snow.png"),  // 6: Snow
+    Some("gravel.png"),// 7: Gravel
 ];
 
 fn get_texture_path(texture_name: &str) -> String {
