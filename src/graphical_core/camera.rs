@@ -84,6 +84,11 @@ impl EyeMatrices {
     pub fn primary_vp(&self) -> Mat4 {
         self.view_projection[0]
     }
+
+    /// Whether both eyes have distinct matrices (stereo VR).
+    pub fn is_stereo(&self) -> bool {
+        self.view_projection[0] != self.view_projection[1]
+    }
 }
 
 #[repr(C)]

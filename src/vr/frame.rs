@@ -23,6 +23,10 @@ pub unsafe fn render_vr_frame(
     indirect_buffer: vk::Buffer,
     draw_count: u32,
 ) -> anyhow::Result<Option<EyeMatrices>> {
+    if !session.is_running() {
+        return Ok(None);
+    }
+
     let frame_state = session.frame_waiter.wait()?;
     session.frame_stream.begin()?;
 

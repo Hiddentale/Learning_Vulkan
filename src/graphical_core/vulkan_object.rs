@@ -130,6 +130,15 @@ impl VulkanApplication {
         self._vr_session.is_some()
     }
 
+    /// Poll OpenXR events and handle session state transitions.
+    /// Returns `false` if the VR session should be abandoned.
+    pub fn poll_vr_events(&mut self) -> anyhow::Result<bool> {
+        match &mut self._vr_session {
+            Some(session) => session.poll_events(),
+            None => Ok(true),
+        }
+    }
+
     /// Run one VR frame. Returns eye matrices if the headset rendered.
     ///
     /// # Safety
@@ -426,7 +435,11 @@ impl VulkanApplication {
         };
         update_uniform_buffer(&self.vulkan_application_data, eyes)?;
 
-        let frustum = Frustum::from_view_projection(&eyes.primary_vp());
+        let frustum = if eyes.is_stereo() {
+            Frustum::combined_stereo(&eyes.view_projection[0], &eyes.view_projection[1])
+        } else {
+            Frustum::from_view_projection(&eyes.primary_vp())
+        };
         let cull_push = CullPushConstants {
             planes: [
                 frustum.plane(0),

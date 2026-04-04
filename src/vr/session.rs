@@ -36,11 +36,60 @@ pub struct VrSession {
     pub frame_waiter: xr::FrameWaiter,
     pub frame_stream: xr::FrameStream<xr::Vulkan>,
     pub stage_space: xr::Space,
+    state: xr::SessionState,
+    event_buffer: xr::EventDataBuffer,
 }
 
 impl VrSession {
     pub fn system(&self) -> xr::SystemId {
         self.system
+    }
+
+    /// Whether the session is in a state where frames should be rendered.
+    pub fn is_running(&self) -> bool {
+        matches!(
+            self.state,
+            xr::SessionState::SYNCHRONIZED | xr::SessionState::VISIBLE | xr::SessionState::FOCUSED
+        )
+    }
+
+    /// Poll all pending OpenXR events and handle session state transitions.
+    /// Returns `false` if the session should be abandoned (EXITING or LOSS_PENDING).
+    pub fn poll_events(&mut self) -> anyhow::Result<bool> {
+        loop {
+            let event = self.xr_instance.poll_event(&mut self.event_buffer)?;
+            let Some(event) = event else { return Ok(true) };
+
+            match event {
+                xr::Event::SessionStateChanged(changed) => {
+                    let new_state = changed.state();
+                    info!("OpenXR session state: {:?} → {:?}", self.state, new_state);
+                    self.state = new_state;
+
+                    match new_state {
+                        xr::SessionState::READY => {
+                            self.session
+                                .begin(xr::ViewConfigurationType::PRIMARY_STEREO)
+                                .context("failed to begin session")?;
+                            info!("OpenXR session begun");
+                        }
+                        xr::SessionState::STOPPING => {
+                            self.session.end().context("failed to end session")?;
+                            info!("OpenXR session ended");
+                        }
+                        xr::SessionState::EXITING | xr::SessionState::LOSS_PENDING => {
+                            return Ok(false);
+                        }
+                        _ => {}
+                    }
+                }
+                xr::Event::InstanceLossPending(_) => {
+                    warn!("OpenXR instance loss pending");
+                    return Ok(false);
+                }
+                _ => {}
+            }
+        }
     }
 }
 
@@ -215,6 +264,8 @@ impl VrContext {
             frame_waiter,
             frame_stream,
             stage_space,
+            state: xr::SessionState::IDLE,
+            event_buffer: xr::EventDataBuffer::default(),
         })
     }
 }

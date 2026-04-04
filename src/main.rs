@@ -109,6 +109,13 @@ fn main() -> Result<()> {
                 ..
             } => {
                 if !destroy_application && !minimized {
+                    // Poll OpenXR events (session state transitions)
+                    if application.has_vr() {
+                        if let Err(e) = application.poll_vr_events() {
+                            eprintln!("VR event error: {e}");
+                        }
+                    }
+
                     // VR frame: submit to headset, get eye matrices for spectator view
                     let vr_eyes = if application.has_vr() {
                         match unsafe { application.render_vr_frame() } {
