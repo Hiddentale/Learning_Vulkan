@@ -36,8 +36,8 @@ pub struct MeshPool {
     vertex_memory: vk::DeviceMemory,
     pub index_buffer: vk::Buffer,
     index_memory: vk::DeviceMemory,
-    chunk_data: HashMap<[i32; 2], ChunkMeshData>,
-    draw_params: HashMap<[i32; 2], ChunkDrawParams>,
+    chunk_data: HashMap<[i32; 3], ChunkMeshData>,
+    draw_params: HashMap<[i32; 3], ChunkDrawParams>,
     has_gpu_buffers: bool,
 }
 
@@ -55,22 +55,22 @@ impl MeshPool {
     }
 
     /// Caches mesh data for a chunk. Call `rebuild` afterwards to upload to GPU.
-    pub fn add_chunk(&mut self, pos: [i32; 2], vertices: Vec<Vertex>, bucket_indices: [Vec<u32>; BUCKET_COUNT]) {
+    pub fn add_chunk(&mut self, pos: [i32; 3], vertices: Vec<Vertex>, bucket_indices: [Vec<u32>; BUCKET_COUNT]) {
         self.chunk_data.insert(pos, ChunkMeshData { vertices, bucket_indices });
     }
 
     /// Removes cached mesh data for a chunk. Call `rebuild` afterwards to update GPU.
-    pub fn remove_chunk(&mut self, pos: &[i32; 2]) {
+    pub fn remove_chunk(&mut self, pos: &[i32; 3]) {
         self.chunk_data.remove(pos);
         self.draw_params.remove(pos);
     }
 
-    pub fn draw_params(&self, pos: &[i32; 2]) -> Option<&ChunkDrawParams> {
+    pub fn draw_params(&self, pos: &[i32; 3]) -> Option<&ChunkDrawParams> {
         self.draw_params.get(pos)
     }
 
     /// Returns all chunk positions that have mesh data.
-    pub fn chunk_positions(&self) -> impl Iterator<Item = &[i32; 2]> {
+    pub fn chunk_positions(&self) -> impl Iterator<Item = &[i32; 3]> {
         self.chunk_data.keys()
     }
 

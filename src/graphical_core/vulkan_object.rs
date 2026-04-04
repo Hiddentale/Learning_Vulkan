@@ -83,8 +83,11 @@ pub struct VulkanApplicationData {
     pub sky_pipeline_layout: vk::PipelineLayout,
 }
 
+use crate::voxel::world::{MAX_CHUNK_Y, MIN_CHUNK_Y};
+
 const RENDER_DISTANCE: i32 = 5;
-const MAX_LOADED_CHUNKS: usize = ((2 * RENDER_DISTANCE + 1) * (2 * RENDER_DISTANCE + 1)) as usize;
+const CHUNK_LAYERS: usize = (MAX_CHUNK_Y - MIN_CHUNK_Y + 1) as usize;
+const MAX_LOADED_CHUNKS: usize = ((2 * RENDER_DISTANCE + 1) * (2 * RENDER_DISTANCE + 1)) as usize * CHUNK_LAYERS;
 /// Each chunk can emit up to 6 indirect draws (one per face-direction bucket).
 pub const MAX_INDIRECT_DRAWS: usize = MAX_LOADED_CHUNKS * 6;
 
@@ -373,8 +376,8 @@ unsafe fn build_world_meshes(
     instance: &Instance,
     data: &mut VulkanApplicationData,
 ) -> anyhow::Result<u32> {
-    for [cx, cz] in world.chunk_positions() {
-        mesh_chunk_into_pool(world, cx, cz, pool);
+    for [cx, cy, cz] in world.chunk_positions() {
+        mesh_chunk_into_pool(world, cx, cy, cz, pool);
     }
     pool.rebuild(device, instance, data)?;
     write_transforms_to_ssbo(pool, data);
@@ -383,30 +386,32 @@ unsafe fn build_world_meshes(
 }
 
 /// Meshes a single chunk and adds its data to the pool (CPU-side only).
-fn mesh_chunk_into_pool(world: &World, cx: i32, cz: i32, pool: &mut MeshPool) {
-    let chunk = match world.get_chunk(cx, cz) {
+fn mesh_chunk_into_pool(world: &World, cx: i32, cy: i32, cz: i32, pool: &mut MeshPool) {
+    let chunk = match world.get_chunk(cx, cy, cz) {
         Some(c) => c,
         None => return,
     };
     let neighbors = ChunkNeighbors {
-        pos_x: world.get_chunk(cx + 1, cz),
-        neg_x: world.get_chunk(cx - 1, cz),
-        pos_z: world.get_chunk(cx, cz + 1),
-        neg_z: world.get_chunk(cx, cz - 1),
+        pos_x: world.get_chunk(cx + 1, cy, cz),
+        neg_x: world.get_chunk(cx - 1, cy, cz),
+        pos_y: world.get_chunk(cx, cy + 1, cz),
+        neg_y: world.get_chunk(cx, cy - 1, cz),
+        pos_z: world.get_chunk(cx, cy, cz + 1),
+        neg_z: world.get_chunk(cx, cy, cz - 1),
     };
 
     let (vertices, bucket_indices) = meshing::mesh_chunk(chunk, &neighbors);
     if vertices.is_empty() {
         return;
     }
-    pool.add_chunk([cx, cz], vertices, bucket_indices);
+    pool.add_chunk([cx, cy, cz], vertices, bucket_indices);
 }
 
 /// Writes all chunk model matrices into the persistently mapped transform SSBO.
 fn write_transforms_to_ssbo(pool: &MeshPool, data: &VulkanApplicationData) {
     for &pos in pool.chunk_positions() {
         if let Some(params) = pool.draw_params(&pos) {
-            let matrix = chunk_transform(pos[0], pos[1]).model_matrix().to_cols_array_2d();
+            let matrix = chunk_transform(pos[0], pos[1], pos[2]).model_matrix().to_cols_array_2d();
             unsafe {
                 std::ptr::write(data.transform_buffer_ptr.add(params.transform_index as usize), matrix);
             }
@@ -414,9 +419,13 @@ fn write_transforms_to_ssbo(pool: &MeshPool, data: &VulkanApplicationData) {
     }
 }
 
-fn chunk_transform(cx: i32, cz: i32) -> Transform {
+fn chunk_transform(cx: i32, cy: i32, cz: i32) -> Transform {
     Transform {
-        position: glam::Vec3::new(cx as f32 * CHUNK_SIZE as f32, 0.0, cz as f32 * CHUNK_SIZE as f32),
+        position: glam::Vec3::new(
+            cx as f32 * CHUNK_SIZE as f32,
+            cy as f32 * CHUNK_SIZE as f32,
+            cz as f32 * CHUNK_SIZE as f32,
+        ),
         ..Default::default()
     }
 }
@@ -498,8 +507,8 @@ impl VulkanApplication {
         for pos in &delta.unloaded {
             self.mesh_pool.remove_chunk(pos);
         }
-        for &[cx, cz] in &delta.loaded {
-            mesh_chunk_into_pool(&self.world, cx, cz, &mut self.mesh_pool);
+        for &[cx, cy, cz] in &delta.loaded {
+            mesh_chunk_into_pool(&self.world, cx, cy, cz, &mut self.mesh_pool);
         }
 
         self.mesh_pool
@@ -707,7 +716,8 @@ mod tests {
 
     #[test]
     fn max_indirect_draws_accommodates_all_chunks() {
-        let max_chunks = ((2 * 5 + 1) * (2 * 5 + 1)) as usize; // RENDER_DISTANCE = 5
+        let columns = ((2 * 5 + 1) * (2 * 5 + 1)) as usize; // RENDER_DISTANCE = 5
+        let max_chunks = columns * CHUNK_LAYERS;
         assert_eq!(MAX_INDIRECT_DRAWS, max_chunks * 6);
     }
 }

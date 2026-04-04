@@ -299,7 +299,11 @@ pub fn write_chunk_info(pool: &MeshPool, ptr: *mut GpuChunkInfo) -> u32 {
     let mut count = 0u32;
     for &pos in pool.chunk_positions() {
         if let Some(params) = pool.draw_params(&pos) {
-            let aabb_min = [pos[0] as f32 * CHUNK_SIZE as f32, 0.0, pos[1] as f32 * CHUNK_SIZE as f32];
+            let aabb_min = [
+                pos[0] as f32 * CHUNK_SIZE as f32,
+                pos[1] as f32 * CHUNK_SIZE as f32,
+                pos[2] as f32 * CHUNK_SIZE as f32,
+            ];
             let aabb_max = [
                 aabb_min[0] + CHUNK_SIZE as f32,
                 aabb_min[1] + CHUNK_SIZE as f32,
