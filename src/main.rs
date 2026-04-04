@@ -111,7 +111,8 @@ fn main() -> Result<()> {
                 last_frame = now;
 
                 let old_position = camera.position;
-                input.update_camera(&mut camera, delta_time, player.fly_mode);
+                let local_p = application.world().metric.sample(camera.position).p;
+                input.update_camera(&mut camera, delta_time, player.fly_mode, local_p);
                 let world = application.world();
                 player.resolve_horizontal(&mut camera.position, old_position, world);
                 player.apply_physics(&mut camera.position, delta_time, world);

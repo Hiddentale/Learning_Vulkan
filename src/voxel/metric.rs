@@ -108,6 +108,25 @@ pub fn lerp_p(a: f32, b: f32, t: f32) -> f32 {
     from_inv_p(result)
 }
 
+/// Speed multiplier for movement in direction `dir` under metric with exponent `p`.
+/// Returns the ratio of Euclidean distance to metric distance for a unit step.
+/// > 1.0 means faster (Chebyshev diagonal), < 1.0 means slower (Manhattan diagonal).
+pub fn metric_speed_scale(dir: Vec3, p: f32) -> f32 {
+    if (p - 2.0).abs() < 0.01 {
+        return 1.0;
+    }
+    let unit = dir.normalize_or_zero();
+    if unit == Vec3::ZERO {
+        return 1.0;
+    }
+    let euclidean = unit.length(); // always 1.0 for normalized
+    let metric = minkowski_distance(Vec3::ZERO, unit, p);
+    if metric < 1e-6 {
+        return 1.0;
+    }
+    euclidean / metric
+}
+
 fn inv_p(p: f32) -> f32 {
     if p >= 50.0 { 0.0 } else { 1.0 / p }
 }
@@ -310,6 +329,35 @@ mod tests {
             let params = field.sample(Vec3::new(dist, 0.0, 0.0));
             assert!(params.p <= prev_p + EPSILON, "p increased at dist={dist}: {} > {prev_p}", params.p);
             prev_p = params.p;
+        }
+    }
+
+    // --- metric_speed_scale ---
+
+    #[test]
+    fn euclidean_metric_gives_unit_scale() {
+        let scale = metric_speed_scale(Vec3::new(1.0, 0.0, 1.0), 2.0);
+        assert!(approx(scale, 1.0), "expected 1.0, got {scale}");
+    }
+
+    #[test]
+    fn chebyshev_diagonal_is_faster() {
+        let scale = metric_speed_scale(Vec3::new(1.0, 0.0, 1.0), 50.0);
+        assert!(scale > 1.0, "Chebyshev diagonal scale {scale} should be > 1.0");
+    }
+
+    #[test]
+    fn manhattan_diagonal_is_slower() {
+        let scale = metric_speed_scale(Vec3::new(1.0, 0.0, 1.0), 1.0);
+        assert!(scale < 1.0, "Manhattan diagonal scale {scale} should be < 1.0");
+    }
+
+    #[test]
+    fn cardinal_direction_unaffected_by_metric() {
+        // Along a single axis, all Lp metrics agree (distance = |x|)
+        for p in [1.0, 2.0, 50.0] {
+            let scale = metric_speed_scale(Vec3::new(1.0, 0.0, 0.0), p);
+            assert!(approx(scale, 1.0), "cardinal scale for p={p} should be 1.0, got {scale}");
         }
     }
 }
