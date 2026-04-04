@@ -19,6 +19,7 @@ pub mod scene;
 mod shaders;
 pub mod swapchain;
 pub mod texture_mapping;
+pub mod voxel_pool;
 pub mod vulkan_object;
 
 const MAX_FRAMES_IN_FLIGHT: usize = 2;
