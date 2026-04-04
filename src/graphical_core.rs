@@ -19,6 +19,7 @@ pub mod scene;
 mod shaders;
 pub mod swapchain;
 pub mod texture_mapping;
+pub mod mesh_pipeline;
 pub mod voxel_pool;
 pub mod vulkan_object;
 
