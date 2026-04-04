@@ -1,12 +1,13 @@
 use crate::graphical_core::{
     camera::{create_uniform_buffer, destroy_uniform_buffer, update_uniform_buffer, Camera, EyeMatrices, UniformBufferObject},
-    commands::{allocate_command_buffers, create_command_pool, create_frame_buffers, create_sync_objects, record_command_buffer},
+    commands::{allocate_command_buffers, create_command_pool, create_frame_buffers, create_sync_objects, record_command_buffer, record_mesh_shader_command_buffer},
     compute_cull::{self, ComputeCullResources, CullPushConstants, DepthPyramidResources},
     depth::{create_depth_image, create_depth_pyramid, destroy_depth_image, destroy_depth_pyramid},
     descriptors,
     frustum::Frustum,
     gpu::choose_gpu,
     instance::{create_instance, create_logical_device},
+    mesh_pipeline::MeshShaderPipeline,
     mesh_pool::MeshPool,
     palette_buffer::{create_palette_buffer, destroy_palette_buffer},
     pipeline::{create_pipeline, create_sky_pipeline},
@@ -14,6 +15,7 @@ use crate::graphical_core::{
     scene::Transform,
     swapchain::{create_swapchain, create_swapchain_image_views},
     texture_mapping::{create_texture_image, destroy_textures},
+    voxel_pool::VoxelPool,
     MAX_FRAMES_IN_FLIGHT,
 };
 use crate::voxel::{
@@ -118,6 +120,10 @@ pub struct VulkanApplication {
     last_player_chunk: [i32; 2],
     _vr_session: Option<VrSession>,
     _vr_swapchain: Option<VrSwapchain>,
+    // Mesh shader pipeline (coexists with old pipeline during migration)
+    voxel_pool: Option<VoxelPool>,
+    mesh_shader_pipeline: Option<MeshShaderPipeline>,
+    use_mesh_shaders: bool,
 }
 
 impl VulkanApplication {
@@ -195,6 +201,22 @@ impl VulkanApplication {
         let chunk_count = compute_cull::write_chunk_info(&mesh_pool, compute_cull.chunk_info_ptr);
         let depth_pyramid_pipeline = compute_cull::create_depth_pyramid_pipeline(&device, &data)?;
 
+        // Mesh shader pipeline (opt-in via MANIFOLD_MESH_SHADERS=1)
+        let use_mesh_shaders = std::env::var("MANIFOLD_MESH_SHADERS").is_ok_and(|v| v == "1");
+        let (voxel_pool, mesh_shader_pipeline) = if use_mesh_shaders {
+            log::info!("Mesh shader pipeline enabled");
+            let mut vp = VoxelPool::new(MAX_LOADED_CHUNKS as u32, &device, &instance, &mut data)?;
+            for [cx, cy, cz] in world.chunk_positions() {
+                if let Some(chunk) = world.get_chunk(cx, cy, cz) {
+                    vp.upload_chunk([cx, cy, cz], chunk, &world);
+                }
+            }
+            let msp = MeshShaderPipeline::create(&device, &data, &vp)?;
+            (Some(vp), Some(msp))
+        } else {
+            (None, None)
+        };
+
         Ok(Self {
             _vulkan_entry_point: entry,
             vulkan_instance: instance,
@@ -211,6 +233,9 @@ impl VulkanApplication {
             last_player_chunk: [0, 0],
             _vr_session: vr_session,
             _vr_swapchain: vr_swapchain,
+            voxel_pool,
+            mesh_shader_pipeline,
+            use_mesh_shaders,
         })
     }
 }
@@ -449,36 +474,57 @@ impl VulkanApplication {
         } else {
             Frustum::from_view_projection(&eyes.primary_vp())
         };
-        let cull_push = CullPushConstants {
-            planes: [
-                frustum.plane(0),
-                frustum.plane(1),
-                frustum.plane(2),
-                frustum.plane(3),
-                frustum.plane(4),
-                frustum.plane(5),
-            ],
-            camera_pos: camera.position.to_array(),
-            chunk_count: self.chunk_count,
-            screen_size: [
-                self.vulkan_application_data.swapchain_extent.width as f32,
-                self.vulkan_application_data.swapchain_extent.height as f32,
-            ],
-            phase: 0,
-            draw_offset: 0,
-        };
-
-        record_command_buffer(
-            &self.device,
-            &self.vulkan_application_data,
-            image_index,
-            &self.compute_cull,
-            &self.depth_pyramid_pipeline,
-            &cull_push,
-            self.mesh_pool.vertex_buffer,
-            self.mesh_pool.index_buffer,
-            self.depth_pyramid_needs_init,
-        )?;
+        if self.use_mesh_shaders {
+            let mesh_push = CullPushConstants {
+                planes: [
+                    frustum.plane(0), frustum.plane(1), frustum.plane(2),
+                    frustum.plane(3), frustum.plane(4), frustum.plane(5),
+                ],
+                camera_pos: camera.position.to_array(),
+                chunk_count: self.voxel_pool.as_ref().map_or(0, |vp| vp.chunk_count()),
+                screen_size: [
+                    self.vulkan_application_data.swapchain_extent.width as f32,
+                    self.vulkan_application_data.swapchain_extent.height as f32,
+                ],
+                phase: 1,
+                draw_offset: crate::voxel::block::BlockType::opaque_mask(),
+            };
+            record_mesh_shader_command_buffer(
+                &self.device,
+                &self.vulkan_application_data,
+                image_index,
+                self.mesh_shader_pipeline.as_ref().unwrap(),
+                &self.depth_pyramid_pipeline,
+                &mesh_push,
+                self.depth_pyramid_needs_init,
+            )?;
+        } else {
+            let cull_push = CullPushConstants {
+                planes: [
+                    frustum.plane(0), frustum.plane(1), frustum.plane(2),
+                    frustum.plane(3), frustum.plane(4), frustum.plane(5),
+                ],
+                camera_pos: camera.position.to_array(),
+                chunk_count: self.chunk_count,
+                screen_size: [
+                    self.vulkan_application_data.swapchain_extent.width as f32,
+                    self.vulkan_application_data.swapchain_extent.height as f32,
+                ],
+                phase: 0,
+                draw_offset: 0,
+            };
+            record_command_buffer(
+                &self.device,
+                &self.vulkan_application_data,
+                image_index,
+                &self.compute_cull,
+                &self.depth_pyramid_pipeline,
+                &cull_push,
+                self.mesh_pool.vertex_buffer,
+                self.mesh_pool.index_buffer,
+                self.depth_pyramid_needs_init,
+            )?;
+        }
         self.depth_pyramid_needs_init = false;
         self.submit_command_buffer(image_index)?;
         self.present_frame(image_index, window)?;
@@ -655,6 +701,12 @@ impl VulkanApplication {
     unsafe fn destroy_resources(&mut self) {
         if let Some(vr_sc) = self._vr_swapchain.take() {
             vr_sc.destroy(&self.device);
+        }
+        if let Some(msp) = self.mesh_shader_pipeline.take() {
+            msp.destroy(&self.device);
+        }
+        if let Some(mut vp) = self.voxel_pool.take() {
+            vp.destroy(&self.device);
         }
         compute_cull::destroy_depth_pyramid_pipeline(&self.device, &self.depth_pyramid_pipeline);
         compute_cull::destroy_compute_cull(&self.device, &self.compute_cull);

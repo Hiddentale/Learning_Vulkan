@@ -404,6 +404,54 @@ unsafe fn record_depth_pyramid_generation(device: &Device, cmd: vk::CommandBuffe
     );
 }
 
+/// Records the mesh shader rendering pipeline (single-phase, no occlusion yet).
+/// Task shader culls chunks, mesh shader generates geometry on-the-fly.
+pub unsafe fn record_mesh_shader_command_buffer(
+    device: &Device,
+    data: &VulkanApplicationData,
+    image_index: usize,
+    mesh_pipeline: &crate::graphical_core::mesh_pipeline::MeshShaderPipeline,
+    _depth_pyramid: &DepthPyramidResources, // Used in Phase 3 for two-phase occlusion
+    cull_push: &CullPushConstants,
+    pyramid_needs_init: bool,
+) -> anyhow::Result<()> {
+    let cmd = data.command_buffers[image_index];
+    device.reset_command_buffer(cmd, vk::CommandBufferResetFlags::empty())?;
+    device.begin_command_buffer(cmd, &vk::CommandBufferBeginInfo::builder())?;
+
+    if pyramid_needs_init {
+        transition_pyramid_undefined_to_general(device, cmd, data);
+    }
+
+    // Phase 1: draw all chunks (no occlusion for now)
+    begin_render_pass(device, cmd, data, image_index);
+    draw_sky(device, cmd, data);
+
+    // Bind mesh shader pipeline and dispatch
+    device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, mesh_pipeline.pipeline);
+    device.cmd_bind_descriptor_sets(
+        cmd,
+        vk::PipelineBindPoint::GRAPHICS,
+        mesh_pipeline.pipeline_layout,
+        0,
+        &[mesh_pipeline.descriptor_set],
+        &[],
+    );
+
+    let push_bytes: &[u8] = std::slice::from_raw_parts(
+        cull_push as *const CullPushConstants as *const u8,
+        std::mem::size_of::<CullPushConstants>(),
+    );
+    // Workaround: vulkan-rust missing TASK|MESH ShaderStageFlags bits
+    let task_mesh_flags = vk::ShaderStageFlags::from_raw(0x40 | 0x80);
+    device.cmd_push_constants(cmd, mesh_pipeline.pipeline_layout, task_mesh_flags, 0, push_bytes);
+    device.cmd_draw_mesh_tasks_ext(cmd, cull_push.chunk_count, 1, 1);
+
+    device.cmd_end_render_pass(cmd);
+    device.end_command_buffer(cmd)?;
+    Ok(())
+}
+
 /// Creates semaphores and fences for each frame in flight.
 pub unsafe fn create_sync_objects(device: &Device, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
     let semaphore_info = vk::SemaphoreCreateInfo::builder();
