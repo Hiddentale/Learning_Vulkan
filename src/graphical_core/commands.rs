@@ -404,14 +404,16 @@ unsafe fn record_depth_pyramid_generation(device: &Device, cmd: vk::CommandBuffe
     );
 }
 
-/// Records the mesh shader rendering pipeline (single-phase, no occlusion yet).
-/// Task shader culls chunks, mesh shader generates geometry on-the-fly.
+/// Records the two-phase mesh shader rendering pipeline:
+/// 1. Phase 1: previously visible chunks (frustum cull only)
+/// 2. Build depth pyramid
+/// 3. Phase 2: previously invisible chunks (frustum + Hi-Z occlusion)
 pub unsafe fn record_mesh_shader_command_buffer(
     device: &Device,
     data: &VulkanApplicationData,
     image_index: usize,
     mesh_pipeline: &crate::graphical_core::mesh_pipeline::MeshShaderPipeline,
-    _depth_pyramid: &DepthPyramidResources, // Used in Phase 3 for two-phase occlusion
+    depth_pyramid: &DepthPyramidResources,
     cull_push: &CullPushConstants,
     pyramid_needs_init: bool,
 ) -> anyhow::Result<()> {
@@ -423,29 +425,50 @@ pub unsafe fn record_mesh_shader_command_buffer(
         transition_pyramid_undefined_to_general(device, cmd, data);
     }
 
-    // Phase 1: draw all chunks (no occlusion for now)
+    // Workaround: vulkan-rust missing TASK|MESH ShaderStageFlags bits
+    let task_mesh_flags = vk::ShaderStageFlags::from_raw(0x40 | 0x80);
+
+    // === Phase 1: previously visible chunks (no occlusion test) ===
     begin_render_pass(device, cmd, data, image_index);
     draw_sky(device, cmd, data);
 
-    // Bind mesh shader pipeline and dispatch
     device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, mesh_pipeline.pipeline);
     device.cmd_bind_descriptor_sets(
-        cmd,
-        vk::PipelineBindPoint::GRAPHICS,
-        mesh_pipeline.pipeline_layout,
-        0,
-        &[mesh_pipeline.descriptor_set],
-        &[],
+        cmd, vk::PipelineBindPoint::GRAPHICS, mesh_pipeline.pipeline_layout,
+        0, &[mesh_pipeline.descriptor_set], &[],
     );
 
-    let push_bytes: &[u8] = std::slice::from_raw_parts(
-        cull_push as *const CullPushConstants as *const u8,
+    let mut push1 = *cull_push;
+    push1.phase = 1;
+    let push1_bytes: &[u8] = std::slice::from_raw_parts(
+        &push1 as *const CullPushConstants as *const u8,
         std::mem::size_of::<CullPushConstants>(),
     );
-    // Workaround: vulkan-rust missing TASK|MESH ShaderStageFlags bits
-    let task_mesh_flags = vk::ShaderStageFlags::from_raw(0x40 | 0x80);
-    device.cmd_push_constants(cmd, mesh_pipeline.pipeline_layout, task_mesh_flags, 0, push_bytes);
-    device.cmd_draw_mesh_tasks_ext(cmd, cull_push.chunk_count, 1, 1);
+    device.cmd_push_constants(cmd, mesh_pipeline.pipeline_layout, task_mesh_flags, 0, push1_bytes);
+    device.cmd_draw_mesh_tasks_ext(cmd, push1.chunk_count, 1, 1);
+
+    device.cmd_end_render_pass(cmd);
+
+    // === Build depth pyramid from phase 1 depth ===
+    record_depth_pyramid_generation(device, cmd, data, depth_pyramid);
+
+    // === Phase 2: previously invisible chunks (with occlusion test) ===
+    begin_render_pass_no_clear(device, cmd, data, image_index);
+
+    device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, mesh_pipeline.pipeline);
+    device.cmd_bind_descriptor_sets(
+        cmd, vk::PipelineBindPoint::GRAPHICS, mesh_pipeline.pipeline_layout,
+        0, &[mesh_pipeline.descriptor_set], &[],
+    );
+
+    let mut push2 = *cull_push;
+    push2.phase = 2;
+    let push2_bytes: &[u8] = std::slice::from_raw_parts(
+        &push2 as *const CullPushConstants as *const u8,
+        std::mem::size_of::<CullPushConstants>(),
+    );
+    device.cmd_push_constants(cmd, mesh_pipeline.pipeline_layout, task_mesh_flags, 0, push2_bytes);
+    device.cmd_draw_mesh_tasks_ext(cmd, push2.chunk_count, 1, 1);
 
     device.cmd_end_render_pass(cmd);
     device.end_command_buffer(cmd)?;
