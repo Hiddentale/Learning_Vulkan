@@ -57,18 +57,12 @@ pub struct VoxelPool {
 }
 
 impl VoxelPool {
-    pub unsafe fn new(
-        max_slots: u32,
-        device: &Device,
-        instance: &Instance,
-        data: &mut VulkanApplicationData,
-    ) -> anyhow::Result<Self> {
+    pub unsafe fn new(max_slots: u32, device: &Device, instance: &Instance, data: &mut VulkanApplicationData) -> anyhow::Result<Self> {
         let host_visible = super::host_visible_coherent();
         let ssbo_flags = vk::BufferUsageFlags::STORAGE_BUFFER;
 
         let voxel_size = (max_slots as usize * VOXEL_CHUNK_BYTES) as u64;
-        let (voxel_buffer, voxel_memory, voxel_ptr) =
-            allocate_buffer::<u8>(voxel_size, ssbo_flags, device, instance, data, host_visible)?;
+        let (voxel_buffer, voxel_memory, voxel_ptr) = allocate_buffer::<u8>(voxel_size, ssbo_flags, device, instance, data, host_visible)?;
 
         let boundary_size = (max_slots as usize * BOUNDARY_CHUNK_BYTES) as u64;
         let (boundary_buffer, boundary_memory, boundary_ptr) =
@@ -109,21 +103,12 @@ impl VoxelPool {
     }
 
     /// Uploads a chunk's voxel data and boundary slices to GPU.
-    pub unsafe fn upload_chunk(
-        &mut self,
-        pos: [i32; 3],
-        chunk: &Chunk,
-        world: &World,
-    ) {
+    pub unsafe fn upload_chunk(&mut self, pos: [i32; 3], chunk: &Chunk, world: &World) {
         let slot = self.allocate_slot(pos);
 
         // Write voxel data
         let voxel_offset = slot as usize * VOXEL_CHUNK_BYTES;
-        std::ptr::copy_nonoverlapping(
-            chunk.as_bytes().as_ptr(),
-            self.voxel_ptr.add(voxel_offset),
-            VOXEL_CHUNK_BYTES,
-        );
+        std::ptr::copy_nonoverlapping(chunk.as_bytes().as_ptr(), self.voxel_ptr.add(voxel_offset), VOXEL_CHUNK_BYTES);
 
         // Write boundary slices
         self.write_boundary(slot, pos, world);

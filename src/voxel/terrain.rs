@@ -121,16 +121,7 @@ fn sample_height(noises: &WorldNoises, wx: f64, wz: f64, temperature: f64) -> us
     height as usize
 }
 
-fn fill_surface(
-    chunks: &mut [Chunk],
-    x: usize,
-    z: usize,
-    wx: f64,
-    wz: f64,
-    surface_y: usize,
-    biome: Biome,
-    noises: &WorldNoises,
-) {
+fn fill_surface(chunks: &mut [Chunk], x: usize, z: usize, wx: f64, wz: f64, surface_y: usize, biome: Biome, noises: &WorldNoises) {
     let surface = biome::surface_block(biome);
     let subsurface = biome::subsurface_block(biome);
     let band_bottom = surface_y.saturating_sub(OVERHANG_BAND);
@@ -138,11 +129,7 @@ fn fill_surface(
 
     // Below the overhang band: always solid
     for y in 0..band_bottom {
-        let block = if y + DIRT_DEPTH > surface_y {
-            subsurface
-        } else {
-            BlockType::Stone
-        };
+        let block = if y + DIRT_DEPTH > surface_y { subsurface } else { BlockType::Stone };
         set_block(chunks, x, y, z, block);
     }
 
@@ -150,11 +137,7 @@ fn fill_surface(
     for y in band_bottom..=band_top {
         // Base density: positive below surface, negative above
         let base_density = (surface_y as f64 - y as f64) / OVERHANG_BAND as f64;
-        let noise_val = noises.overhang.get([
-            wx * OVERHANG_SCALE,
-            y as f64 * OVERHANG_SCALE,
-            wz * OVERHANG_SCALE,
-        ]);
+        let noise_val = noises.overhang.get([wx * OVERHANG_SCALE, y as f64 * OVERHANG_SCALE, wz * OVERHANG_SCALE]);
         let density = base_density + noise_val * (OVERHANG_STRENGTH / OVERHANG_BAND as f64);
 
         if density > 0.0 {

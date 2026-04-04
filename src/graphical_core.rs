@@ -10,6 +10,7 @@ pub mod input;
 pub mod instance;
 pub mod memory;
 pub mod mesh;
+pub mod mesh_pipeline;
 pub mod mesh_pool;
 pub mod palette_buffer;
 pub mod pipeline;
@@ -19,7 +20,6 @@ pub mod scene;
 mod shaders;
 pub mod swapchain;
 pub mod texture_mapping;
-pub mod mesh_pipeline;
 pub mod voxel_pool;
 pub mod vulkan_object;
 

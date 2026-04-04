@@ -61,11 +61,7 @@ fn process_shaders(shader_paths: Vec<PathBuf>) -> anyhow::Result<()> {
                     cmd.arg("--target-env=vulkan1.2");
                 }
             }
-            let output = cmd
-                .arg(&shader_path)
-                .arg("-o")
-                .arg(compiled_shader_path)
-                .output()?;
+            let output = cmd.arg(&shader_path).arg("-o").arg(compiled_shader_path).output()?;
 
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);

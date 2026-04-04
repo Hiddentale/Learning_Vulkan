@@ -1,6 +1,9 @@
 use crate::graphical_core::{
     camera::{create_uniform_buffer, destroy_uniform_buffer, update_uniform_buffer, Camera, EyeMatrices, UniformBufferObject},
-    commands::{allocate_command_buffers, create_command_pool, create_frame_buffers, create_sync_objects, record_command_buffer, record_mesh_shader_command_buffer},
+    commands::{
+        allocate_command_buffers, create_command_pool, create_frame_buffers, create_sync_objects, record_command_buffer,
+        record_mesh_shader_command_buffer,
+    },
     compute_cull::{self, ComputeCullResources, CullPushConstants, DepthPyramidResources},
     depth::{create_depth_image, create_depth_pyramid, destroy_depth_image, destroy_depth_pyramid},
     descriptors,
@@ -477,8 +480,12 @@ impl VulkanApplication {
         if self.use_mesh_shaders {
             let mesh_push = CullPushConstants {
                 planes: [
-                    frustum.plane(0), frustum.plane(1), frustum.plane(2),
-                    frustum.plane(3), frustum.plane(4), frustum.plane(5),
+                    frustum.plane(0),
+                    frustum.plane(1),
+                    frustum.plane(2),
+                    frustum.plane(3),
+                    frustum.plane(4),
+                    frustum.plane(5),
                 ],
                 camera_pos: camera.position.to_array(),
                 chunk_count: self.voxel_pool.as_ref().map_or(0, |vp| vp.chunk_count()),
@@ -501,8 +508,12 @@ impl VulkanApplication {
         } else {
             let cull_push = CullPushConstants {
                 planes: [
-                    frustum.plane(0), frustum.plane(1), frustum.plane(2),
-                    frustum.plane(3), frustum.plane(4), frustum.plane(5),
+                    frustum.plane(0),
+                    frustum.plane(1),
+                    frustum.plane(2),
+                    frustum.plane(3),
+                    frustum.plane(4),
+                    frustum.plane(5),
                 ],
                 camera_pos: camera.position.to_array(),
                 chunk_count: self.chunk_count,

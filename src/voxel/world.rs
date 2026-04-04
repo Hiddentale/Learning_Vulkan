@@ -48,9 +48,7 @@ impl World {
         // Request generation for missing columns (non-blocking, just enqueues)
         for cz in (player_cz - self.render_distance)..=(player_cz + self.render_distance) {
             for cx in (player_cx - self.render_distance)..=(player_cx + self.render_distance) {
-                if !self.chunks.contains_key(&[cx, MIN_CHUNK_Y, cz])
-                    && !self.generator.is_pending(cx, cz)
-                {
+                if !self.chunks.contains_key(&[cx, MIN_CHUNK_Y, cz]) && !self.generator.is_pending(cx, cz) {
                     self.generator.request(cx, cz);
                 }
             }

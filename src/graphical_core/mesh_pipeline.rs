@@ -23,11 +23,7 @@ pub struct MeshShaderPipeline {
 }
 
 impl MeshShaderPipeline {
-    pub unsafe fn create(
-        device: &Device,
-        data: &VulkanApplicationData,
-        voxel_pool: &VoxelPool,
-    ) -> anyhow::Result<Self> {
+    pub unsafe fn create(device: &Device, data: &VulkanApplicationData, voxel_pool: &VoxelPool) -> anyhow::Result<Self> {
         let descriptor_set_layout = create_descriptor_layout(device)?;
         let descriptor_pool = create_descriptor_pool(device)?;
         let descriptor_set = allocate_descriptor_set(device, descriptor_pool, descriptor_set_layout)?;
@@ -137,25 +133,14 @@ unsafe fn create_descriptor_pool(device: &Device) -> anyhow::Result<vk::Descript
     Ok(device.create_descriptor_pool(&pool_info, None)?)
 }
 
-unsafe fn allocate_descriptor_set(
-    device: &Device,
-    pool: vk::DescriptorPool,
-    layout: vk::DescriptorSetLayout,
-) -> anyhow::Result<vk::DescriptorSet> {
+unsafe fn allocate_descriptor_set(device: &Device, pool: vk::DescriptorPool, layout: vk::DescriptorSetLayout) -> anyhow::Result<vk::DescriptorSet> {
     let layouts = [layout];
-    let alloc_info = vk::DescriptorSetAllocateInfo::builder()
-        .descriptor_pool(pool)
-        .set_layouts(&layouts);
+    let alloc_info = vk::DescriptorSetAllocateInfo::builder().descriptor_pool(pool).set_layouts(&layouts);
     let sets = device.allocate_descriptor_sets(&alloc_info)?;
     Ok(sets[0])
 }
 
-unsafe fn write_descriptors(
-    device: &Device,
-    set: vk::DescriptorSet,
-    data: &VulkanApplicationData,
-    pool: &VoxelPool,
-) {
+unsafe fn write_descriptors(device: &Device, set: vk::DescriptorSet, data: &VulkanApplicationData, pool: &VoxelPool) {
     // Binding 0: texture sampler
     let image_info = [*vk::DescriptorImageInfo::builder()
         .image_view(data.texture_image_view)
@@ -173,24 +158,16 @@ unsafe fn write_descriptors(
         .range(std::mem::size_of::<MaterialPalette>() as u64)];
 
     // Binding 3: VoxelDataSSBO
-    let voxel_info = [*vk::DescriptorBufferInfo::builder()
-        .buffer(pool.voxel_buffer)
-        .range(vk::WHOLE_SIZE)];
+    let voxel_info = [*vk::DescriptorBufferInfo::builder().buffer(pool.voxel_buffer).range(vk::WHOLE_SIZE)];
 
     // Binding 4: BoundaryDataSSBO
-    let boundary_info = [*vk::DescriptorBufferInfo::builder()
-        .buffer(pool.boundary_buffer)
-        .range(vk::WHOLE_SIZE)];
+    let boundary_info = [*vk::DescriptorBufferInfo::builder().buffer(pool.boundary_buffer).range(vk::WHOLE_SIZE)];
 
     // Binding 5: ChunkInfoSSBO
-    let chunk_info = [*vk::DescriptorBufferInfo::builder()
-        .buffer(pool.chunk_info_buffer)
-        .range(vk::WHOLE_SIZE)];
+    let chunk_info = [*vk::DescriptorBufferInfo::builder().buffer(pool.chunk_info_buffer).range(vk::WHOLE_SIZE)];
 
     // Binding 6: VisibilitySSBO
-    let vis_info = [*vk::DescriptorBufferInfo::builder()
-        .buffer(pool.visibility_buffer)
-        .range(vk::WHOLE_SIZE)];
+    let vis_info = [*vk::DescriptorBufferInfo::builder().buffer(pool.visibility_buffer).range(vk::WHOLE_SIZE)];
 
     // Binding 7: depth_pyramid
     let depth_info = [*vk::DescriptorImageInfo::builder()
@@ -200,35 +177,43 @@ unsafe fn write_descriptors(
 
     let writes = [
         *vk::WriteDescriptorSet::builder()
-            .dst_set(set).dst_binding(0)
+            .dst_set(set)
+            .dst_binding(0)
             .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
             .image_info(&image_info),
         *vk::WriteDescriptorSet::builder()
-            .dst_set(set).dst_binding(1)
+            .dst_set(set)
+            .dst_binding(1)
             .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
             .buffer_info(&ubo_info),
         *vk::WriteDescriptorSet::builder()
-            .dst_set(set).dst_binding(2)
+            .dst_set(set)
+            .dst_binding(2)
             .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
             .buffer_info(&palette_info),
         *vk::WriteDescriptorSet::builder()
-            .dst_set(set).dst_binding(3)
+            .dst_set(set)
+            .dst_binding(3)
             .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
             .buffer_info(&voxel_info),
         *vk::WriteDescriptorSet::builder()
-            .dst_set(set).dst_binding(4)
+            .dst_set(set)
+            .dst_binding(4)
             .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
             .buffer_info(&boundary_info),
         *vk::WriteDescriptorSet::builder()
-            .dst_set(set).dst_binding(5)
+            .dst_set(set)
+            .dst_binding(5)
             .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
             .buffer_info(&chunk_info),
         *vk::WriteDescriptorSet::builder()
-            .dst_set(set).dst_binding(6)
+            .dst_set(set)
+            .dst_binding(6)
             .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
             .buffer_info(&vis_info),
         *vk::WriteDescriptorSet::builder()
-            .dst_set(set).dst_binding(7)
+            .dst_set(set)
+            .dst_binding(7)
             .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
             .image_info(&depth_info),
     ];
@@ -260,22 +245,18 @@ unsafe fn create_graphics_pipeline(
 
     // Mesh shader pipelines have no vertex input or input assembly
     let vertex_input_state = vk::PipelineVertexInputStateCreateInfo::builder();
-    let input_assembly_state = vk::PipelineInputAssemblyStateCreateInfo::builder()
-        .topology(vk::PrimitiveTopology::TRIANGLE_LIST);
+    let input_assembly_state = vk::PipelineInputAssemblyStateCreateInfo::builder().topology(vk::PrimitiveTopology::TRIANGLE_LIST);
 
     let viewport = *vk::Viewport::builder()
         .width(data.swapchain_extent.width as f32)
         .height(data.swapchain_extent.height as f32)
         .min_depth(0.0)
         .max_depth(1.0);
-    let scissor = *vk::Rect2D::builder()
-        .extent(data.swapchain_extent);
+    let scissor = *vk::Rect2D::builder().extent(data.swapchain_extent);
 
     let viewports = [viewport];
     let scissors = [scissor];
-    let viewport_state = vk::PipelineViewportStateCreateInfo::builder()
-        .viewports(&viewports)
-        .scissors(&scissors);
+    let viewport_state = vk::PipelineViewportStateCreateInfo::builder().viewports(&viewports).scissors(&scissors);
 
     let rasterization_state = vk::PipelineRasterizationStateCreateInfo::builder()
         .polygon_mode(vk::PolygonMode::FILL)
@@ -283,8 +264,7 @@ unsafe fn create_graphics_pipeline(
         .cull_mode(vk::CullModeFlags::BACK)
         .front_face(vk::FrontFace::CLOCKWISE);
 
-    let multisample_state = vk::PipelineMultisampleStateCreateInfo::builder()
-        .rasterization_samples(vk::SampleCountFlags::_1);
+    let multisample_state = vk::PipelineMultisampleStateCreateInfo::builder().rasterization_samples(vk::SampleCountFlags::_1);
 
     let blend_attachment = *vk::PipelineColorBlendAttachmentState::builder()
         .color_write_mask(vk::ColorComponentFlags::all())
@@ -297,8 +277,7 @@ unsafe fn create_graphics_pipeline(
         .alpha_blend_op(vk::BlendOp::ADD);
 
     let blend_attachments = [blend_attachment];
-    let color_blend_state = vk::PipelineColorBlendStateCreateInfo::builder()
-        .attachments(&blend_attachments);
+    let color_blend_state = vk::PipelineColorBlendStateCreateInfo::builder().attachments(&blend_attachments);
 
     let depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo::builder()
         .depth_test_enable(true)

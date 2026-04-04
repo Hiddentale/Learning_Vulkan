@@ -434,16 +434,17 @@ pub unsafe fn record_mesh_shader_command_buffer(
 
     device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, mesh_pipeline.pipeline);
     device.cmd_bind_descriptor_sets(
-        cmd, vk::PipelineBindPoint::GRAPHICS, mesh_pipeline.pipeline_layout,
-        0, &[mesh_pipeline.descriptor_set], &[],
+        cmd,
+        vk::PipelineBindPoint::GRAPHICS,
+        mesh_pipeline.pipeline_layout,
+        0,
+        &[mesh_pipeline.descriptor_set],
+        &[],
     );
 
     let mut push1 = *cull_push;
     push1.phase = 1;
-    let push1_bytes: &[u8] = std::slice::from_raw_parts(
-        &push1 as *const CullPushConstants as *const u8,
-        std::mem::size_of::<CullPushConstants>(),
-    );
+    let push1_bytes: &[u8] = std::slice::from_raw_parts(&push1 as *const CullPushConstants as *const u8, std::mem::size_of::<CullPushConstants>());
     device.cmd_push_constants(cmd, mesh_pipeline.pipeline_layout, task_mesh_flags, 0, push1_bytes);
     device.cmd_draw_mesh_tasks_ext(cmd, push1.chunk_count, 1, 1);
 
@@ -457,16 +458,17 @@ pub unsafe fn record_mesh_shader_command_buffer(
 
     device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, mesh_pipeline.pipeline);
     device.cmd_bind_descriptor_sets(
-        cmd, vk::PipelineBindPoint::GRAPHICS, mesh_pipeline.pipeline_layout,
-        0, &[mesh_pipeline.descriptor_set], &[],
+        cmd,
+        vk::PipelineBindPoint::GRAPHICS,
+        mesh_pipeline.pipeline_layout,
+        0,
+        &[mesh_pipeline.descriptor_set],
+        &[],
     );
 
     let mut push2 = *cull_push;
     push2.phase = 2;
-    let push2_bytes: &[u8] = std::slice::from_raw_parts(
-        &push2 as *const CullPushConstants as *const u8,
-        std::mem::size_of::<CullPushConstants>(),
-    );
+    let push2_bytes: &[u8] = std::slice::from_raw_parts(&push2 as *const CullPushConstants as *const u8, std::mem::size_of::<CullPushConstants>());
     device.cmd_push_constants(cmd, mesh_pipeline.pipeline_layout, task_mesh_flags, 0, push2_bytes);
     device.cmd_draw_mesh_tasks_ext(cmd, push2.chunk_count, 1, 1);
 
