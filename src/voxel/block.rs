@@ -16,10 +16,12 @@ impl BlockType {
         !matches!(self, BlockType::Air | BlockType::Water)
     }
 
+    #[allow(dead_code)] // needed for block placement
     pub fn is_transparent(self) -> bool {
         self == BlockType::Water
     }
 
+    #[allow(dead_code)] // needed for block placement
     pub fn material_id(self) -> u8 {
         self as u8
     }
