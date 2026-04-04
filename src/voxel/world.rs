@@ -1,6 +1,7 @@
 use super::block::BlockType;
 use super::chunk::{Chunk, CHUNK_SIZE};
 use super::chunk_generator::ChunkGenerator;
+use super::metric::MetricField;
 use std::collections::HashMap;
 
 pub const MIN_CHUNK_Y: i32 = 0;
@@ -10,6 +11,7 @@ pub struct World {
     chunks: HashMap<[i32; 3], Chunk>,
     render_distance: i32,
     generator: ChunkGenerator,
+    pub metric: MetricField,
 }
 
 /// Result of a world update: which chunks were added/removed.
@@ -24,6 +26,7 @@ impl World {
             chunks: HashMap::new(),
             render_distance,
             generator: ChunkGenerator::new(),
+            metric: MetricField::new(),
         }
     }
 
