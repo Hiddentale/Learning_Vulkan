@@ -1,0 +1,52 @@
+#version 450
+
+layout(local_size_x = 64) in;
+
+struct SvdagChunkInfo {
+    vec3 aabb_min;
+    uint dag_offset;
+    vec3 aabb_max;
+    uint dag_size;
+};
+
+layout(set = 0, binding = 0) readonly buffer ChunkInfoSSBO {
+    SvdagChunkInfo chunks[];
+};
+
+layout(set = 0, binding = 1) writeonly buffer VisibleChunks {
+    uint visible_indices[];
+};
+
+layout(set = 0, binding = 2) buffer VisibleCount {
+    uint visible_count;
+};
+
+layout(push_constant) uniform PushConstants {
+    vec4 frustum_planes[6];
+    uint total_chunks;
+};
+
+bool aabb_vs_frustum(vec3 aabb_min, vec3 aabb_max) {
+    for (int i = 0; i < 6; i++) {
+        vec3 plane_normal = frustum_planes[i].xyz;
+        float plane_dist = frustum_planes[i].w;
+
+        // Test the positive vertex (corner most aligned with the plane normal)
+        vec3 p = mix(aabb_min, aabb_max, vec3(greaterThan(plane_normal, vec3(0.0))));
+        if (dot(plane_normal, p) + plane_dist < 0.0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void main() {
+    uint idx = gl_GlobalInvocationID.x;
+    if (idx >= total_chunks) return;
+
+    SvdagChunkInfo chunk = chunks[idx];
+    if (aabb_vs_frustum(chunk.aabb_min, chunk.aabb_max)) {
+        uint slot = atomicAdd(visible_count, 1u);
+        visible_indices[slot] = idx;
+    }
+}

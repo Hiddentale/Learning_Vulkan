@@ -11,15 +11,16 @@ use crate::graphical_core::{
     palette_buffer::{create_palette_buffer, destroy_palette_buffer},
     pipeline::create_sky_pipeline,
     render_pass::create_render_pass,
-    svdag_pipeline::{SvdagPipeline, SvdagPushConstants},
+    svdag_pipeline::{CullPush, RaymarchPush, SvdagPipeline, TileAssignPush},
     svdag_pool::SvdagPool,
     swapchain::{create_swapchain, create_swapchain_image_views},
     texture_mapping::{create_texture_image, destroy_textures},
     voxel_pool::VoxelPool,
     MAX_FRAMES_IN_FLIGHT,
 };
+use crate::voxel::chunk::CHUNK_SIZE;
 use crate::voxel::svdag_compressor::SvdagCompressor;
-use crate::voxel::{chunk::CHUNK_SIZE, world::World};
+use crate::voxel::world::World;
 use crate::vr::{VrContext, VrSession, VrSwapchain};
 use crate::VALIDATION_ENABLED;
 use anyhow::anyhow;
@@ -76,9 +77,13 @@ pub struct VulkanApplicationData {
 
 use crate::voxel::world::{MAX_CHUNK_Y, MIN_CHUNK_Y};
 
-const RENDER_DISTANCE: i32 = 24;
+/// Mesh shader renders chunks within this distance. Full detail, editable, textured.
+const MESH_DISTANCE: i32 = 8;
+/// World generates terrain out to this distance. SVDAG handles MESH_DISTANCE..WORLD_DISTANCE.
+const WORLD_DISTANCE: i32 = 48;
 const CHUNK_LAYERS: usize = (MAX_CHUNK_Y - MIN_CHUNK_Y + 1) as usize;
-const MAX_LOADED_CHUNKS: usize = ((2 * RENDER_DISTANCE + 1) * (2 * RENDER_DISTANCE + 1)) as usize * CHUNK_LAYERS;
+const MAX_MESH_CHUNKS: usize = ((2 * MESH_DISTANCE + 1) * (2 * MESH_DISTANCE + 1)) as usize * CHUNK_LAYERS;
+const MAX_SVDAG_CHUNKS: u32 = 8192;
 
 pub struct VulkanApplication {
     _vulkan_entry_point: Entry,
@@ -108,6 +113,8 @@ impl VulkanApplication {
     }
 
     /// Sets a block in the world and re-uploads the affected chunk to the GPU.
+    /// Sets a block in the world and re-uploads to the mesh shader pool.
+    /// Only near-field chunks (in VoxelPool) are editable.
     pub unsafe fn set_block(&mut self, wx: i32, wy: i32, wz: i32, block: crate::voxel::block::BlockType) {
         if !self.world.set_block(wx, wy, wz, block) {
             return;
@@ -115,15 +122,8 @@ impl VulkanApplication {
         let chunk_pos = World::block_to_chunk(wx, wy, wz);
         let [cx, cy, cz] = chunk_pos;
         if let Some(chunk) = self.world.get_chunk(cx, cy, cz) {
-            // Re-upload dense data for mesh shader
             self.voxel_pool.reupload_chunk(chunk_pos, chunk, &self.world);
             self.voxel_pool.invalidate_neighbor_boundaries(chunk_pos, &self.world);
-
-            // If this chunk has an SVDAG representation, queue recompression
-            if self.svdag_pool.has_chunk(&chunk_pos) {
-                self.svdag_pool.remove_chunk(&chunk_pos);
-                self.svdag_compressor.request(chunk_pos, chunk.clone());
-            }
         }
     }
 
@@ -183,23 +183,24 @@ impl VulkanApplication {
         allocate_command_buffers(&device, &mut data)?;
         create_sync_objects(&device, &mut data)?;
 
-        let mut world = World::new(RENDER_DISTANCE);
+        let mut world = World::new(WORLD_DISTANCE);
         world.update(0, 0);
 
         let depth_pyramid_pipeline = crate::graphical_core::compute_cull::create_depth_pyramid_pipeline(&device, &data)?;
 
-        let mut voxel_pool = VoxelPool::new(MAX_LOADED_CHUNKS as u32, &device, &instance, &mut data)?;
+        let mut voxel_pool = VoxelPool::new(MAX_MESH_CHUNKS as u32, &device, &instance, &mut data)?;
         for pos in world.chunk_positions() {
             let [cx, cy, cz] = pos;
-            if let Some(chunk) = world.get_chunk(cx, cy, cz) {
-                let tier = world.chunk_tier(&pos).unwrap_or(crate::voxel::world::ChunkTier::Near);
-                voxel_pool.upload_chunk(pos, chunk, &world, tier);
+            if crate::voxel::world::chunk_distance(cx, cz, 0, 0) <= MESH_DISTANCE {
+                if let Some(chunk) = world.get_chunk(cx, cy, cz) {
+                    voxel_pool.upload_chunk(pos, chunk, &world);
+                }
             }
         }
         let mesh_shader_pipeline = MeshShaderPipeline::create(&device, &data, &voxel_pool)?;
 
-        let svdag_pool = SvdagPool::new(MAX_LOADED_CHUNKS as u32, &device, &instance, &mut data)?;
-        let svdag_pipeline = SvdagPipeline::create(&device, &data, &svdag_pool)?;
+        let svdag_pool = SvdagPool::new(MAX_SVDAG_CHUNKS, &device, &instance, &mut data)?;
+        let svdag_pipeline = SvdagPipeline::create(&device, &instance, &mut data, &svdag_pool)?;
         let svdag_compressor = SvdagCompressor::new();
 
         Ok(Self {
@@ -367,13 +368,35 @@ impl VulkanApplication {
             phase: 1,
             draw_offset: crate::voxel::block::BlockType::opaque_mask(),
         };
-        let svdag_push = SvdagPushConstants {
-            camera_pos: camera.position.to_array(),
-            chunk_count: self.svdag_pool.chunk_count(),
-            screen_size: [
-                self.vulkan_application_data.swapchain_extent.width as f32,
-                self.vulkan_application_data.swapchain_extent.height as f32,
-            ],
+        let svdag_chunk_count = self.svdag_pool.chunk_count();
+        let extent = self.vulkan_application_data.swapchain_extent;
+        let svdag_args = if svdag_chunk_count > 0 {
+            let svdag_cull = CullPush {
+                planes: [
+                    frustum.plane(0),
+                    frustum.plane(1),
+                    frustum.plane(2),
+                    frustum.plane(3),
+                    frustum.plane(4),
+                    frustum.plane(5),
+                ],
+                total_chunks: svdag_chunk_count,
+                _pad: [0; 3],
+            };
+            let svdag_tile = TileAssignPush {
+                view_projection: eyes.primary_vp().to_cols_array_2d(),
+                screen_size: [extent.width, extent.height],
+                tile_count: self.svdag_pipeline.tile_count,
+            };
+            let svdag_march = RaymarchPush {
+                camera_pos: camera.position.to_array(),
+                _pad0: 0,
+                screen_size: [extent.width, extent.height],
+                tile_count: self.svdag_pipeline.tile_count,
+            };
+            Some((&self.svdag_pipeline, svdag_cull, svdag_tile, svdag_march))
+        } else {
+            None
         };
         record_mesh_shader_command_buffer(
             &self.device,
@@ -383,8 +406,7 @@ impl VulkanApplication {
             &self.depth_pyramid_pipeline,
             &cull_push,
             self.depth_pyramid_needs_init,
-            Some(&self.svdag_pipeline),
-            Some(&svdag_push),
+            svdag_args.as_ref().map(|(sp, c, t, m)| (*sp, c, t, m)),
         )?;
         self.depth_pyramid_needs_init = false;
         self.submit_command_buffer(image_index)?;
@@ -393,62 +415,76 @@ impl VulkanApplication {
         Ok(())
     }
 
-    /// Loads/unloads chunks incrementally each frame (budgeted generation).
+    /// Loads/unloads chunks. Mesh shader gets 0..MESH_DISTANCE, SVDAG gets MESH_DISTANCE..WORLD_DISTANCE.
     unsafe fn update_chunks(&mut self, camera: &Camera) -> anyhow::Result<()> {
         let player_cx = (camera.position.x / CHUNK_SIZE as f32).floor() as i32;
         let player_cz = (camera.position.z / CHUNK_SIZE as f32).floor() as i32;
 
-        // Always run update — even if player hasn't moved, there may be pending chunks
         let delta = self.world.update(player_cx, player_cz);
 
-        // Process completed SVDAG compressions — only upload if chunk is still Far
+        // Process completed SVDAG compressions
         for result in self.svdag_compressor.receive() {
-            let tier = self.world.chunk_tier(&result.pos);
-            if tier == Some(crate::voxel::world::ChunkTier::Far) {
-                if self.svdag_pool.is_near_budget() {
-                    self.svdag_pool.evict_chunks(8);
-                }
-                self.svdag_pool.upload_chunk(result.pos, &result.dag_data, result.lod_level);
-                self.voxel_pool.remove_chunk(&result.pos);
+            if self.world.get_chunk(result.pos[0], result.pos[1], result.pos[2]).is_none() {
+                continue;
             }
+            if self.svdag_pool.chunk_count() >= MAX_SVDAG_CHUNKS - 1 {
+                self.svdag_pool.evict_chunks(64);
+            }
+            if self.svdag_pool.is_near_budget() {
+                self.svdag_pool.evict_chunks(64);
+            }
+            self.svdag_pool.upload_chunk(result.pos, &result.dag_data, result.lod_level);
         }
 
-        // Remove SVDAG data for unloaded or promoted chunks
+        // Handle unloaded chunks — remove from whichever pool they're in
         for pos in &delta.unloaded {
+            self.voxel_pool.invalidate_neighbor_boundaries(*pos, &self.world);
+            self.voxel_pool.remove_chunk(pos);
             self.svdag_pool.remove_chunk(pos);
             self.svdag_pending.remove(pos);
         }
-        for pos in &delta.promoted {
-            self.svdag_pending.remove(pos);
-            if self.svdag_pool.has_chunk(pos) {
-                self.svdag_pool.remove_chunk(pos);
-                let [cx, cy, cz] = *pos;
-                if let Some(chunk) = self.world.get_chunk(cx, cy, cz) {
-                    let tier = self.world.chunk_tier(pos).unwrap_or(crate::voxel::world::ChunkTier::Near);
-                    self.voxel_pool.upload_chunk(*pos, chunk, &self.world, tier);
-                    self.voxel_pool.invalidate_neighbor_boundaries(*pos, &self.world);
+
+        // Evict mesh chunks that drifted beyond MESH_DISTANCE (player moved)
+        for pos in self.voxel_pool.chunk_positions() {
+            let dist = crate::voxel::world::chunk_distance(pos[0], pos[2], player_cx, player_cz);
+            if dist > MESH_DISTANCE {
+                self.voxel_pool.invalidate_neighbor_boundaries(pos, &self.world);
+                self.voxel_pool.remove_chunk(&pos);
+                if self.world.get_chunk(pos[0], pos[1], pos[2]).is_some() {
+                    self.svdag_pending.insert(pos);
                 }
             }
         }
 
-        // Add newly far chunks to the pending set (not compressed yet)
-        for pos in &delta.demoted {
-            if !self.svdag_pool.has_chunk(pos) {
-                self.svdag_pending.insert(*pos);
-            }
-        }
-        for pos in &delta.entered_transition {
-            self.svdag_pending.insert(*pos);
-        }
-        // Newly loaded far chunks go to pending
-        for pos in &delta.loaded {
-            let tier = self.world.chunk_tier(pos);
-            if tier == Some(crate::voxel::world::ChunkTier::Far) {
-                self.svdag_pending.insert(*pos);
+        // Ensure all chunks within MESH_DISTANCE are in VoxelPool (promote from SVDAG on approach)
+        for cz in (player_cz - MESH_DISTANCE)..=(player_cz + MESH_DISTANCE) {
+            for cx in (player_cx - MESH_DISTANCE)..=(player_cx + MESH_DISTANCE) {
+                for cy in crate::voxel::world::MIN_CHUNK_Y..=crate::voxel::world::MAX_CHUNK_Y {
+                    let pos = [cx, cy, cz];
+                    if self.voxel_pool.has_chunk(&pos) {
+                        continue;
+                    }
+                    if let Some(chunk) = self.world.get_chunk(cx, cy, cz) {
+                        self.voxel_pool.upload_chunk(pos, chunk, &self.world);
+                        self.voxel_pool.invalidate_neighbor_boundaries(pos, &self.world);
+                        self.svdag_pool.remove_chunk(&pos);
+                        self.svdag_pending.remove(&pos);
+                    }
+                }
             }
         }
 
-        // Budget: pick up to N closest pending chunks per frame and queue for compression
+        // Route newly loaded far chunks to SVDAG pending
+        for pos in &delta.loaded {
+            let [cx, _cy, cz] = *pos;
+            let dist = crate::voxel::world::chunk_distance(cx, cz, player_cx, player_cz);
+            if dist > MESH_DISTANCE {
+                self.svdag_pending.insert(*pos);
+            }
+            // Near chunks are picked up by the mesh sweep above
+        }
+
+        // Drain pending SVDAG compressions, closest first, budgeted
         const COMPRESSIONS_PER_FRAME: usize = 16;
         if !self.svdag_pending.is_empty() {
             let mut candidates: Vec<[i32; 3]> = self.svdag_pending.iter().copied().collect();
@@ -467,36 +503,6 @@ impl VulkanApplication {
         }
 
         self.last_player_chunk = [player_cx, player_cz];
-        self.update_chunks_mesh_shader(&delta)?;
-
-        Ok(())
-    }
-
-    /// Incremental slot writes, no GPU stall.
-    unsafe fn update_chunks_mesh_shader(&mut self, delta: &crate::voxel::world::WorldDelta) -> anyhow::Result<()> {
-        use crate::voxel::world::ChunkTier;
-
-        for pos in &delta.unloaded {
-            self.voxel_pool.invalidate_neighbor_boundaries(*pos, &self.world);
-            self.voxel_pool.remove_chunk(pos);
-        }
-        for pos in &delta.loaded {
-            let [cx, cy, cz] = *pos;
-            let tier = self.world.chunk_tier(pos).unwrap_or(ChunkTier::Near);
-            if let Some(chunk) = self.world.get_chunk(cx, cy, cz) {
-                match tier {
-                    ChunkTier::Near | ChunkTier::Transition => {
-                        self.voxel_pool.upload_chunk(*pos, chunk, &self.world, tier);
-                        self.voxel_pool.invalidate_neighbor_boundaries(*pos, &self.world);
-                    }
-                    ChunkTier::Far => {
-                        // Far chunks go straight to SVDAG compression, skip VoxelPool
-                        self.svdag_compressor.request(*pos, chunk.clone());
-                    }
-                }
-            }
-        }
-
         Ok(())
     }
 

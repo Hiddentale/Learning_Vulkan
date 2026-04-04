@@ -1,5 +1,5 @@
 use crate::graphical_core::compute_cull::{CullPushConstants, DepthPyramidResources, DepthReducePush};
-use crate::graphical_core::svdag_pipeline::{SvdagPipeline, SvdagPushConstants};
+use crate::graphical_core::svdag_pipeline::{CullPush, RaymarchPush, SvdagPipeline, TileAssignPush};
 use crate::graphical_core::vulkan_object::VulkanApplicationData;
 use crate::graphical_core::{self, MAX_FRAMES_IN_FLIGHT};
 use vk::Handle;
@@ -229,8 +229,7 @@ pub unsafe fn record_mesh_shader_command_buffer(
     depth_pyramid: &DepthPyramidResources,
     cull_push: &CullPushConstants,
     pyramid_needs_init: bool,
-    svdag_pipeline: Option<&SvdagPipeline>,
-    svdag_push: Option<&SvdagPushConstants>,
+    svdag: Option<(&SvdagPipeline, &CullPush, &TileAssignPush, &RaymarchPush)>,
 ) -> anyhow::Result<()> {
     let cmd = data.command_buffers[image_index];
     device.reset_command_buffer(cmd, vk::CommandBufferResetFlags::empty())?;
@@ -289,33 +288,181 @@ pub unsafe fn record_mesh_shader_command_buffer(
 
     device.cmd_end_render_pass(cmd);
 
-    // === Phase 3: SVDAG ray march for far-field chunks ===
-    if let (Some(svdag_pipe), Some(svdag_pc)) = (svdag_pipeline, svdag_push) {
-        if svdag_pc.chunk_count > 0 {
-            begin_render_pass_no_clear(device, cmd, data, image_index);
-
-            device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, svdag_pipe.pipeline);
-            device.cmd_bind_descriptor_sets(
-                cmd,
-                vk::PipelineBindPoint::GRAPHICS,
-                svdag_pipe.pipeline_layout,
-                0,
-                &[svdag_pipe.descriptor_set],
-                &[],
-            );
-            let push_bytes: &[u8] = std::slice::from_raw_parts(
-                svdag_pc as *const SvdagPushConstants as *const u8,
-                std::mem::size_of::<SvdagPushConstants>(),
-            );
-            device.cmd_push_constants(cmd, svdag_pipe.pipeline_layout, vk::ShaderStageFlags::FRAGMENT, 0, push_bytes);
-            device.cmd_draw(cmd, 3, 1, 0, 0);
-
-            device.cmd_end_render_pass(cmd);
+    // === SVDAG 3-pass compute pipeline + composite ===
+    if let Some((sp, cull_pc, tile_pc, march_pc)) = svdag {
+        if cull_pc.total_chunks > 0 {
+            record_svdag_passes(device, cmd, data, image_index, sp, cull_pc, tile_pc, march_pc);
         }
     }
 
     device.end_command_buffer(cmd)?;
     Ok(())
+}
+
+unsafe fn push_bytes<T>(val: &T) -> &[u8] {
+    std::slice::from_raw_parts(val as *const T as *const u8, std::mem::size_of::<T>())
+}
+
+/// Records the Aokana-style 3-pass SVDAG compute pipeline + composite fragment pass.
+unsafe fn record_svdag_passes(
+    device: &Device,
+    cmd: vk::CommandBuffer,
+    data: &VulkanApplicationData,
+    image_index: usize,
+    sp: &SvdagPipeline,
+    cull_pc: &CullPush,
+    tile_pc: &TileAssignPush,
+    march_pc: &RaymarchPush,
+) {
+    let empty_mem: &[vk::MemoryBarrier] = &[];
+    let _empty_buf: &[vk::BufferMemoryBarrier] = &[];
+    let color_range = super::subresource_range(vk::ImageAspectFlags::COLOR, 1);
+
+    // Reset visible count to 0 on the GPU timeline (no CPU/GPU race)
+    device.cmd_fill_buffer(cmd, sp.visible_count_buffer, 0, 4, 0);
+    let count_reset = *vk::BufferMemoryBarrier::builder()
+        .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+        .dst_access_mask(vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE)
+        .buffer(sp.visible_count_buffer)
+        .size(vk::WHOLE_SIZE);
+    device.cmd_pipeline_barrier(
+        cmd,
+        vk::PipelineStageFlags::TRANSFER,
+        vk::PipelineStageFlags::COMPUTE_SHADER,
+        vk::DependencyFlags::empty(),
+        empty_mem,
+        &[count_reset],
+        &[] as &[vk::ImageMemoryBarrier],
+    );
+
+    // --- Pass 1: Frustum cull ---
+    device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, sp.cull_pipeline);
+    device.cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::COMPUTE, sp.cull_layout, 0, &[sp.cull_desc_set], &[]);
+    device.cmd_push_constants(cmd, sp.cull_layout, vk::ShaderStageFlags::COMPUTE, 0, push_bytes(cull_pc));
+    device.cmd_dispatch(cmd, cull_pc.total_chunks.div_ceil(64), 1, 1);
+
+    // Barrier: cull writes → tile reads
+    let buf_barrier = *vk::BufferMemoryBarrier::builder()
+        .src_access_mask(vk::AccessFlags::SHADER_WRITE)
+        .dst_access_mask(vk::AccessFlags::SHADER_READ)
+        .buffer(sp.visible_buffer)
+        .size(vk::WHOLE_SIZE);
+    let count_barrier = *vk::BufferMemoryBarrier::builder()
+        .src_access_mask(vk::AccessFlags::SHADER_WRITE)
+        .dst_access_mask(vk::AccessFlags::SHADER_READ)
+        .buffer(sp.visible_count_buffer)
+        .size(vk::WHOLE_SIZE);
+    device.cmd_pipeline_barrier(
+        cmd,
+        vk::PipelineStageFlags::COMPUTE_SHADER,
+        vk::PipelineStageFlags::COMPUTE_SHADER,
+        vk::DependencyFlags::empty(),
+        empty_mem,
+        &[buf_barrier, count_barrier],
+        &[] as &[vk::ImageMemoryBarrier],
+    );
+
+    // --- Pass 2: Tile assignment ---
+    device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, sp.tile_pipeline);
+    device.cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::COMPUTE, sp.tile_layout, 0, &[sp.tile_desc_set], &[]);
+    device.cmd_push_constants(cmd, sp.tile_layout, vk::ShaderStageFlags::COMPUTE, 0, push_bytes(tile_pc));
+    device.cmd_dispatch(cmd, sp.tile_count[0].div_ceil(8), sp.tile_count[1].div_ceil(8), 1);
+
+    // Barrier: tile writes → ray march reads + transition output images to GENERAL
+    let tile_barrier = *vk::BufferMemoryBarrier::builder()
+        .src_access_mask(vk::AccessFlags::SHADER_WRITE)
+        .dst_access_mask(vk::AccessFlags::SHADER_READ)
+        .buffer(sp.tile_buffer)
+        .size(vk::WHOLE_SIZE);
+    let color_to_general = *vk::ImageMemoryBarrier::builder()
+        .old_layout(vk::ImageLayout::UNDEFINED)
+        .new_layout(vk::ImageLayout::GENERAL)
+        .src_access_mask(vk::AccessFlags::empty())
+        .dst_access_mask(vk::AccessFlags::SHADER_WRITE)
+        .image(sp.color_image)
+        .subresource_range(color_range);
+    let depth_to_general = *vk::ImageMemoryBarrier::builder()
+        .old_layout(vk::ImageLayout::UNDEFINED)
+        .new_layout(vk::ImageLayout::GENERAL)
+        .src_access_mask(vk::AccessFlags::empty())
+        .dst_access_mask(vk::AccessFlags::SHADER_WRITE)
+        .image(sp.depth_image)
+        .subresource_range(color_range);
+    device.cmd_pipeline_barrier(
+        cmd,
+        vk::PipelineStageFlags::COMPUTE_SHADER,
+        vk::PipelineStageFlags::COMPUTE_SHADER,
+        vk::DependencyFlags::empty(),
+        empty_mem,
+        &[tile_barrier],
+        &[color_to_general, depth_to_general],
+    );
+
+    // Clear output images to transparent / far depth
+    let clear_color = vk::ClearColorValue::from_float32([0.0, 0.0, 0.0, 0.0]);
+    let clear_depth = vk::ClearColorValue::from_float32([1.0, 0.0, 0.0, 0.0]);
+    device.cmd_clear_color_image(cmd, sp.color_image, vk::ImageLayout::GENERAL, &clear_color, &[color_range]);
+    device.cmd_clear_color_image(cmd, sp.depth_image, vk::ImageLayout::GENERAL, &clear_depth, &[color_range]);
+
+    // Barrier: clear → compute write
+    let mem_barrier = *vk::MemoryBarrier::builder()
+        .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+        .dst_access_mask(vk::AccessFlags::SHADER_WRITE | vk::AccessFlags::SHADER_READ);
+    device.cmd_pipeline_barrier(
+        cmd,
+        vk::PipelineStageFlags::TRANSFER,
+        vk::PipelineStageFlags::COMPUTE_SHADER,
+        vk::DependencyFlags::empty(),
+        &[mem_barrier],
+        &[] as &[vk::BufferMemoryBarrier],
+        &[] as &[vk::ImageMemoryBarrier],
+    );
+
+    // --- Pass 3: Ray march ---
+    device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, sp.march_pipeline);
+    device.cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::COMPUTE, sp.march_layout, 0, &[sp.march_desc_set], &[]);
+    device.cmd_push_constants(cmd, sp.march_layout, vk::ShaderStageFlags::COMPUTE, 0, push_bytes(march_pc));
+    let extent = data.swapchain_extent;
+    device.cmd_dispatch(cmd, extent.width.div_ceil(8), extent.height.div_ceil(8), 1);
+
+    // Transition output images: GENERAL → SHADER_READ_ONLY for composite sampling
+    let color_to_read = *vk::ImageMemoryBarrier::builder()
+        .old_layout(vk::ImageLayout::GENERAL)
+        .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+        .src_access_mask(vk::AccessFlags::SHADER_WRITE)
+        .dst_access_mask(vk::AccessFlags::SHADER_READ)
+        .image(sp.color_image)
+        .subresource_range(color_range);
+    let depth_to_read = *vk::ImageMemoryBarrier::builder()
+        .old_layout(vk::ImageLayout::GENERAL)
+        .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+        .src_access_mask(vk::AccessFlags::SHADER_WRITE)
+        .dst_access_mask(vk::AccessFlags::SHADER_READ)
+        .image(sp.depth_image)
+        .subresource_range(color_range);
+    device.cmd_pipeline_barrier(
+        cmd,
+        vk::PipelineStageFlags::COMPUTE_SHADER,
+        vk::PipelineStageFlags::FRAGMENT_SHADER,
+        vk::DependencyFlags::empty(),
+        empty_mem,
+        &[] as &[vk::BufferMemoryBarrier],
+        &[color_to_read, depth_to_read],
+    );
+
+    // --- Composite: fullscreen triangle sampling compute output, depth-tested + alpha-blended ---
+    begin_render_pass_no_clear(device, cmd, data, image_index);
+    device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, sp.composite_pipeline);
+    device.cmd_bind_descriptor_sets(
+        cmd,
+        vk::PipelineBindPoint::GRAPHICS,
+        sp.composite_layout,
+        0,
+        &[sp.composite_desc_set],
+        &[],
+    );
+    device.cmd_draw(cmd, 3, 1, 0, 0);
+    device.cmd_end_render_pass(cmd);
 }
 
 /// Creates semaphores and fences for each frame in flight.

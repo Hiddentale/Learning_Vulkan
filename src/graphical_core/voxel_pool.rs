@@ -2,7 +2,7 @@
 use crate::graphical_core::buffers::allocate_buffer;
 use crate::graphical_core::vulkan_object::VulkanApplicationData;
 use crate::voxel::chunk::{Chunk, CHUNK_SIZE};
-use crate::voxel::world::{ChunkTier, World};
+use crate::voxel::world::World;
 use std::collections::HashMap;
 use vulkan_rust::{vk, Device, Instance};
 
@@ -48,7 +48,7 @@ pub struct VoxelPool {
     free_slots: Vec<u32>,
     next_slot: u32,
     max_slots: u32,
-    chunk_slots: HashMap<[i32; 3], (u32, ChunkTier)>,
+    chunk_slots: HashMap<[i32; 3], u32>,
 
     // Chunk info is packed contiguously for GPU dispatch
     chunk_info_count: u32,
@@ -103,8 +103,8 @@ impl VoxelPool {
     }
 
     /// Uploads a chunk's voxel data and boundary slices to GPU.
-    pub unsafe fn upload_chunk(&mut self, pos: [i32; 3], chunk: &Chunk, world: &World, tier: ChunkTier) {
-        let slot = self.allocate_slot(pos, tier);
+    pub unsafe fn upload_chunk(&mut self, pos: [i32; 3], chunk: &Chunk, world: &World) {
+        let slot = self.allocate_slot(pos);
 
         // Write voxel data
         let voxel_offset = slot as usize * VOXEL_CHUNK_BYTES;
@@ -133,7 +133,7 @@ impl VoxelPool {
     /// Used after in-place block edits. Does not allocate a new slot.
     pub unsafe fn reupload_chunk(&mut self, pos: [i32; 3], chunk: &Chunk, world: &World) {
         let slot = match self.chunk_slots.get(&pos) {
-            Some(&(s, _)) => s,
+            Some(&s) => s,
             None => return,
         };
         let voxel_offset = slot as usize * VOXEL_CHUNK_BYTES;
@@ -144,7 +144,7 @@ impl VoxelPool {
     /// Removes a chunk from the pool, returning its slot for reuse.
     pub unsafe fn remove_chunk(&mut self, pos: &[i32; 3]) {
         let slot = match self.chunk_slots.remove(pos) {
-            Some((s, _)) => s,
+            Some(s) => s,
             None => return,
         };
         self.free_slots.push(slot);
@@ -183,7 +183,7 @@ impl VoxelPool {
             [cx, cy, cz - 1],
         ];
         for neighbor_pos in &neighbors {
-            if let Some(&(slot, _)) = self.chunk_slots.get(neighbor_pos) {
+            if let Some(&slot) = self.chunk_slots.get(neighbor_pos) {
                 self.write_boundary(slot, *neighbor_pos, world);
             }
         }
@@ -197,24 +197,8 @@ impl VoxelPool {
         self.chunk_slots.contains_key(pos)
     }
 
-    pub fn chunk_tier_counts(&self) -> (u32, u32, u32) {
-        let mut near = 0u32;
-        let mut transition = 0u32;
-        let mut far = 0u32;
-        for (_, tier) in self.chunk_slots.values() {
-            match tier {
-                ChunkTier::Near => near += 1,
-                ChunkTier::Transition => transition += 1,
-                ChunkTier::Far => far += 1,
-            }
-        }
-        (near, transition, far)
-    }
-
-    pub fn set_chunk_tier(&mut self, pos: &[i32; 3], tier: ChunkTier) {
-        if let Some(entry) = self.chunk_slots.get_mut(pos) {
-            entry.1 = tier;
-        }
+    pub fn chunk_positions(&self) -> Vec<[i32; 3]> {
+        self.chunk_slots.keys().copied().collect()
     }
 
     pub unsafe fn destroy(&mut self, device: &Device) {
@@ -235,14 +219,14 @@ impl VoxelPool {
         device.free_memory(self.visibility_memory, None);
     }
 
-    fn allocate_slot(&mut self, pos: [i32; 3], tier: ChunkTier) -> u32 {
+    fn allocate_slot(&mut self, pos: [i32; 3]) -> u32 {
         let slot = self.free_slots.pop().unwrap_or_else(|| {
             let s = self.next_slot;
             self.next_slot += 1;
             assert!(s < self.max_slots, "VoxelPool: exceeded max slot count");
             s
         });
-        self.chunk_slots.insert(pos, (slot, tier));
+        self.chunk_slots.insert(pos, slot);
         slot
     }
 

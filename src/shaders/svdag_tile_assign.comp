@@ -1,0 +1,103 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+struct SvdagChunkInfo {
+    vec3 aabb_min;
+    uint dag_offset;
+    vec3 aabb_max;
+    uint dag_size;
+};
+
+layout(set = 0, binding = 0) readonly buffer ChunkInfoSSBO {
+    SvdagChunkInfo chunks[];
+};
+
+layout(set = 0, binding = 1) readonly buffer VisibleChunks {
+    uint visible_indices[];
+};
+
+layout(set = 0, binding = 2) readonly buffer VisibleCount {
+    uint visible_count;
+};
+
+// Per-tile chunk list. Each tile gets MAX_CHUNKS_PER_TILE entries.
+// Layout: tile_data[tile_index * (MAX_CHUNKS_PER_TILE + 1)]
+//   [0] = count of chunks in this tile
+//   [1..MAX_CHUNKS_PER_TILE] = chunk indices into the main chunk info SSBO
+const uint MAX_CHUNKS_PER_TILE = 32;
+const uint TILE_STRIDE = MAX_CHUNKS_PER_TILE + 1; // count + entries
+const uint TILE_SIZE = 8;
+
+layout(set = 0, binding = 3) buffer TileChunks {
+    uint tile_data[];
+};
+
+layout(push_constant) uniform PushConstants {
+    mat4 view_projection;
+    uvec2 screen_size;
+    uvec2 tile_count;
+};
+
+// Project AABB to screen-space bounding rect (in tile coordinates)
+// Returns false if entirely behind the camera
+bool project_aabb(vec3 aabb_min, vec3 aabb_max, out ivec2 tile_min, out ivec2 tile_max) {
+    vec2 screen_min = vec2(1e30);
+    vec2 screen_max = vec2(-1e30);
+    bool any_in_front = false;
+
+    // Project all 8 corners
+    for (int i = 0; i < 8; i++) {
+        vec3 corner = vec3(
+            ((i & 1) != 0) ? aabb_max.x : aabb_min.x,
+            ((i & 2) != 0) ? aabb_max.y : aabb_min.y,
+            ((i & 4) != 0) ? aabb_max.z : aabb_min.z
+        );
+        vec4 clip = view_projection * vec4(corner, 1.0);
+        if (clip.w > 0.001) {
+            any_in_front = true;
+            vec2 ndc = clip.xy / clip.w;
+            vec2 screen = (ndc * 0.5 + 0.5) * vec2(screen_size);
+            screen_min = min(screen_min, screen);
+            screen_max = max(screen_max, screen);
+        }
+    }
+
+    if (!any_in_front) return false;
+
+    // Clamp to screen and convert to tile coordinates
+    tile_min = ivec2(clamp(screen_min / float(TILE_SIZE), vec2(0.0), vec2(tile_count) - 1.0));
+    tile_max = ivec2(clamp(screen_max / float(TILE_SIZE), vec2(0.0), vec2(tile_count) - 1.0));
+    return true;
+}
+
+void main() {
+    uvec2 tile_id = gl_GlobalInvocationID.xy;
+    if (tile_id.x >= tile_count.x || tile_id.y >= tile_count.y) return;
+
+    uint tile_index = tile_id.x + tile_id.y * tile_count.x;
+    uint base = tile_index * TILE_STRIDE;
+
+    // Reset this tile's count
+    tile_data[base] = 0u;
+
+    // Test each visible chunk against this tile
+    uint vis_count = visible_count;
+    for (uint i = 0; i < vis_count; i++) {
+        uint chunk_idx = visible_indices[i];
+        SvdagChunkInfo chunk = chunks[chunk_idx];
+
+        ivec2 t_min, t_max;
+        if (!project_aabb(chunk.aabb_min, chunk.aabb_max, t_min, t_max)) continue;
+
+        // Does this chunk's screen rect overlap our tile?
+        if (int(tile_id.x) >= t_min.x && int(tile_id.x) <= t_max.x &&
+            int(tile_id.y) >= t_min.y && int(tile_id.y) <= t_max.y) {
+            uint count = tile_data[base];
+            if (count < MAX_CHUNKS_PER_TILE) {
+                tile_data[base + 1u + count] = chunk_idx;
+                tile_data[base] = count + 1u;
+            }
+        }
+    }
+}
