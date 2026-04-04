@@ -11,14 +11,14 @@ const ATLAS_HEIGHT: u32 = 16;
 
 /// Block textures in material_id order. None means no texture (use palette color).
 const TEXTURE_FILES: &[Option<&str>] = &[
-    None,              // 0: Air
-    Some("grass.png"), // 1: Grass (32x16 atlas: side + top)
-    Some("dirt.png"),  // 2: Dirt
-    Some("stone.png"), // 3: Stone
-    Some("water.png"), // 4: Water
-    Some("sand.png"),  // 5: Sand
-    Some("snow.png"),  // 6: Snow
-    Some("gravel.png"),// 7: Gravel
+    None,               // 0: Air
+    Some("grass.png"),  // 1: Grass (32x16 atlas: side + top)
+    Some("dirt.png"),   // 2: Dirt
+    Some("stone.png"),  // 3: Stone
+    Some("water.png"),  // 4: Water
+    Some("sand.png"),   // 5: Sand
+    Some("snow.png"),   // 6: Snow
+    Some("gravel.png"), // 7: Gravel
 ];
 
 fn get_texture_path(texture_name: &str) -> String {
