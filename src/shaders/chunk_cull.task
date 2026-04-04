@@ -1,0 +1,77 @@
+#version 450
+#extension GL_EXT_mesh_shader : require
+
+layout(local_size_x = 64) in;
+
+struct MeshChunkInfo {
+    vec3 aabb_min;
+    uint voxel_slot;
+    vec3 aabb_max;
+    uint boundary_slot;
+};
+
+layout(std430, set = 0, binding = 5) readonly buffer ChunkInfoBuffer {
+    MeshChunkInfo chunks[];
+};
+
+layout(std430, set = 0, binding = 3) readonly buffer VoxelDataBuffer {
+    uint voxel_data[];
+};
+
+layout(push_constant) uniform PushConstants {
+    vec4 planes[6];
+    vec3 camera_pos;
+    uint chunk_count;
+    vec2 screen_size;
+    uint phase;
+    uint opaque_mask;
+};
+
+struct MeshPayload {
+    uint chunk_index;
+    uint sub_chunk_index;
+};
+
+taskPayloadSharedEXT MeshPayload payloads[64];
+shared uint meshlet_count;
+
+// Check if 4x4x4 sub-chunk has any non-air blocks
+bool sub_chunk_occupied(uint voxel_slot, uint sub_idx) {
+    uint sx = (sub_idx & 3u) * 4u;
+    uint sy = ((sub_idx >> 2u) & 3u) * 4u;
+    uint sz = ((sub_idx >> 4u) & 3u) * 4u;
+
+    for (uint dy = 0u; dy < 4u; dy++) {
+        for (uint dz = 0u; dz < 4u; dz++) {
+            uint idx = sx + (sz + dz) * 16u + (sy + dy) * 256u;
+            uint word_idx = voxel_slot * 1024u + idx / 4u;
+            uint packed = voxel_data[word_idx];
+            if (packed != 0u) return true;
+        }
+    }
+    return false;
+}
+
+void main() {
+    uint chunk_idx = gl_WorkGroupID.x;
+    if (chunk_idx >= chunk_count) {
+        EmitMeshTasksEXT(0u, 1u, 1u);
+        return;
+    }
+
+    uint tid = gl_LocalInvocationID.x;
+
+    if (tid == 0u) meshlet_count = 0u;
+    barrier();
+
+    // Each of 64 threads checks one 4x4x4 sub-chunk
+    MeshChunkInfo chunk = chunks[chunk_idx];
+    if (tid < 64u && sub_chunk_occupied(chunk.voxel_slot, tid)) {
+        uint slot = atomicAdd(meshlet_count, 1u);
+        payloads[slot].chunk_index = chunk_idx;
+        payloads[slot].sub_chunk_index = tid;
+    }
+
+    barrier();
+    EmitMeshTasksEXT(meshlet_count, 1u, 1u);
+}
