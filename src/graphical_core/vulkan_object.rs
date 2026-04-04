@@ -174,9 +174,11 @@ impl VulkanApplication {
         let depth_pyramid_pipeline = crate::graphical_core::compute_cull::create_depth_pyramid_pipeline(&device, &data)?;
 
         let mut voxel_pool = VoxelPool::new(MAX_LOADED_CHUNKS as u32, &device, &instance, &mut data)?;
-        for [cx, cy, cz] in world.chunk_positions() {
+        for pos in world.chunk_positions() {
+            let [cx, cy, cz] = pos;
             if let Some(chunk) = world.get_chunk(cx, cy, cz) {
-                voxel_pool.upload_chunk([cx, cy, cz], chunk, &world);
+                let tier = world.chunk_tier(&pos).unwrap_or(crate::voxel::world::ChunkTier::Near);
+                voxel_pool.upload_chunk(pos, chunk, &world, tier);
             }
         }
         let mesh_shader_pipeline = MeshShaderPipeline::create(&device, &data, &voxel_pool)?;
@@ -384,12 +386,19 @@ impl VulkanApplication {
             voxel_pool.invalidate_neighbor_boundaries(*pos, &self.world);
             voxel_pool.remove_chunk(pos);
         }
-        for &[cx, cy, cz] in &delta.loaded {
-            let pos = [cx, cy, cz];
+        for pos in &delta.loaded {
+            let [cx, cy, cz] = *pos;
             if let Some(chunk) = self.world.get_chunk(cx, cy, cz) {
-                voxel_pool.upload_chunk(pos, chunk, &self.world);
-                voxel_pool.invalidate_neighbor_boundaries(pos, &self.world);
+                let tier = self.world.chunk_tier(pos).unwrap_or(crate::voxel::world::ChunkTier::Near);
+                voxel_pool.upload_chunk(*pos, chunk, &self.world, tier);
+                voxel_pool.invalidate_neighbor_boundaries(*pos, &self.world);
             }
+        }
+        for pos in &delta.promoted {
+            voxel_pool.set_chunk_tier(pos, crate::voxel::world::ChunkTier::Near);
+        }
+        for pos in &delta.demoted {
+            voxel_pool.set_chunk_tier(pos, crate::voxel::world::ChunkTier::Far);
         }
 
         Ok(())
