@@ -4,5 +4,6 @@ pub mod chunk;
 pub mod chunk_generator;
 pub mod material;
 pub mod player;
+pub mod raycast;
 pub mod terrain;
 pub mod world;

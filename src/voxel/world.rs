@@ -88,12 +88,44 @@ impl World {
         self.get_block(wx, wy, wz).is_opaque()
     }
 
+    /// Sets a block at integer world coordinates. Returns false if the chunk isn't loaded.
+    #[allow(dead_code)] // wired up in block interaction commit
+    pub fn set_block(&mut self, wx: i32, wy: i32, wz: i32, block: BlockType) -> bool {
+        let size = CHUNK_SIZE as i32;
+        let cx = wx.div_euclid(size);
+        let cy = wy.div_euclid(size);
+        let cz = wz.div_euclid(size);
+        let lx = wx.rem_euclid(size) as usize;
+        let ly = wy.rem_euclid(size) as usize;
+        let lz = wz.rem_euclid(size) as usize;
+        match self.chunks.get_mut(&[cx, cy, cz]) {
+            Some(chunk) => {
+                chunk.set(lx, ly, lz, block);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Returns the chunk coordinates [cx, cy, cz] for a given world-space integer position.
+    #[allow(dead_code)] // wired up in block interaction commit
+    pub fn block_to_chunk(wx: i32, wy: i32, wz: i32) -> [i32; 3] {
+        let size = CHUNK_SIZE as i32;
+        [wx.div_euclid(size), wy.div_euclid(size), wz.div_euclid(size)]
+    }
+
     pub fn get_chunk(&self, cx: i32, cy: i32, cz: i32) -> Option<&Chunk> {
         self.chunks.get(&[cx, cy, cz])
     }
 
     pub fn chunk_positions(&self) -> impl Iterator<Item = [i32; 3]> + '_ {
         self.chunks.keys().copied()
+    }
+
+    /// Inserts an empty chunk at the given position. Used for testing.
+    #[cfg(test)]
+    pub fn insert_empty_chunk(&mut self, cx: i32, cy: i32, cz: i32) {
+        self.chunks.insert([cx, cy, cz], Chunk::new(BlockType::Air));
     }
 }
 
