@@ -1,4 +1,5 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
 pub enum BlockType {
     Air,
     Grass,
@@ -20,15 +21,21 @@ impl BlockType {
     }
 
     pub fn material_id(self) -> u8 {
-        match self {
-            BlockType::Air => 0,
-            BlockType::Grass => 1,
-            BlockType::Dirt => 2,
-            BlockType::Stone => 3,
-            BlockType::Water => 4,
-            BlockType::Sand => 5,
-            BlockType::Snow => 6,
-            BlockType::Gravel => 7,
+        self as u8
+    }
+
+    /// Bitmask where bit `i` is set if block type `i` is opaque.
+    /// Used by mesh shaders for GPU-side face culling.
+    #[allow(dead_code)] // Used in Phase 2 (mesh shader pipeline)
+    pub fn opaque_mask() -> u32 {
+        let mut mask = 0u32;
+        for i in 0..=7u8 {
+            // Safety: repr(u8) guarantees valid transmute for 0..=7
+            let block: BlockType = unsafe { std::mem::transmute(i) };
+            if block.is_opaque() {
+                mask |= 1 << i;
+            }
         }
+        mask
     }
 }
