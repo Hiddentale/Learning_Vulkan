@@ -174,6 +174,32 @@ impl SvdagPool {
         self.geometry_next
     }
 
+    /// Returns true if geometry usage exceeds 90% of the budget.
+    pub fn is_near_budget(&self) -> bool {
+        (self.geometry_next as u64) > SVDAG_GEOMETRY_BUDGET * 9 / 10
+    }
+
+    /// Evict chunks to free VRAM. Prioritizes LOD-0 chunks (highest memory per chunk).
+    /// Returns positions of evicted chunks.
+    pub unsafe fn evict_lod0_chunks(&mut self, count: usize) -> Vec<[i32; 3]> {
+        let mut evicted = Vec::new();
+        let positions: Vec<[i32; 3]> = self.chunk_slots.keys().copied().collect();
+        for pos in positions {
+            if evicted.len() >= count {
+                break;
+            }
+            // Check if this is a LOD-0 chunk by reading its info
+            if let Some(&info_index) = self.chunk_slots.get(&pos) {
+                let info = std::ptr::read(self.chunk_info_ptr.add(info_index as usize));
+                if info.lod_level == 0 {
+                    self.remove_chunk(&pos);
+                    evicted.push(pos);
+                }
+            }
+        }
+        evicted
+    }
+
     pub unsafe fn destroy(&mut self, device: &Device) {
         device.unmap_memory(self.geometry_memory);
         device.destroy_buffer(self.geometry_buffer, None);

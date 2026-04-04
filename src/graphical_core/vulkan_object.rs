@@ -394,8 +394,14 @@ impl VulkanApplication {
         // Process completed SVDAG compressions
         for result in self.svdag_compressor.receive() {
             if self.world.get_chunk(result.pos[0], result.pos[1], result.pos[2]).is_some() {
-                self.svdag_pool.upload_chunk(result.pos, &result.dag_data, &result.material_data, 0);
+                self.svdag_pool
+                    .upload_chunk(result.pos, &result.dag_data, &result.material_data, result.lod_level);
             }
+        }
+
+        // VRAM budget: evict LOD-0 chunks when approaching the limit
+        if self.svdag_pool.is_near_budget() {
+            self.svdag_pool.evict_lod0_chunks(16);
         }
 
         // Remove SVDAG data for unloaded chunks

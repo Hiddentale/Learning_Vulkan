@@ -12,6 +12,20 @@ pub const NEAR_RADIUS: i32 = 6;
 /// Width of the transition band around NEAR_RADIUS where chunks exist in both systems.
 pub const TRANSITION_WIDTH: i32 = 2;
 
+/// Select LOD level based on Chebyshev distance from player (in chunks).
+#[allow(dead_code)] // Used when LOD streaming is fully wired
+pub fn lod_for_distance(dist: i32) -> u32 {
+    if dist <= NEAR_RADIUS + TRANSITION_WIDTH {
+        0 // LOD-0 (full res SVDAG)
+    } else if dist <= 24 {
+        1
+    } else if dist <= 48 {
+        2
+    } else {
+        3
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ChunkTier {
     Near,
