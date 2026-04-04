@@ -99,6 +99,20 @@ impl VulkanApplication {
         &self.world
     }
 
+    /// Sets a block in the world and re-uploads the affected chunk to the GPU.
+    #[allow(dead_code)] // wired up in block interaction commit
+    pub unsafe fn set_block(&mut self, wx: i32, wy: i32, wz: i32, block: crate::voxel::block::BlockType) {
+        if !self.world.set_block(wx, wy, wz, block) {
+            return;
+        }
+        let chunk_pos = World::block_to_chunk(wx, wy, wz);
+        let [cx, cy, cz] = chunk_pos;
+        if let Some(chunk) = self.world.get_chunk(cx, cy, cz) {
+            self.voxel_pool.reupload_chunk(chunk_pos, chunk, &self.world);
+            self.voxel_pool.invalidate_neighbor_boundaries(chunk_pos, &self.world);
+        }
+    }
+
     pub fn swapchain_extent(&self) -> vk::Extent2D {
         self.vulkan_application_data.swapchain_extent
     }

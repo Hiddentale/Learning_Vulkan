@@ -129,6 +129,18 @@ impl VoxelPool {
         self.chunk_info_count += 1;
     }
 
+    /// Re-uploads voxel data for a chunk that is already in the pool.
+    /// Used after in-place block edits. Does not allocate a new slot.
+    pub unsafe fn reupload_chunk(&mut self, pos: [i32; 3], chunk: &Chunk, world: &World) {
+        let slot = match self.chunk_slots.get(&pos) {
+            Some(&s) => s,
+            None => return,
+        };
+        let voxel_offset = slot as usize * VOXEL_CHUNK_BYTES;
+        std::ptr::copy_nonoverlapping(chunk.as_bytes().as_ptr(), self.voxel_ptr.add(voxel_offset), VOXEL_CHUNK_BYTES);
+        self.write_boundary(slot, pos, world);
+    }
+
     /// Removes a chunk from the pool, returning its slot for reuse.
     pub unsafe fn remove_chunk(&mut self, pos: &[i32; 3]) {
         let slot = match self.chunk_slots.remove(pos) {
