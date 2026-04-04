@@ -21,6 +21,9 @@ const TEMPERATURE_SCALE: f64 = 0.001;
 const HUMIDITY_SCALE: f64 = 0.001;
 const WARP_SCALE: f64 = 0.003;
 const WARP_STRENGTH: f64 = 80.0;
+const OVERHANG_SCALE: f64 = 0.04;
+const OVERHANG_STRENGTH: f64 = 8.0;
+const OVERHANG_BAND: usize = 20;
 
 // Height contributions
 const CONTINENT_AMPLITUDE: f64 = 40.0;
@@ -36,6 +39,7 @@ struct WorldNoises {
     humidity: Fbm<Perlin>,
     warp_x: Fbm<Perlin>,
     warp_z: Fbm<Perlin>,
+    overhang: Perlin,
 }
 
 impl WorldNoises {
@@ -73,6 +77,7 @@ impl WorldNoises {
                 .set_octaves(3)
                 .set_persistence(0.5)
                 .set_lacunarity(2.0),
+            overhang: Perlin::new(seed + 8),
         }
     }
 }
@@ -95,7 +100,7 @@ pub fn generate_column(chunk_x: i32, chunk_z: i32) -> Vec<Chunk> {
             let height = sample_height(&noises, warped_x, warped_z, temperature);
             let biome = biome::determine_biome(temperature, humidity, height, SEA_LEVEL);
 
-            fill_surface(&mut chunks, x, z, height, biome);
+            fill_surface(&mut chunks, x, z, wx, wz, height, biome, &noises);
             carve_caves(&mut chunks, x, z, wx, wz, height, &noises);
             fill_water(&mut chunks, x, z, height);
         }
@@ -116,19 +121,52 @@ fn sample_height(noises: &WorldNoises, wx: f64, wz: f64, temperature: f64) -> us
     height as usize
 }
 
-fn fill_surface(chunks: &mut [Chunk], x: usize, z: usize, surface_y: usize, biome: Biome) {
+fn fill_surface(
+    chunks: &mut [Chunk],
+    x: usize,
+    z: usize,
+    wx: f64,
+    wz: f64,
+    surface_y: usize,
+    biome: Biome,
+    noises: &WorldNoises,
+) {
     let surface = biome::surface_block(biome);
     let subsurface = biome::subsurface_block(biome);
+    let band_bottom = surface_y.saturating_sub(OVERHANG_BAND);
+    let band_top = (surface_y + OVERHANG_BAND).min(MAX_HEIGHT);
 
-    for y in 0..=surface_y {
-        let block = if y == surface_y {
-            surface
-        } else if y + DIRT_DEPTH > surface_y {
+    // Below the overhang band: always solid
+    for y in 0..band_bottom {
+        let block = if y + DIRT_DEPTH > surface_y {
             subsurface
         } else {
             BlockType::Stone
         };
         set_block(chunks, x, y, z, block);
+    }
+
+    // Within the overhang band: use 3D density to decide solid vs air
+    for y in band_bottom..=band_top {
+        // Base density: positive below surface, negative above
+        let base_density = (surface_y as f64 - y as f64) / OVERHANG_BAND as f64;
+        let noise_val = noises.overhang.get([
+            wx * OVERHANG_SCALE,
+            y as f64 * OVERHANG_SCALE,
+            wz * OVERHANG_SCALE,
+        ]);
+        let density = base_density + noise_val * (OVERHANG_STRENGTH / OVERHANG_BAND as f64);
+
+        if density > 0.0 {
+            let block = if y >= surface_y {
+                surface
+            } else if y + DIRT_DEPTH > surface_y {
+                subsurface
+            } else {
+                BlockType::Stone
+            };
+            set_block(chunks, x, y, z, block);
+        }
     }
 }
 
