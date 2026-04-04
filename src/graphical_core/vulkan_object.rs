@@ -113,8 +113,15 @@ impl VulkanApplication {
         let chunk_pos = World::block_to_chunk(wx, wy, wz);
         let [cx, cy, cz] = chunk_pos;
         if let Some(chunk) = self.world.get_chunk(cx, cy, cz) {
+            // Re-upload dense data for mesh shader
             self.voxel_pool.reupload_chunk(chunk_pos, chunk, &self.world);
             self.voxel_pool.invalidate_neighbor_boundaries(chunk_pos, &self.world);
+
+            // If this chunk has an SVDAG representation, queue recompression
+            if self.svdag_pool.has_chunk(&chunk_pos) {
+                self.svdag_pool.remove_chunk(&chunk_pos);
+                self.svdag_compressor.request(chunk_pos, chunk.clone());
+            }
         }
     }
 
