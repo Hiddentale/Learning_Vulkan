@@ -89,7 +89,6 @@ impl World {
     }
 
     /// Sets a block at integer world coordinates. Returns false if the chunk isn't loaded.
-    #[allow(dead_code)] // wired up in block interaction commit
     pub fn set_block(&mut self, wx: i32, wy: i32, wz: i32, block: BlockType) -> bool {
         let size = CHUNK_SIZE as i32;
         let cx = wx.div_euclid(size);
@@ -108,7 +107,6 @@ impl World {
     }
 
     /// Returns the chunk coordinates [cx, cy, cz] for a given world-space integer position.
-    #[allow(dead_code)] // wired up in block interaction commit
     pub fn block_to_chunk(wx: i32, wy: i32, wz: i32) -> [i32; 3] {
         let size = CHUNK_SIZE as i32;
         [wx.div_euclid(size), wy.div_euclid(size), wz.div_euclid(size)]

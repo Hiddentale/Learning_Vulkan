@@ -6,6 +6,8 @@ use anyhow::Result;
 use graphical_core::camera::{Camera, EyeMatrices};
 use graphical_core::input::InputState;
 use graphical_core::vulkan_object::VulkanApplication;
+use voxel::block::BlockType;
+use voxel::raycast;
 use log::info;
 use std::time::Instant;
 use voxel::player::Player;
@@ -113,6 +115,18 @@ fn main() -> Result<()> {
                 let world = application.world();
                 player.resolve_horizontal(&mut camera.position, old_position, world);
                 player.apply_physics(&mut camera.position, delta_time, world);
+
+                if input.take_left_click() {
+                    if let Some(hit) = raycast::raycast(camera.position, camera.front(), application.world()) {
+                        unsafe { application.set_block(hit.block[0], hit.block[1], hit.block[2], BlockType::Air) };
+                    }
+                }
+                if input.take_right_click() {
+                    if let Some(hit) = raycast::raycast(camera.position, camera.front(), application.world()) {
+                        unsafe { application.set_block(hit.adjacent[0], hit.adjacent[1], hit.adjacent[2], BlockType::Stone) };
+                    }
+                }
+
                 user_window.request_redraw();
             }
             Event::WindowEvent {

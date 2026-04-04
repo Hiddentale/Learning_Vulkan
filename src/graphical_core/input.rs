@@ -48,13 +48,11 @@ impl InputState {
     }
 
     /// Returns and clears the left-click flag.
-    #[allow(dead_code)] // wired up in block interaction commit
     pub fn take_left_click(&mut self) -> bool {
         std::mem::take(&mut self.left_click)
     }
 
     /// Returns and clears the right-click flag.
-    #[allow(dead_code)] // wired up in block interaction commit
     pub fn take_right_click(&mut self) -> bool {
         std::mem::take(&mut self.right_click)
     }

@@ -100,7 +100,6 @@ impl VulkanApplication {
     }
 
     /// Sets a block in the world and re-uploads the affected chunk to the GPU.
-    #[allow(dead_code)] // wired up in block interaction commit
     pub unsafe fn set_block(&mut self, wx: i32, wy: i32, wz: i32, block: crate::voxel::block::BlockType) {
         if !self.world.set_block(wx, wy, wz, block) {
             return;

@@ -1,4 +1,3 @@
-#![allow(dead_code)] // Wired up in block interaction commit
 use glam::Vec3;
 use super::block::BlockType;
 use super::world::World;
