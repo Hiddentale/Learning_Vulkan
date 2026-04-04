@@ -53,7 +53,9 @@ layout(location = 1) out vec3 fragNormalWorld[];
 layout(location = 2) flat out uint fragMaterialId[];
 layout(location = 3) out vec3 fragWorldPos[];
 
-shared uint face_counter;
+// Shared state for two-pass allocation
+shared uint total_faces;
+shared uint thread_base[64]; // each thread's starting face slot
 
 // Face normals: +X, -X, +Y, -Y, +Z, -Z
 const vec3 FACE_NORMALS[6] = vec3[6](
@@ -61,7 +63,6 @@ const vec3 FACE_NORMALS[6] = vec3[6](
     vec3(0, -1, 0), vec3(0, 0, 1), vec3(0, 0, -1)
 );
 
-// Tangent and bitangent per face (matches meshing.rs FACES order)
 const vec3 FACE_TANGENTS[6] = vec3[6](
     vec3(0, 0, 1), vec3(0, 0, -1), vec3(1, 0, 0),
     vec3(1, 0, 0), vec3(-1, 0, 0), vec3(1, 0, 0)
@@ -92,10 +93,9 @@ bool is_opaque_block(uint block_type) {
     return (opaque_mask & (1u << block_type)) != 0u;
 }
 
-// Determine if face should be emitted (matches meshing.rs should_emit_face)
 bool should_emit(uint block, uint neighbor) {
     if (is_opaque_block(block)) return !is_opaque_block(neighbor);
-    if (block == 4u) return neighbor == 0u;  // Water adjacent to Air
+    if (block == 4u) return neighbor == 0u;
     return false;
 }
 
@@ -103,16 +103,31 @@ uint get_neighbor(uint voxel_slot, uint boundary_slot, int x, int y, int z, uint
     if (x >= 0 && x < 16 && y >= 0 && y < 16 && z >= 0 && z < 16) {
         return read_block(voxel_slot, uint(x), uint(y), uint(z));
     }
-    // Read from boundary data
-    // Map the out-of-bounds coordinate to boundary (u, v)
     uint bu, bv;
-    if (face == 0u) { bu = uint(z); bv = uint(y); }       // +X: neighbor x=0
-    else if (face == 1u) { bu = uint(z); bv = uint(y); }   // -X: neighbor x=15
-    else if (face == 2u) { bu = uint(x); bv = uint(z); }   // +Y: neighbor y=0
-    else if (face == 3u) { bu = uint(x); bv = uint(z); }   // -Y: neighbor y=15
-    else if (face == 4u) { bu = uint(x); bv = uint(y); }   // +Z: neighbor z=0
-    else { bu = uint(x); bv = uint(y); }                    // -Z: neighbor z=15
+    if (face == 0u) { bu = uint(z); bv = uint(y); }
+    else if (face == 1u) { bu = uint(z); bv = uint(y); }
+    else if (face == 2u) { bu = uint(x); bv = uint(z); }
+    else if (face == 3u) { bu = uint(x); bv = uint(z); }
+    else if (face == 4u) { bu = uint(x); bv = uint(y); }
+    else { bu = uint(x); bv = uint(y); }
     return read_boundary(boundary_slot, face, bu, bv);
+}
+
+// Per-thread face visibility mask (6 bits, one per face direction)
+uint compute_face_mask(uint voxel_slot, uint boundary_slot, uint block, uint gx, uint gy, uint gz) {
+    if (block == 0u) return 0u;
+    uint mask = 0u;
+    for (uint face = 0u; face < 6u; face++) {
+        ivec3 ndir = ivec3(FACE_NORMALS[face]);
+        int nx = int(gx) + ndir.x;
+        int ny = int(gy) + ndir.y;
+        int nz = int(gz) + ndir.z;
+        uint neighbor = get_neighbor(voxel_slot, boundary_slot, nx, ny, nz, face);
+        if (should_emit(block, neighbor)) {
+            mask |= (1u << face);
+        }
+    }
+    return mask;
 }
 
 void emit_face(uint slot, vec3 center, uint face, uint material_id) {
@@ -123,9 +138,6 @@ void emit_face(uint slot, vec3 center, uint face, uint material_id) {
 
     uint vi = slot * 4u;
     uint pi = slot * 2u;
-
-    // 4 corners: (-0.5,-0.5), (0.5,-0.5), (0.5,0.5), (-0.5,0.5)
-    const float offsets[4] = float[4](-0.5, 0.5, 0.5, -0.5);
 
     for (uint c = 0u; c < 4u; c++) {
         float u_off = (c == 0u || c == 3u) ? -0.5 : 0.5;
@@ -154,43 +166,48 @@ void main() {
     uint sz = ((sub_idx >> 4u) & 3u) * 4u;
 
     uint tid = gl_LocalInvocationID.x;
-    if (tid == 0u) face_counter = 0u;
-    barrier();
 
-    // 64 threads, 64 blocks in 4x4x4 sub-chunk
+    // Decode local block position within 4x4x4 sub-chunk
     uint lx = tid & 3u;
     uint ly = (tid >> 2u) & 3u;
     uint lz = (tid >> 4u) & 3u;
-
     uint gx = sx + lx;
     uint gy = sy + ly;
     uint gz = sz + lz;
 
     uint block = read_block(chunk.voxel_slot, gx, gy, gz);
 
-    if (block != 0u) {
-        vec3 center = chunk.aabb_min + vec3(float(gx) + 0.5, float(gy) + 0.5, float(gz) + 0.5);
+    // === Pass 1: Count faces per thread ===
+    uint face_mask = compute_face_mask(chunk.voxel_slot, chunk.boundary_slot, block, gx, gy, gz);
+    uint my_count = bitCount(face_mask);
 
-        for (uint face = 0u; face < 6u; face++) {
-            ivec3 ndir = ivec3(FACE_NORMALS[face]);
-            int nx = int(gx) + ndir.x;
-            int ny = int(gy) + ndir.y;
-            int nz = int(gz) + ndir.z;
+    if (tid == 0u) total_faces = 0u;
+    barrier();
 
-            uint neighbor = get_neighbor(chunk.voxel_slot, chunk.boundary_slot, nx, ny, nz, face);
-
-            if (should_emit(block, neighbor)) {
-                uint slot = atomicAdd(face_counter, 1u);
-                if (slot < 63u) {
-                    emit_face(slot, center, face, block);
-                }
-            }
-        }
+    // Reserve slots for this thread's faces
+    uint my_base = 0u;
+    if (my_count > 0u) {
+        my_base = atomicAdd(total_faces, my_count);
     }
+    thread_base[tid] = my_base;
 
     barrier();
-    if (tid == 0u) {
-        uint final_count = min(face_counter, 63u);
-        SetMeshOutputsEXT(final_count * 4u, final_count * 2u);
+
+    // === SetMeshOutputsEXT BEFORE any writes (spec requirement) ===
+    uint clamped_total = min(total_faces, 63u);
+    SetMeshOutputsEXT(clamped_total * 4u, clamped_total * 2u);
+
+    barrier();
+
+    // === Pass 2: Write faces at allocated slots ===
+    if (my_count > 0u && my_base < 63u) {
+        vec3 center = chunk.aabb_min + vec3(float(gx) + 0.5, float(gy) + 0.5, float(gz) + 0.5);
+        uint write_slot = my_base;
+        for (uint face = 0u; face < 6u; face++) {
+            if ((face_mask & (1u << face)) != 0u && write_slot < 63u) {
+                emit_face(write_slot, center, face, block);
+                write_slot++;
+            }
+        }
     }
 }
