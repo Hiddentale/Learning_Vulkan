@@ -140,8 +140,10 @@ impl SvdagPool {
         (self.geometry_next as u64) > SVDAG_GEOMETRY_BUDGET * 9 / 10
     }
 
-    pub unsafe fn evict_chunks(&mut self, count: usize) {
-        let positions: Vec<[i32; 3]> = self.chunk_slots.keys().copied().collect();
+    /// Evict the farthest chunks from the player to free space.
+    pub unsafe fn evict_farthest(&mut self, count: usize, player_cx: i32, player_cz: i32) {
+        let mut positions: Vec<[i32; 3]> = self.chunk_slots.keys().copied().collect();
+        positions.sort_by_key(|pos| std::cmp::Reverse((pos[0] - player_cx).abs().max((pos[2] - player_cz).abs())));
         for pos in positions.into_iter().take(count) {
             self.remove_chunk(&pos);
         }

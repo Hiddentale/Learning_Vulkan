@@ -79,11 +79,13 @@ use crate::voxel::world::{MAX_CHUNK_Y, MIN_CHUNK_Y};
 
 /// Mesh shader renders chunks within this distance. Full detail, editable, textured.
 const MESH_DISTANCE: i32 = 8;
-/// World generates terrain out to this distance. SVDAG handles MESH_DISTANCE..WORLD_DISTANCE.
-const WORLD_DISTANCE: i32 = 48;
+/// SVDAG ray march renders chunks from MESH_DISTANCE to SVDAG_DISTANCE.
+const SVDAG_DISTANCE: i32 = 24;
+/// World generates terrain out to this distance.
+const WORLD_DISTANCE: i32 = SVDAG_DISTANCE;
 const CHUNK_LAYERS: usize = (MAX_CHUNK_Y - MIN_CHUNK_Y + 1) as usize;
 const MAX_MESH_CHUNKS: usize = ((2 * MESH_DISTANCE + 1) * (2 * MESH_DISTANCE + 1)) as usize * CHUNK_LAYERS;
-const MAX_SVDAG_CHUNKS: u32 = 8192;
+const MAX_SVDAG_CHUNKS: u32 = 16384;
 
 pub struct VulkanApplication {
     _vulkan_entry_point: Entry,
@@ -428,10 +430,10 @@ impl VulkanApplication {
                 continue;
             }
             if self.svdag_pool.chunk_count() >= MAX_SVDAG_CHUNKS - 1 {
-                self.svdag_pool.evict_chunks(64);
+                self.svdag_pool.evict_farthest(64, player_cx, player_cz);
             }
             if self.svdag_pool.is_near_budget() {
-                self.svdag_pool.evict_chunks(64);
+                self.svdag_pool.evict_farthest(64, player_cx, player_cz);
             }
             self.svdag_pool.upload_chunk(result.pos, &result.dag_data, result.lod_level);
         }
@@ -450,7 +452,7 @@ impl VulkanApplication {
             if dist > MESH_DISTANCE {
                 self.voxel_pool.invalidate_neighbor_boundaries(pos, &self.world);
                 self.voxel_pool.remove_chunk(&pos);
-                if self.world.get_chunk(pos[0], pos[1], pos[2]).is_some() {
+                if dist <= SVDAG_DISTANCE && self.world.get_chunk(pos[0], pos[1], pos[2]).is_some() {
                     self.svdag_pending.insert(pos);
                 }
             }
@@ -474,14 +476,13 @@ impl VulkanApplication {
             }
         }
 
-        // Route newly loaded far chunks to SVDAG pending
+        // Route newly loaded far chunks to SVDAG pending (within SVDAG_DISTANCE)
         for pos in &delta.loaded {
             let [cx, _cy, cz] = *pos;
             let dist = crate::voxel::world::chunk_distance(cx, cz, player_cx, player_cz);
-            if dist > MESH_DISTANCE {
+            if dist > MESH_DISTANCE && dist <= SVDAG_DISTANCE {
                 self.svdag_pending.insert(*pos);
             }
-            // Near chunks are picked up by the mesh sweep above
         }
 
         // Drain pending SVDAG compressions, closest first, budgeted
