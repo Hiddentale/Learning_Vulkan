@@ -53,17 +53,9 @@ layout(location = 1) out vec3 fragNormalWorld[];
 layout(location = 2) flat out uint fragMaterialId[];
 layout(location = 3) out vec3 fragWorldPos[];
 
-// Shared memory for greedy merge results
-struct MergedQuad {
-    uint face;       // 0-5
-    uint material;
-    uint u0, v0;     // min corner in face-local 2D
-    uint u1, v1;     // max corner (exclusive)
-    uint depth;      // position along face normal axis within sub-chunk
-};
-
-shared MergedQuad merged_quads[126]; // max primitives / 2
-shared uint quad_count;
+// Shared state for two-pass allocation
+shared uint total_faces;
+shared uint thread_base[64]; // each thread's starting face slot
 
 // Face normals: +X, -X, +Y, -Y, +Z, -Z
 const vec3 FACE_NORMALS[6] = vec3[6](
@@ -79,6 +71,10 @@ const vec3 FACE_TANGENTS[6] = vec3[6](
 const vec3 FACE_BITANGENTS[6] = vec3[6](
     vec3(0, 1, 0), vec3(0, 1, 0), vec3(0, 0, 1),
     vec3(0, 0, -1), vec3(0, 1, 0), vec3(0, 1, 0)
+);
+
+const vec2 CORNER_UVS[4] = vec2[4](
+    vec2(0, 1), vec2(1, 1), vec2(1, 0), vec2(0, 0)
 );
 
 uint read_block(uint voxel_slot, uint x, uint y, uint z) {
@@ -117,187 +113,44 @@ uint get_neighbor(uint voxel_slot, uint boundary_slot, int x, int y, int z, uint
     return read_boundary(boundary_slot, face, bu, bv);
 }
 
-// Convert face-local (u, v, depth) back to chunk-local (x, y, z)
-ivec3 face_to_chunk(uint face, uint u, uint v, uint d) {
-    switch (face) {
-        case 0u: return ivec3(d, v, u);     // +X: tangent=Z, bitangent=Y
-        case 1u: return ivec3(d, v, u);     // -X: tangent=-Z, bitangent=Y (same mapping)
-        case 2u: return ivec3(u, d, v);     // +Y: tangent=X, bitangent=Z
-        case 3u: return ivec3(u, d, v);     // -Y: tangent=X, bitangent=-Z
-        case 4u: return ivec3(u, v, d);     // +Z: tangent=-X, bitangent=Y (u maps to X)
-        default: return ivec3(u, v, d);     // -Z: tangent=X, bitangent=Y
-    }
-}
-
-// Greedy merge a 4x4 face slice for one face direction at one depth.
-// Each thread handles one (face, depth) combo. Writes merged quads to shared memory.
-// Uses a 16-bit mask (4x4 grid) per material, scanning rows for mergeable runs.
-void greedy_merge_slice(uint voxel_slot, uint boundary_slot,
-                        uint face, uint sx, uint sy, uint sz, uint local_depth) {
-    // Build per-cell material + visibility for this 4x4 slice
-    uint vis_material[4][4]; // [v][u] = material if visible, 0 if not
-
-    uint depth_in_chunk;
-    switch (face) {
-        case 0u: case 1u: depth_in_chunk = sx + local_depth; break;
-        case 2u: case 3u: depth_in_chunk = sy + local_depth; break;
-        default:          depth_in_chunk = sz + local_depth; break;
-    }
-
-    for (uint v = 0u; v < 4u; v++) {
-        for (uint u = 0u; u < 4u; u++) {
-            ivec3 pos = face_to_chunk(face, sx + u, sy + v, depth_in_chunk);
-            // Remap: for faces 2,3 the v-axis maps differently
-            switch (face) {
-                case 0u: pos = ivec3(depth_in_chunk, sy + v, sz + u); break;
-                case 1u: pos = ivec3(depth_in_chunk, sy + v, sz + u); break;
-                case 2u: pos = ivec3(sx + u, depth_in_chunk, sz + v); break;
-                case 3u: pos = ivec3(sx + u, depth_in_chunk, sz + v); break;
-                case 4u: pos = ivec3(sx + u, sy + v, depth_in_chunk); break;
-                default: pos = ivec3(sx + u, sy + v, depth_in_chunk); break;
-            }
-
-            uint block = read_block(voxel_slot, uint(pos.x), uint(pos.y), uint(pos.z));
-            ivec3 ndir = ivec3(FACE_NORMALS[face]);
-            int nx = pos.x + ndir.x;
-            int ny = pos.y + ndir.y;
-            int nz = pos.z + ndir.z;
-            uint neighbor = get_neighbor(voxel_slot, boundary_slot, nx, ny, nz, face);
-
-            if (should_emit(block, neighbor)) {
-                vis_material[v][u] = block;
-            } else {
-                vis_material[v][u] = 0u;
-            }
+// Per-thread face visibility mask (6 bits, one per face direction)
+uint compute_face_mask(uint voxel_slot, uint boundary_slot, uint block, uint gx, uint gy, uint gz) {
+    if (block == 0u) return 0u;
+    uint mask = 0u;
+    for (uint face = 0u; face < 6u; face++) {
+        ivec3 ndir = ivec3(FACE_NORMALS[face]);
+        int nx = int(gx) + ndir.x;
+        int ny = int(gy) + ndir.y;
+        int nz = int(gz) + ndir.z;
+        uint neighbor = get_neighbor(voxel_slot, boundary_slot, nx, ny, nz, face);
+        if (should_emit(block, neighbor)) {
+            mask |= (1u << face);
         }
     }
-
-    // Greedy merge: scan rows, extend rectangles downward
-    bool used[4][4];
-    for (uint v = 0u; v < 4u; v++)
-        for (uint u = 0u; u < 4u; u++)
-            used[v][u] = false;
-
-    for (uint v = 0u; v < 4u; v++) {
-        for (uint u = 0u; u < 4u; u++) {
-            uint mat = vis_material[v][u];
-            if (mat == 0u || used[v][u]) continue;
-
-            // Extend right
-            uint u_end = u + 1u;
-            while (u_end < 4u && vis_material[v][u_end] == mat && !used[v][u_end]) {
-                u_end++;
-            }
-
-            // Extend down
-            uint v_end = v + 1u;
-            while (v_end < 4u) {
-                bool row_ok = true;
-                for (uint cu = u; cu < u_end; cu++) {
-                    if (vis_material[v_end][cu] != mat || used[v_end][cu]) {
-                        row_ok = false;
-                        break;
-                    }
-                }
-                if (!row_ok) break;
-                v_end++;
-            }
-
-            // Mark used
-            for (uint cv = v; cv < v_end; cv++)
-                for (uint cu = u; cu < u_end; cu++)
-                    used[cv][cu] = true;
-
-            // Emit merged quad
-            uint slot = atomicAdd(quad_count, 1u);
-            if (slot < 126u) {
-                merged_quads[slot].face = face;
-                merged_quads[slot].material = mat;
-                merged_quads[slot].u0 = u;
-                merged_quads[slot].v0 = v;
-                merged_quads[slot].u1 = u_end;
-                merged_quads[slot].v1 = v_end;
-                merged_quads[slot].depth = local_depth;
-            }
-        }
-    }
+    return mask;
 }
 
-void emit_merged_quad(uint slot, MergedQuad q, vec3 aabb_min, uint sx, uint sy, uint sz) {
-    vec3 n = FACE_NORMALS[q.face];
-    vec3 t = FACE_TANGENTS[q.face];
-    vec3 b = FACE_BITANGENTS[q.face];
-
-    // Compute depth position in chunk coordinates
-    uint depth_in_chunk;
-    switch (q.face) {
-        case 0u: case 1u: depth_in_chunk = sx + q.depth; break;
-        case 2u: case 3u: depth_in_chunk = sy + q.depth; break;
-        default:          depth_in_chunk = sz + q.depth; break;
-    }
-
-    // Center of the quad along the face normal axis
-    float d_center = float(depth_in_chunk) + 0.5;
-
-    // Quad extents in tangent/bitangent space (in sub-chunk-local coords, offset by sx/sy/sz)
-    float u_start, v_start, u_size, v_size;
-    switch (q.face) {
-        case 0u: u_start = float(sz + q.u0); v_start = float(sy + q.v0);
-                 u_size = float(q.u1 - q.u0); v_size = float(q.v1 - q.v0); break;
-        case 1u: u_start = float(sz + q.u0); v_start = float(sy + q.v0);
-                 u_size = float(q.u1 - q.u0); v_size = float(q.v1 - q.v0); break;
-        case 2u: u_start = float(sx + q.u0); v_start = float(sz + q.v0);
-                 u_size = float(q.u1 - q.u0); v_size = float(q.v1 - q.v0); break;
-        case 3u: u_start = float(sx + q.u0); v_start = float(sz + q.v0);
-                 u_size = float(q.u1 - q.u0); v_size = float(q.v1 - q.v0); break;
-        case 4u: u_start = float(sx + q.u0); v_start = float(sy + q.v0);
-                 u_size = float(q.u1 - q.u0); v_size = float(q.v1 - q.v0); break;
-        default: u_start = float(sx + q.u0); v_start = float(sy + q.v0);
-                 u_size = float(q.u1 - q.u0); v_size = float(q.v1 - q.v0); break;
-    }
-
-    // Face center in world space
-    vec3 face_origin = aabb_min + n * (d_center + 0.5);
-
-    // Four corners of the merged quad
-    vec3 corner00 = face_origin + t * u_start + b * v_start;
-    vec3 corner10 = face_origin + t * (u_start + u_size) + b * v_start;
-    vec3 corner11 = face_origin + t * (u_start + u_size) + b * (v_start + v_size);
-    vec3 corner01 = face_origin + t * u_start + b * (v_start + v_size);
+void emit_face(uint slot, vec3 center, uint face, uint material_id) {
+    vec3 n = FACE_NORMALS[face];
+    vec3 t = FACE_TANGENTS[face];
+    vec3 b = FACE_BITANGENTS[face];
+    vec3 face_center = center + n * 0.5;
 
     uint vi = slot * 4u;
     uint pi = slot * 2u;
 
-    // UV coordinates scale with quad size for tiling
-    vec2 uv00 = vec2(0.0, v_size);
-    vec2 uv10 = vec2(u_size, v_size);
-    vec2 uv11 = vec2(u_size, 0.0);
-    vec2 uv01 = vec2(0.0, 0.0);
+    for (uint c = 0u; c < 4u; c++) {
+        float u_off = (c == 0u || c == 3u) ? -0.5 : 0.5;
+        float v_off = (c < 2u) ? -0.5 : 0.5;
+        vec3 world_pos = face_center + t * u_off + b * v_off;
 
-    gl_MeshVerticesEXT[vi + 0u].gl_Position = camera.view_projection[gl_ViewIndex] * vec4(corner00, 1.0);
-    gl_MeshVerticesEXT[vi + 1u].gl_Position = camera.view_projection[gl_ViewIndex] * vec4(corner10, 1.0);
-    gl_MeshVerticesEXT[vi + 2u].gl_Position = camera.view_projection[gl_ViewIndex] * vec4(corner11, 1.0);
-    gl_MeshVerticesEXT[vi + 3u].gl_Position = camera.view_projection[gl_ViewIndex] * vec4(corner01, 1.0);
-
-    fragWorldPos[vi + 0u] = corner00;
-    fragWorldPos[vi + 1u] = corner10;
-    fragWorldPos[vi + 2u] = corner11;
-    fragWorldPos[vi + 3u] = corner01;
-
-    fragTexCoord[vi + 0u] = uv00;
-    fragTexCoord[vi + 1u] = uv10;
-    fragTexCoord[vi + 2u] = uv11;
-    fragTexCoord[vi + 3u] = uv01;
-
-    fragNormalWorld[vi + 0u] = n;
-    fragNormalWorld[vi + 1u] = n;
-    fragNormalWorld[vi + 2u] = n;
-    fragNormalWorld[vi + 3u] = n;
-
-    fragMaterialId[vi + 0u] = q.material;
-    fragMaterialId[vi + 1u] = q.material;
-    fragMaterialId[vi + 2u] = q.material;
-    fragMaterialId[vi + 3u] = q.material;
+        gl_MeshVerticesEXT[vi + c].gl_Position =
+            camera.view_projection[gl_ViewIndex] * vec4(world_pos, 1.0);
+        fragWorldPos[vi + c] = world_pos;
+        fragTexCoord[vi + c] = CORNER_UVS[c];
+        fragNormalWorld[vi + c] = n;
+        fragMaterialId[vi + c] = material_id;
+    }
 
     gl_PrimitiveTriangleIndicesEXT[pi]     = uvec3(vi, vi + 1u, vi + 2u);
     gl_PrimitiveTriangleIndicesEXT[pi + 1u] = uvec3(vi, vi + 2u, vi + 3u);
@@ -314,25 +167,47 @@ void main() {
 
     uint tid = gl_LocalInvocationID.x;
 
-    // === Pass 1: Greedy merge all face slices ===
-    // 6 faces * 4 depths = 24 slices per sub-chunk. 64 threads handle these.
-    if (tid == 0u) quad_count = 0u;
+    // Decode local block position within 4x4x4 sub-chunk
+    uint lx = tid & 3u;
+    uint ly = (tid >> 2u) & 3u;
+    uint lz = (tid >> 4u) & 3u;
+    uint gx = sx + lx;
+    uint gy = sy + ly;
+    uint gz = sz + lz;
+
+    uint block = read_block(chunk.voxel_slot, gx, gy, gz);
+
+    // === Pass 1: Count faces per thread ===
+    uint face_mask = compute_face_mask(chunk.voxel_slot, chunk.boundary_slot, block, gx, gy, gz);
+    uint my_count = bitCount(face_mask);
+
+    if (tid == 0u) total_faces = 0u;
     barrier();
 
-    // Each thread handles up to one (face, depth) slice
-    // 24 slices total, threads 0-23 each handle one
-    if (tid < 24u) {
-        uint face = tid / 4u;
-        uint depth = tid % 4u;
-        greedy_merge_slice(chunk.voxel_slot, chunk.boundary_slot, face, sx, sy, sz, depth);
+    // Reserve slots for this thread's faces
+    uint my_base = 0u;
+    if (my_count > 0u) {
+        my_base = atomicAdd(total_faces, my_count);
     }
+    thread_base[tid] = my_base;
+
     barrier();
 
-    // === Pass 2: Emit merged quads ===
-    uint clamped = min(quad_count, 63u);
-    SetMeshOutputsEXT(clamped * 4u, clamped * 2u);
+    // === SetMeshOutputsEXT BEFORE any writes (spec requirement) ===
+    uint clamped_total = min(total_faces, 63u);
+    SetMeshOutputsEXT(clamped_total * 4u, clamped_total * 2u);
 
-    if (tid < clamped) {
-        emit_merged_quad(tid, merged_quads[tid], chunk.aabb_min, sx, sy, sz);
+    barrier();
+
+    // === Pass 2: Write faces at allocated slots ===
+    if (my_count > 0u && my_base < 63u) {
+        vec3 center = chunk.aabb_min + vec3(float(gx) + 0.5, float(gy) + 0.5, float(gz) + 0.5);
+        uint write_slot = my_base;
+        for (uint face = 0u; face < 6u; face++) {
+            if ((face_mask & (1u << face)) != 0u && write_slot < 63u) {
+                emit_face(write_slot, center, face, block);
+                write_slot++;
+            }
+        }
     }
 }
