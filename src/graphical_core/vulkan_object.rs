@@ -73,7 +73,7 @@ pub struct VulkanApplicationData {
 
 use crate::voxel::world::{MAX_CHUNK_Y, MIN_CHUNK_Y};
 
-const RENDER_DISTANCE: i32 = 16;
+const RENDER_DISTANCE: i32 = 24;
 const CHUNK_LAYERS: usize = (MAX_CHUNK_Y - MIN_CHUNK_Y + 1) as usize;
 const MAX_LOADED_CHUNKS: usize = ((2 * RENDER_DISTANCE + 1) * (2 * RENDER_DISTANCE + 1)) as usize * CHUNK_LAYERS;
 

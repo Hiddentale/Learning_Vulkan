@@ -128,11 +128,19 @@ pub fn metric_speed_scale(dir: Vec3, p: f32) -> f32 {
 }
 
 fn inv_p(p: f32) -> f32 {
-    if p >= 50.0 { 0.0 } else { 1.0 / p }
+    if p >= 50.0 {
+        0.0
+    } else {
+        1.0 / p
+    }
 }
 
 fn from_inv_p(inv: f32) -> f32 {
-    if inv <= 0.01 { 50.0 } else { 1.0 / inv }
+    if inv <= 0.01 {
+        50.0
+    } else {
+        1.0 / inv
+    }
 }
 
 #[cfg(test)]

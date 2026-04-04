@@ -11,14 +11,14 @@ const ATLAS_HEIGHT: u32 = 16;
 
 /// Block textures in material_id order. None means no texture (use palette color).
 const TEXTURE_FILES: &[Option<&str>] = &[
-    None,                // 0: Air
-    Some("grass.png"),   // 1: Grass (32x16 atlas: side + top)
-    Some("dirt.png"),    // 2: Dirt
-    Some("stone.png"),   // 3: Stone
-    Some("water.png"),   // 4: Water
-    None,                // 5: Sand
-    None,                // 6: Snow
-    None,                // 7: Gravel
+    None,              // 0: Air
+    Some("grass.png"), // 1: Grass (32x16 atlas: side + top)
+    Some("dirt.png"),  // 2: Dirt
+    Some("stone.png"), // 3: Stone
+    Some("water.png"), // 4: Water
+    None,              // 5: Sand
+    None,              // 6: Snow
+    None,              // 7: Gravel
 ];
 
 fn get_texture_path(texture_name: &str) -> String {
@@ -92,7 +92,13 @@ fn blit_to_atlas(dst: &mut [u8], src: &[u8], src_w: u32, src_h: u32) {
             dst[right_start..right_start + src_w as usize * bpp].copy_from_slice(src_row);
         }
     } else {
-        log::warn!("Texture {}x{} doesn't match atlas {}x{}, skipping", src_w, src_h, ATLAS_WIDTH, ATLAS_HEIGHT);
+        log::warn!(
+            "Texture {}x{} doesn't match atlas {}x{}, skipping",
+            src_w,
+            src_h,
+            ATLAS_WIDTH,
+            ATLAS_HEIGHT
+        );
     }
 }
 
@@ -157,10 +163,20 @@ fn transfer_array_image(
 
     let cmd = unsafe { device.allocate_command_buffers(&alloc_info)? }[0];
     unsafe {
-        device.begin_command_buffer(cmd, &vk::CommandBufferBeginInfo::builder().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT))?;
+        device.begin_command_buffer(
+            cmd,
+            &vk::CommandBufferBeginInfo::builder().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
+        )?;
 
         // Transition all layers: UNDEFINED -> TRANSFER_DST
-        transition_image_layout(device, cmd, image, vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL, layer_count);
+        transition_image_layout(
+            device,
+            cmd,
+            image,
+            vk::ImageLayout::UNDEFINED,
+            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            layer_count,
+        );
 
         // Copy each layer from staging buffer
         let layer_size = (ATLAS_WIDTH * ATLAS_HEIGHT * BYTES_PER_PIXEL) as u64;

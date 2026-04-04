@@ -1,7 +1,7 @@
-use glam::Vec3;
 use super::block::BlockType;
 use super::metric::minkowski_distance;
 use super::world::World;
+use glam::Vec3;
 
 const MAX_REACH: f32 = 8.0;
 const MAX_STEPS: usize = 200;

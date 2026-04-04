@@ -87,12 +87,24 @@ impl InputState {
         let right = camera.right();
 
         let mut move_dir = glam::Vec3::ZERO;
-        if self.is_pressed(KeyCode::KeyW) { move_dir += front; }
-        if self.is_pressed(KeyCode::KeyS) { move_dir -= front; }
-        if self.is_pressed(KeyCode::KeyD) { move_dir += right; }
-        if self.is_pressed(KeyCode::KeyA) { move_dir -= right; }
-        if self.is_pressed(KeyCode::KeyE) { move_dir += glam::Vec3::Y; }
-        if self.is_pressed(KeyCode::KeyQ) { move_dir -= glam::Vec3::Y; }
+        if self.is_pressed(KeyCode::KeyW) {
+            move_dir += front;
+        }
+        if self.is_pressed(KeyCode::KeyS) {
+            move_dir -= front;
+        }
+        if self.is_pressed(KeyCode::KeyD) {
+            move_dir += right;
+        }
+        if self.is_pressed(KeyCode::KeyA) {
+            move_dir -= right;
+        }
+        if self.is_pressed(KeyCode::KeyE) {
+            move_dir += glam::Vec3::Y;
+        }
+        if self.is_pressed(KeyCode::KeyQ) {
+            move_dir -= glam::Vec3::Y;
+        }
 
         if move_dir != glam::Vec3::ZERO {
             let scale = metric::metric_speed_scale(move_dir, local_p);
@@ -108,10 +120,18 @@ impl InputState {
         let forward = glam::Vec3::new(front.x, 0.0, front.z).normalize_or_zero();
 
         let mut move_dir = glam::Vec3::ZERO;
-        if self.is_pressed(KeyCode::KeyW) { move_dir += forward; }
-        if self.is_pressed(KeyCode::KeyS) { move_dir -= forward; }
-        if self.is_pressed(KeyCode::KeyD) { move_dir += right; }
-        if self.is_pressed(KeyCode::KeyA) { move_dir -= right; }
+        if self.is_pressed(KeyCode::KeyW) {
+            move_dir += forward;
+        }
+        if self.is_pressed(KeyCode::KeyS) {
+            move_dir -= forward;
+        }
+        if self.is_pressed(KeyCode::KeyD) {
+            move_dir += right;
+        }
+        if self.is_pressed(KeyCode::KeyA) {
+            move_dir -= right;
+        }
 
         if move_dir != glam::Vec3::ZERO {
             let scale = metric::metric_speed_scale(move_dir, local_p);

@@ -6,11 +6,11 @@ use anyhow::Result;
 use graphical_core::camera::{Camera, EyeMatrices};
 use graphical_core::input::InputState;
 use graphical_core::vulkan_object::VulkanApplication;
-use voxel::block::BlockType;
-use voxel::raycast;
 use log::info;
 use std::time::Instant;
+use voxel::block::BlockType;
 use voxel::player::Player;
+use voxel::raycast;
 use vr::{VrContext, VrSupport};
 use vulkan_rust::{vk, Version};
 use winit::{
