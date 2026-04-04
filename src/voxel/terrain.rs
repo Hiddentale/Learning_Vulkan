@@ -19,6 +19,8 @@ const MOUNTAIN_SCALE: f64 = 0.005;
 const CAVE_SCALE: f64 = 0.05;
 const TEMPERATURE_SCALE: f64 = 0.001;
 const HUMIDITY_SCALE: f64 = 0.001;
+const WARP_SCALE: f64 = 0.003;
+const WARP_STRENGTH: f64 = 80.0;
 
 // Height contributions
 const CONTINENT_AMPLITUDE: f64 = 40.0;
@@ -32,6 +34,8 @@ struct WorldNoises {
     cave: Perlin,
     temperature: Fbm<Perlin>,
     humidity: Fbm<Perlin>,
+    warp_x: Fbm<Perlin>,
+    warp_z: Fbm<Perlin>,
 }
 
 impl WorldNoises {
@@ -59,6 +63,16 @@ impl WorldNoises {
                 .set_octaves(3)
                 .set_persistence(0.5)
                 .set_lacunarity(2.0),
+            warp_x: Fbm::<Perlin>::new(seed + 6)
+                .set_frequency(WARP_SCALE)
+                .set_octaves(3)
+                .set_persistence(0.5)
+                .set_lacunarity(2.0),
+            warp_z: Fbm::<Perlin>::new(seed + 7)
+                .set_frequency(WARP_SCALE)
+                .set_octaves(3)
+                .set_persistence(0.5)
+                .set_lacunarity(2.0),
         }
     }
 }
@@ -73,9 +87,12 @@ pub fn generate_column(chunk_x: i32, chunk_z: i32) -> Vec<Chunk> {
             let wx = chunk_x as f64 * CHUNK_SIZE as f64 + x as f64;
             let wz = chunk_z as f64 * CHUNK_SIZE as f64 + z as f64;
 
-            let temperature = noises.temperature.get([wx, wz]);
-            let humidity = noises.humidity.get([wx, wz]);
-            let height = sample_height(&noises, wx, wz, temperature);
+            let warped_x = wx + noises.warp_x.get([wx, wz]) * WARP_STRENGTH;
+            let warped_z = wz + noises.warp_z.get([wx, wz]) * WARP_STRENGTH;
+
+            let temperature = noises.temperature.get([warped_x, warped_z]);
+            let humidity = noises.humidity.get([warped_x, warped_z]);
+            let height = sample_height(&noises, warped_x, warped_z, temperature);
             let biome = biome::determine_biome(temperature, humidity, height, SEA_LEVEL);
 
             fill_surface(&mut chunks, x, z, height, biome);
