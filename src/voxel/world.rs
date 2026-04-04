@@ -6,6 +6,9 @@ use std::collections::HashMap;
 pub const MIN_CHUNK_Y: i32 = 0;
 pub const MAX_CHUNK_Y: i32 = 15;
 
+/// Maximum columns to generate per update call. Limits per-frame stutter.
+const COLUMNS_PER_UPDATE: usize = 8;
+
 pub struct World {
     chunks: HashMap<[i32; 3], Chunk>,
     render_distance: i32,
@@ -26,12 +29,13 @@ impl World {
     }
 
     /// Updates loaded chunks based on the player's chunk coordinate.
-    /// Always loads full columns (all Y layers). Returns which chunks were added or removed.
+    /// Unloads all out-of-range chunks immediately, but only generates up to
+    /// COLUMNS_PER_UPDATE new columns per call (closest first).
     pub fn update(&mut self, player_cx: i32, player_cz: i32) -> WorldDelta {
         let mut loaded = Vec::new();
         let mut unloaded = Vec::new();
 
-        // Unload columns outside render distance
+        // Unload columns outside render distance (always immediate)
         let keys: Vec<[i32; 3]> = self.chunks.keys().copied().collect();
         for pos in keys {
             if !in_range(pos[0], pos[2], player_cx, player_cz, self.render_distance) {
@@ -40,24 +44,48 @@ impl World {
             }
         }
 
-        // Load missing columns within render distance
+        // Collect missing columns, sorted by distance to player
+        let mut missing: Vec<[i32; 2]> = Vec::new();
         for cz in (player_cz - self.render_distance)..=(player_cz + self.render_distance) {
             for cx in (player_cx - self.render_distance)..=(player_cx + self.render_distance) {
-                // Check if the column is already loaded by probing the first layer
-                if self.chunks.contains_key(&[cx, MIN_CHUNK_Y, cz]) {
-                    continue;
-                }
-                let column = terrain::generate_column(cx, cz);
-                for (i, chunk) in column.into_iter().enumerate() {
-                    let cy = MIN_CHUNK_Y + i as i32;
-                    let key = [cx, cy, cz];
-                    loaded.push(key);
-                    self.chunks.insert(key, chunk);
+                if !self.chunks.contains_key(&[cx, MIN_CHUNK_Y, cz]) {
+                    missing.push([cx, cz]);
                 }
             }
         }
 
+        // Sort by squared distance so closest columns load first
+        missing.sort_by_key(|&[cx, cz]| {
+            let dx = cx - player_cx;
+            let dz = cz - player_cz;
+            dx * dx + dz * dz
+        });
+
+        // Generate at most COLUMNS_PER_UPDATE columns
+        for &[cx, cz] in missing.iter().take(COLUMNS_PER_UPDATE) {
+            let column = terrain::generate_column(cx, cz);
+            for (i, chunk) in column.into_iter().enumerate() {
+                let cy = MIN_CHUNK_Y + i as i32;
+                let key = [cx, cy, cz];
+                loaded.push(key);
+                self.chunks.insert(key, chunk);
+            }
+        }
+
         WorldDelta { loaded, unloaded }
+    }
+
+    /// Returns true if there are columns within render distance that haven't loaded yet.
+    #[allow(dead_code)]
+    pub fn has_pending_chunks(&self, player_cx: i32, player_cz: i32) -> bool {
+        for cz in (player_cz - self.render_distance)..=(player_cz + self.render_distance) {
+            for cx in (player_cx - self.render_distance)..=(player_cx + self.render_distance) {
+                if !self.chunks.contains_key(&[cx, MIN_CHUNK_Y, cz]) {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// Returns the block at a world-space position, or Air if the chunk isn't loaded.

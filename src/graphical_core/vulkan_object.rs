@@ -532,20 +532,18 @@ impl VulkanApplication {
         Ok(())
     }
 
-    /// Checks if the player moved to a new chunk and loads/unloads accordingly.
+    /// Loads/unloads chunks incrementally each frame (budgeted generation).
     unsafe fn update_chunks(&mut self, camera: &Camera) -> anyhow::Result<()> {
         let player_cx = (camera.position.x / CHUNK_SIZE as f32).floor() as i32;
         let player_cz = (camera.position.z / CHUNK_SIZE as f32).floor() as i32;
 
-        if [player_cx, player_cz] == self.last_player_chunk {
+        // Always run update — even if player hasn't moved, there may be pending chunks
+        let delta = self.world.update(player_cx, player_cz);
+        if delta.loaded.is_empty() && delta.unloaded.is_empty() {
+            self.last_player_chunk = [player_cx, player_cz];
             return Ok(());
         }
         self.last_player_chunk = [player_cx, player_cz];
-
-        let delta = self.world.update(player_cx, player_cz);
-        if delta.loaded.is_empty() && delta.unloaded.is_empty() {
-            return Ok(());
-        }
 
         if self.use_mesh_shaders {
             self.update_chunks_mesh_shader(&delta)?;
