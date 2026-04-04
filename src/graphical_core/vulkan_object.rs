@@ -547,7 +547,17 @@ impl VulkanApplication {
             return Ok(());
         }
 
-        // Wait for GPU to finish before rebuilding the shared buffer
+        if self.use_mesh_shaders {
+            self.update_chunks_mesh_shader(&delta)?;
+        } else {
+            self.update_chunks_legacy(&delta)?;
+        }
+
+        Ok(())
+    }
+
+    /// Old pipeline: full GPU stall + VBO rebuild.
+    unsafe fn update_chunks_legacy(&mut self, delta: &crate::voxel::world::WorldDelta) -> anyhow::Result<()> {
         self.device.device_wait_idle()?;
 
         for pos in &delta.unloaded {
@@ -562,6 +572,24 @@ impl VulkanApplication {
         write_transforms_to_ssbo(&self.mesh_pool, &self.vulkan_application_data);
         self.chunk_count = compute_cull::write_chunk_info(&self.mesh_pool, self.compute_cull.chunk_info_ptr);
         self.compute_cull.reset_visibility();
+        Ok(())
+    }
+
+    /// Mesh shader pipeline: incremental slot writes, no GPU stall.
+    unsafe fn update_chunks_mesh_shader(&mut self, delta: &crate::voxel::world::WorldDelta) -> anyhow::Result<()> {
+        let voxel_pool = self.voxel_pool.as_mut().unwrap();
+
+        for pos in &delta.unloaded {
+            voxel_pool.invalidate_neighbor_boundaries(*pos, &self.world);
+            voxel_pool.remove_chunk(pos);
+        }
+        for &[cx, cy, cz] in &delta.loaded {
+            let pos = [cx, cy, cz];
+            if let Some(chunk) = self.world.get_chunk(cx, cy, cz) {
+                voxel_pool.upload_chunk(pos, chunk, &self.world);
+                voxel_pool.invalidate_neighbor_boundaries(pos, &self.world);
+            }
+        }
 
         Ok(())
     }
