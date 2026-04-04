@@ -26,7 +26,7 @@ fn discover_shader_files() -> anyhow::Result<Vec<PathBuf>> {
         let entry = entry_result?.path();
         if entry.is_file() {
             if let Some(extension) = entry.extension() {
-                if extension == "vert" || extension == "frag" {
+                if matches!(extension.to_str(), Some("vert" | "frag" | "comp" | "task" | "mesh")) {
                     shader_paths.push(entry)
                 }
             }
@@ -54,11 +54,14 @@ fn process_shaders(shader_paths: Vec<PathBuf>) -> anyhow::Result<()> {
             Err(_) => true,
         };
         if needs_recompile {
-            let output = std::process::Command::new("glslc")
-                .arg(shader_path)
-                .arg("-o")
-                .arg(compiled_shader_path)
-                .output()?;
+            let mut cmd = std::process::Command::new("glslc");
+            // Mesh/task shaders require Vulkan 1.2+ target environment
+            if let Some(ext) = shader_path.extension() {
+                if ext == "task" || ext == "mesh" {
+                    cmd.arg("--target-env=vulkan1.2");
+                }
+            }
+            let output = cmd.arg(&shader_path).arg("-o").arg(compiled_shader_path).output()?;
 
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);

@@ -8,7 +8,9 @@ use graphical_core::input::InputState;
 use graphical_core::vulkan_object::VulkanApplication;
 use log::info;
 use std::time::Instant;
+use voxel::block::BlockType;
 use voxel::player::Player;
+use voxel::raycast;
 use vr::{VrContext, VrSupport};
 use vulkan_rust::{vk, Version};
 use winit::{
@@ -23,7 +25,10 @@ const PORTABILITY_MACOS_VERSION: Version = Version::new(1, 3, 216);
 const VALIDATION_ENABLED: bool = cfg!(debug_assertions);
 
 const VALIDATION_LAYER: &std::ffi::CStr = c"VK_LAYER_KHRONOS_validation";
-const DEVICE_EXTENSIONS: &[&std::ffi::CStr] = &[vk::extension_names::KHR_SWAPCHAIN_EXTENSION_NAME];
+const DEVICE_EXTENSIONS: &[&std::ffi::CStr] = &[
+    vk::extension_names::KHR_SWAPCHAIN_EXTENSION_NAME,
+    vk::extension_names::EXT_MESH_SHADER_EXTENSION_NAME,
+];
 
 fn main() -> Result<()> {
     initialize_error_handler();
@@ -86,6 +91,14 @@ fn main() -> Result<()> {
                     }
                 }
             }
+            Event::WindowEvent {
+                event: WindowEvent::MouseInput { state, button, .. },
+                ..
+            } => {
+                if state == ElementState::Pressed {
+                    input.mouse_pressed(button);
+                }
+            }
             Event::DeviceEvent {
                 event: DeviceEvent::MouseMotion { delta: (dx, dy) },
                 ..
@@ -98,10 +111,23 @@ fn main() -> Result<()> {
                 last_frame = now;
 
                 let old_position = camera.position;
-                input.update_camera(&mut camera, delta_time, player.fly_mode);
+                let local_p = application.world().metric.sample(camera.position).p;
+                input.update_camera(&mut camera, delta_time, player.fly_mode, local_p);
                 let world = application.world();
                 player.resolve_horizontal(&mut camera.position, old_position, world);
                 player.apply_physics(&mut camera.position, delta_time, world);
+
+                if input.take_left_click() {
+                    if let Some(hit) = raycast::raycast(camera.position, camera.front(), application.world()) {
+                        unsafe { application.set_block(hit.block[0], hit.block[1], hit.block[2], BlockType::Air) };
+                    }
+                }
+                if input.take_right_click() {
+                    if let Some(hit) = raycast::raycast(camera.position, camera.front(), application.world()) {
+                        unsafe { application.set_block(hit.adjacent[0], hit.adjacent[1], hit.adjacent[2], BlockType::Stone) };
+                    }
+                }
+
                 user_window.request_redraw();
             }
             Event::WindowEvent {

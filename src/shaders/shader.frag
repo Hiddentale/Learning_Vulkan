@@ -5,7 +5,7 @@ layout(location = 1) in vec3 fragNormalWorld;
 layout(location = 2) flat in uint fragMaterialId;
 layout(location = 3) in vec3 fragWorldPos;
 
-layout(binding = 0) uniform sampler2D texSampler;
+layout(binding = 0) uniform sampler2DArray texArray;
 
 layout(binding = 1) uniform UniformBufferObject {
     mat4 view_projection[2];
@@ -34,10 +34,8 @@ float hash1(vec2 cell) {
     return fract(sin(dot(cell, vec2(127.1, 311.7))) * 43758.5453);
 }
 
-// Stochastic tiling for pixel art: randomly flips UV axes per block cell.
-// Flipping preserves pixel alignment (unlike rotation). Uses fragTexCoord
-// (0-1 face UV) for sampling and floor(worldPos) for per-block randomisation.
-vec3 stochastic_sample(sampler2D tex, vec2 faceUV, vec2 worldCell, float atlasOffsetU) {
+// Stochastic tiling: randomly flips UV axes per block cell to break repetition.
+vec3 stochastic_sample(uint layer, vec2 faceUV, vec2 worldCell, float atlasOffsetU) {
     float r = hash1(worldCell);
     bool flipX = r > 0.5;
     // Only flip Y for the top face — side faces have a directional gradient
@@ -47,20 +45,22 @@ vec3 stochastic_sample(sampler2D tex, vec2 faceUV, vec2 worldCell, float atlasOf
                    flipY ? 1.0 - faceUV.y : faceUV.y);
     // Scale x into the correct atlas half [0, 0.5] or [0.5, 1.0]
     uv.x = uv.x * 0.5 + atlasOffsetU;
-    return texture(tex, uv).rgb;
+    return texture(texArray, vec3(uv, float(layer))).rgb;
 }
 
 void main() {
     MaterialEntry mat = palette.entries[fragMaterialId];
 
-    // Material ID 1 = Grass: atlas sample with per-block stochastic flip.
-    // Atlas layout: left half (U: 0.0-0.5) = side, right half (U: 0.5-1.0) = top.
-    // floor(worldPos) gives a stable integer cell per block face for hashing.
+    // Check if this material has a texture layer (non-white in texture array)
+    vec3 texCenter = texture(texArray, vec3(0.25, 0.5, float(fragMaterialId))).rgb;
+    bool hasTexture = texCenter.r < 0.99 || texCenter.g < 0.99 || texCenter.b < 0.99;
+
     vec3 baseColor;
-    if (fragMaterialId == 1u) {
+    if (hasTexture) {
+        // Atlas sample with per-block stochastic flip.
+        // Atlas layout: left half (U: 0.0-0.5) = side, right half (U: 0.5-1.0) = top.
         bool isTop = fragNormalWorld.y > 0.5;
         float atlasOffset = isTop ? 0.5 : 0.0;
-        // Pick the two axes that vary across this face (not the normal axis).
         vec2 cell;
         if (isTop) {
             cell = floor(fragWorldPos.xz);
@@ -69,7 +69,7 @@ void main() {
         } else {
             cell = floor(fragWorldPos.xy);
         }
-        baseColor = stochastic_sample(texSampler, fragTexCoord, cell, atlasOffset);
+        baseColor = stochastic_sample(fragMaterialId, fragTexCoord, cell, atlasOffset);
     } else {
         baseColor = mat.color;
     }
@@ -84,7 +84,7 @@ void main() {
     float edgeY = min(fragTexCoord.y, 1.0 - fragTexCoord.y);
     float edge = min(edgeX, edgeY);
 
-    if (edge < EDGE_WIDTH && fragMaterialId != 1u) {
+    if (edge < EDGE_WIDTH && !hasTexture) {
         outColor = vec4(0.0, 0.0, 0.0, 1.0);
     } else {
         outColor = vec4(finalColor, 1.0);

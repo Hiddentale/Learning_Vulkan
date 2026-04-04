@@ -3,6 +3,8 @@
 A from-scratch voxel engine built with **Rust** and **Vulkan**, designed with VR in mind.
 
 ![Terrain preview](docs/images/preview.png)
+![Terrain preview](docs/images/preview2.png)
+![Terrain preview](docs/images/preview3.png)
 
 ## Features
 

@@ -1,6 +1,8 @@
 use super::session::{view_to_vp, VrSession};
 use super::swapchain::VrSwapchain;
 use crate::graphical_core::camera::EyeMatrices;
+use crate::graphical_core::mesh_pipeline::MeshShaderPipeline;
+use crate::graphical_core::voxel_pool::VoxelPool;
 use crate::graphical_core::vulkan_object::VulkanApplicationData;
 use anyhow::Context;
 use openxr as xr;
@@ -18,10 +20,8 @@ pub unsafe fn render_vr_frame(
     data: &VulkanApplicationData,
     session: &mut VrSession,
     swapchain: &mut VrSwapchain,
-    vertex_buffer: vk::Buffer,
-    index_buffer: vk::Buffer,
-    indirect_buffer: vk::Buffer,
-    draw_count: u32,
+    mesh_pipeline: &MeshShaderPipeline,
+    voxel_pool: &VoxelPool,
 ) -> anyhow::Result<Option<EyeMatrices>> {
     if !session.is_running() {
         return Ok(None);
@@ -51,16 +51,7 @@ pub unsafe fn render_vr_frame(
     let image_index = swapchain.handle.acquire_image()?;
     swapchain.handle.wait_image(xr::Duration::INFINITE)?;
 
-    record_vr_frame(
-        device,
-        data,
-        swapchain,
-        image_index as usize,
-        vertex_buffer,
-        index_buffer,
-        indirect_buffer,
-        draw_count,
-    )?;
+    record_vr_frame(device, data, swapchain, image_index as usize, mesh_pipeline, voxel_pool)?;
     submit_and_wait(device, data.graphics_queue, swapchain.command_buffer)?;
 
     swapchain.handle.release_image()?;
@@ -70,16 +61,14 @@ pub unsafe fn render_vr_frame(
     Ok(Some(eyes))
 }
 
-/// Record a full render pass: sky + voxel geometry using the shared pipelines.
+/// Record a full render pass: sky + voxel geometry using mesh shaders.
 unsafe fn record_vr_frame(
     device: &Device,
     data: &VulkanApplicationData,
     swapchain: &VrSwapchain,
     image_index: usize,
-    vertex_buffer: vk::Buffer,
-    index_buffer: vk::Buffer,
-    indirect_buffer: vk::Buffer,
-    draw_count: u32,
+    mesh_pipeline: &MeshShaderPipeline,
+    voxel_pool: &VoxelPool,
 ) -> anyhow::Result<()> {
     let cmd = swapchain.command_buffer;
     let extent = vk::Extent2D {
@@ -108,9 +97,10 @@ unsafe fn record_vr_frame(
     // Sky
     draw_sky(device, cmd, data, extent);
 
-    // Voxel geometry (simple indirect draw — no two-phase culling for VR yet)
-    if draw_count > 0 {
-        draw_voxels(device, cmd, data, vertex_buffer, index_buffer, indirect_buffer, draw_count);
+    // Voxel geometry via mesh shaders (simple single-phase dispatch for VR)
+    let chunk_count = voxel_pool.chunk_count();
+    if chunk_count > 0 {
+        draw_voxels_mesh_shader(device, cmd, mesh_pipeline, chunk_count);
     }
 
     device.cmd_end_render_pass(cmd);
@@ -134,22 +124,34 @@ unsafe fn draw_sky(device: &Device, cmd: vk::CommandBuffer, data: &VulkanApplica
     device.cmd_draw(cmd, 3, 1, 0, 0);
 }
 
-unsafe fn draw_voxels(
-    device: &Device,
-    cmd: vk::CommandBuffer,
-    data: &VulkanApplicationData,
-    vertex_buffer: vk::Buffer,
-    index_buffer: vk::Buffer,
-    indirect_buffer: vk::Buffer,
-    draw_count: u32,
-) {
-    device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, data.pipeline);
-    device.cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::GRAPHICS, data.pipeline_layout, 0, &[data.descriptor_set], &[]);
-    device.cmd_bind_vertex_buffers(cmd, 0, &[vertex_buffer], &[0]);
-    device.cmd_bind_index_buffer(cmd, index_buffer, 0, vk::IndexType::UINT32);
+unsafe fn draw_voxels_mesh_shader(device: &Device, cmd: vk::CommandBuffer, mesh_pipeline: &MeshShaderPipeline, chunk_count: u32) {
+    let task_mesh_flags = vk::ShaderStageFlags::from_raw(0x40 | 0x80);
 
-    let stride = std::mem::size_of::<crate::graphical_core::vulkan_object::DrawIndexedIndirectCommand>() as u32;
-    device.cmd_draw_indexed_indirect(cmd, indirect_buffer, 0, draw_count, stride);
+    device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, mesh_pipeline.pipeline);
+    device.cmd_bind_descriptor_sets(
+        cmd,
+        vk::PipelineBindPoint::GRAPHICS,
+        mesh_pipeline.pipeline_layout,
+        0,
+        &[mesh_pipeline.descriptor_set],
+        &[],
+    );
+
+    // Single-phase dispatch — no culling push constants needed for VR (all chunks visible)
+    let push = crate::graphical_core::compute_cull::CullPushConstants {
+        planes: [[0.0; 4]; 6],
+        camera_pos: [0.0; 3],
+        chunk_count,
+        screen_size: [0.0; 2],
+        phase: 1,
+        draw_offset: crate::voxel::block::BlockType::opaque_mask(),
+    };
+    let push_bytes: &[u8] = std::slice::from_raw_parts(
+        &push as *const crate::graphical_core::compute_cull::CullPushConstants as *const u8,
+        std::mem::size_of::<crate::graphical_core::compute_cull::CullPushConstants>(),
+    );
+    device.cmd_push_constants(cmd, mesh_pipeline.pipeline_layout, task_mesh_flags, 0, push_bytes);
+    device.cmd_draw_mesh_tasks_ext(cmd, chunk_count, 1, 1);
 }
 
 fn submit_composition_layer(session: &mut VrSession, swapchain: &VrSwapchain, views: &[xr::View], display_time: xr::Time) -> anyhow::Result<()> {

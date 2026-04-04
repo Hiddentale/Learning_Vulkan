@@ -48,6 +48,30 @@ pub fn default_palette() -> MaterialPalette {
         roughness: 0.8,
         ..EMPTY_ENTRY
     };
+    // Index 4: Water
+    entries[4] = MaterialEntry {
+        color: [0.1, 0.3, 0.8],
+        roughness: 0.1,
+        ..EMPTY_ENTRY
+    };
+    // Index 5: Sand
+    entries[5] = MaterialEntry {
+        color: [0.85, 0.75, 0.5],
+        roughness: 0.95,
+        ..EMPTY_ENTRY
+    };
+    // Index 6: Snow
+    entries[6] = MaterialEntry {
+        color: [0.95, 0.95, 0.97],
+        roughness: 0.6,
+        ..EMPTY_ENTRY
+    };
+    // Index 7: Gravel
+    entries[7] = MaterialEntry {
+        color: [0.55, 0.5, 0.45],
+        roughness: 0.9,
+        ..EMPTY_ENTRY
+    };
 
     MaterialPalette { entries }
 }

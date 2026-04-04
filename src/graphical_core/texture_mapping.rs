@@ -5,104 +5,154 @@ use vulkan_rust::{vk, Device, Instance};
 const TEXTURE_FORMAT: vk::Format = vk::Format::R8G8B8A8_SRGB;
 const BYTES_PER_PIXEL: u32 = 4;
 
+/// Atlas dimensions: each layer is 32x16 (left half = side, right half = top).
+const ATLAS_WIDTH: u32 = 32;
+const ATLAS_HEIGHT: u32 = 16;
+
+/// Block textures in material_id order. None means no texture (use palette color).
+const TEXTURE_FILES: &[Option<&str>] = &[
+    None,               // 0: Air
+    Some("grass.png"),  // 1: Grass (32x16 atlas: side + top)
+    Some("dirt.png"),   // 2: Dirt
+    Some("stone.png"),  // 3: Stone
+    Some("water.png"),  // 4: Water
+    Some("sand.png"),   // 5: Sand
+    Some("snow.png"),   // 6: Snow
+    Some("gravel.png"), // 7: Gravel
+];
+
 fn get_texture_path(texture_name: &str) -> String {
     let project_root = env!("CARGO_MANIFEST_DIR");
     format!("{}/textures/{}", project_root, texture_name)
 }
 
-/// Loads a texture from disk and returns the GPU image, memory, view, and sampler.
+/// Loads all block textures into a 2D array image (one layer per material).
+/// Layers without textures are filled with white (shader uses palette color instead).
 pub fn create_texture_image(
     device: &Device,
     instance: &Instance,
-    vulkan_application_data: &mut VulkanApplicationData,
+    data: &mut VulkanApplicationData,
 ) -> anyhow::Result<(vk::Image, vk::DeviceMemory, vk::ImageView, vk::Sampler)> {
-    let texture_path = get_texture_path("red_grass.png");
-    let (image_bytes, width, height) = load_texture_from_disk(&texture_path)?;
-    let (staging_buffer, staging_buffer_memory) =
-        create_and_fill_staging_buffer(image_bytes, width, height, device, instance, vulkan_application_data)?;
-    let image = create_image(device, width, height)?;
-    let device_memory = allocate_and_bind_image_device_memory(device, image, instance, vulkan_application_data)?;
-    transfer_image_data(device, image, width, height, staging_buffer, vulkan_application_data)?;
-    let image_view = create_image_view(device, image)?;
+    let layer_count = TEXTURE_FILES.len() as u32;
+    let layer_bytes = (ATLAS_WIDTH * ATLAS_HEIGHT * BYTES_PER_PIXEL) as usize;
+    let mut all_bytes = vec![255u8; layer_bytes * layer_count as usize]; // white default
+
+    for (i, entry) in TEXTURE_FILES.iter().enumerate() {
+        if let Some(filename) = entry {
+            let path = get_texture_path(filename);
+            let (pixels, w, h) = load_texture_from_disk(&path)?;
+            let dst = &mut all_bytes[i * layer_bytes..(i + 1) * layer_bytes];
+            blit_to_atlas(dst, &pixels, w, h);
+        }
+    }
+
+    let total_size = (layer_count * ATLAS_WIDTH * ATLAS_HEIGHT * BYTES_PER_PIXEL) as u64;
+    let (staging_buffer, staging_buffer_memory) = unsafe {
+        allocate_and_fill_buffer(
+            &all_bytes,
+            total_size,
+            vk::BufferUsageFlags::TRANSFER_SRC,
+            device,
+            instance,
+            data,
+            super::host_visible_coherent(),
+        )?
+    };
+
+    let image = create_array_image(device, layer_count)?;
+    let device_memory = allocate_and_bind_image_memory(device, image, instance, data)?;
+    transfer_array_image(device, image, layer_count, staging_buffer, data)?;
+    let image_view = create_array_image_view(device, image, layer_count)?;
     let sampler = create_sampler(device)?;
+
     unsafe {
         device.destroy_buffer(staging_buffer, None);
         device.free_memory(staging_buffer_memory, None);
     }
+
     Ok((image, device_memory, image_view, sampler))
 }
 
-fn load_texture_from_disk(path_to_texture: &str) -> anyhow::Result<(Vec<u8>, u32, u32)> {
-    let texture = image::ImageReader::open(path_to_texture)?.decode()?;
+/// Copies source pixels into a 32x16 atlas layer.
+/// If source is 32x16, copies directly. If 16x16, duplicates into both halves.
+fn blit_to_atlas(dst: &mut [u8], src: &[u8], src_w: u32, src_h: u32) {
+    let bpp = BYTES_PER_PIXEL as usize;
+    if src_w == ATLAS_WIDTH && src_h == ATLAS_HEIGHT {
+        dst[..src.len()].copy_from_slice(src);
+    } else if src_w == ATLAS_HEIGHT && src_h == ATLAS_HEIGHT {
+        // 16x16 -> duplicate into left and right halves of 32x16
+        for row in 0..ATLAS_HEIGHT as usize {
+            let src_row_start = row * src_w as usize * bpp;
+            let src_row = &src[src_row_start..src_row_start + src_w as usize * bpp];
+            let dst_row_start = row * ATLAS_WIDTH as usize * bpp;
+            // Left half
+            dst[dst_row_start..dst_row_start + src_w as usize * bpp].copy_from_slice(src_row);
+            // Right half
+            let right_start = dst_row_start + src_w as usize * bpp;
+            dst[right_start..right_start + src_w as usize * bpp].copy_from_slice(src_row);
+        }
+    } else {
+        log::warn!(
+            "Texture {}x{} doesn't match atlas {}x{}, skipping",
+            src_w,
+            src_h,
+            ATLAS_WIDTH,
+            ATLAS_HEIGHT
+        );
+    }
+}
+
+fn load_texture_from_disk(path: &str) -> anyhow::Result<(Vec<u8>, u32, u32)> {
+    let texture = image::ImageReader::open(path)?.decode()?;
     let width = texture.width();
     let height = texture.height();
-    let image_bytes = texture.to_rgba8().into_raw();
-    Ok((image_bytes, width, height))
+    let bytes = texture.to_rgba8().into_raw();
+    Ok((bytes, width, height))
 }
 
-fn create_and_fill_staging_buffer(
-    image_bytes: Vec<u8>,
-    image_width: u32,
-    image_height: u32,
-    device: &Device,
-    instance: &Instance,
-    vulkan_application_data: &mut VulkanApplicationData,
-) -> anyhow::Result<(vk::Buffer, vk::DeviceMemory)> {
-    let staging_buffer_size_in_bytes = (image_width * image_height * BYTES_PER_PIXEL) as u64;
-    let staging_buffer = unsafe {
-        allocate_and_fill_buffer(
-            &image_bytes,
-            staging_buffer_size_in_bytes,
-            vk::BufferUsageFlags::TRANSFER_SRC,
-            device,
-            instance,
-            vulkan_application_data,
-            super::host_visible_coherent(),
-        )?
-    };
-    Ok(staging_buffer)
-}
-
-fn create_image(device: &Device, width: u32, height: u32) -> anyhow::Result<vk::Image> {
-    let image_info = vk::ImageCreateInfo::builder()
+fn create_array_image(device: &Device, layer_count: u32) -> anyhow::Result<vk::Image> {
+    let info = vk::ImageCreateInfo::builder()
         .image_type(vk::ImageType::_2D)
         .format(TEXTURE_FORMAT)
-        .extent(vk::Extent3D { width, height, depth: 1 })
+        .extent(vk::Extent3D {
+            width: ATLAS_WIDTH,
+            height: ATLAS_HEIGHT,
+            depth: 1,
+        })
         .mip_levels(1)
-        .array_layers(1)
+        .array_layers(layer_count)
         .samples(vk::SampleCountFlags::_1)
         .tiling(vk::ImageTiling::OPTIMAL)
         .usage(vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED)
         .sharing_mode(vk::SharingMode::EXCLUSIVE)
         .initial_layout(vk::ImageLayout::UNDEFINED);
 
-    Ok(unsafe { device.create_image(&image_info, None)? })
+    Ok(unsafe { device.create_image(&info, None)? })
 }
 
-fn allocate_and_bind_image_device_memory(
+fn allocate_and_bind_image_memory(
     device: &Device,
     image: vk::Image,
     instance: &Instance,
-    vulkan_application_data: &mut VulkanApplicationData,
+    data: &mut VulkanApplicationData,
 ) -> anyhow::Result<vk::DeviceMemory> {
-    let mem_requirements = unsafe { device.get_image_memory_requirements(image) };
-    let mem_properties = unsafe { instance.get_physical_device_memory_properties(vulkan_application_data.physical_device) };
-    let mem_type_index = find_memory_type(&mem_properties, mem_requirements.memory_type_bits, vk::MemoryPropertyFlags::DEVICE_LOCAL)?;
+    let requirements = unsafe { device.get_image_memory_requirements(image) };
+    let properties = unsafe { instance.get_physical_device_memory_properties(data.physical_device) };
+    let type_index = find_memory_type(&properties, requirements.memory_type_bits, vk::MemoryPropertyFlags::DEVICE_LOCAL)?;
 
     let alloc_info = vk::MemoryAllocateInfo::builder()
-        .allocation_size(mem_requirements.size)
-        .memory_type_index(mem_type_index);
+        .allocation_size(requirements.size)
+        .memory_type_index(type_index);
 
-    let allocated_memory = unsafe { device.allocate_memory(&alloc_info, None)? };
-    unsafe { device.bind_image_memory(image, allocated_memory, 0)? };
-    Ok(allocated_memory)
+    let memory = unsafe { device.allocate_memory(&alloc_info, None)? };
+    unsafe { device.bind_image_memory(image, memory, 0)? };
+    Ok(memory)
 }
 
-fn transfer_image_data(
+fn transfer_array_image(
     device: &Device,
     image: vk::Image,
-    image_width: u32,
-    image_height: u32,
+    layer_count: u32,
     staging_buffer: vk::Buffer,
     data: &mut VulkanApplicationData,
 ) -> anyhow::Result<()> {
@@ -112,11 +162,53 @@ fn transfer_image_data(
         .level(vk::CommandBufferLevel::PRIMARY);
 
     let cmd = unsafe { device.allocate_command_buffers(&alloc_info)? }[0];
+    unsafe {
+        device.begin_command_buffer(
+            cmd,
+            &vk::CommandBufferBeginInfo::builder().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
+        )?;
 
-    let begin_info = vk::CommandBufferBeginInfo::builder().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
-    unsafe { device.begin_command_buffer(cmd, &begin_info)? };
-    unsafe { record_image_transfer(device, cmd, image, image_width, image_height, staging_buffer) };
-    unsafe { device.end_command_buffer(cmd)? }
+        // Transition all layers: UNDEFINED -> TRANSFER_DST
+        transition_image_layout(
+            device,
+            cmd,
+            image,
+            vk::ImageLayout::UNDEFINED,
+            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            layer_count,
+        );
+
+        // Copy each layer from staging buffer
+        let layer_size = (ATLAS_WIDTH * ATLAS_HEIGHT * BYTES_PER_PIXEL) as u64;
+        let regions: Vec<vk::BufferImageCopy> = (0..layer_count)
+            .map(|layer| {
+                let subresource = *vk::ImageSubresourceLayers::builder()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .mip_level(0)
+                    .base_array_layer(layer)
+                    .layer_count(1);
+
+                *vk::BufferImageCopy::builder()
+                    .buffer_offset(layer as u64 * layer_size)
+                    .image_subresource(subresource)
+                    .image_extent(*vk::Extent3D::builder().width(ATLAS_WIDTH).height(ATLAS_HEIGHT).depth(1))
+            })
+            .collect();
+
+        device.cmd_copy_buffer_to_image(cmd, staging_buffer, image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &regions);
+
+        // Transition all layers: TRANSFER_DST -> SHADER_READ_ONLY
+        transition_image_layout(
+            device,
+            cmd,
+            image,
+            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            layer_count,
+        );
+
+        device.end_command_buffer(cmd)?;
+    }
 
     let command_buffers = [cmd];
     let submit_info = vk::SubmitInfo::builder()
@@ -125,22 +217,12 @@ fn transfer_image_data(
         .signal_semaphores(&[])
         .wait_dst_stage_mask(&[]);
 
-    unsafe { device.queue_submit(data.graphics_queue, &[*submit_info], vk::Fence::null())? }
-    unsafe { device.queue_wait_idle(data.graphics_queue)? }
-    unsafe { device.free_command_buffers(data.command_pool, &[cmd]) }
+    unsafe {
+        device.queue_submit(data.graphics_queue, &[*submit_info], vk::Fence::null())?;
+        device.queue_wait_idle(data.graphics_queue)?;
+        device.free_command_buffers(data.command_pool, &[cmd]);
+    }
     Ok(())
-}
-
-unsafe fn record_image_transfer(device: &Device, cmd: vk::CommandBuffer, image: vk::Image, width: u32, height: u32, staging_buffer: vk::Buffer) {
-    transition_image_layout(device, cmd, image, vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
-    copy_buffer_to_image(device, cmd, staging_buffer, image, width, height);
-    transition_image_layout(
-        device,
-        cmd,
-        image,
-        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-    );
 }
 
 unsafe fn transition_image_layout(
@@ -149,6 +231,7 @@ unsafe fn transition_image_layout(
     image: vk::Image,
     old_layout: vk::ImageLayout,
     new_layout: vk::ImageLayout,
+    layer_count: u32,
 ) {
     let (src_access, dst_access, src_stage, dst_stage) = match (old_layout, new_layout) {
         (vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL) => (
@@ -166,13 +249,18 @@ unsafe fn transition_image_layout(
         _ => panic!("Unsupported layout transition: {:?} -> {:?}", old_layout, new_layout),
     };
 
+    let subresource_range = *vk::ImageSubresourceRange::builder()
+        .aspect_mask(vk::ImageAspectFlags::COLOR)
+        .level_count(1)
+        .layer_count(layer_count);
+
     let barrier = vk::ImageMemoryBarrier::builder()
         .src_access_mask(src_access)
         .dst_access_mask(dst_access)
         .old_layout(old_layout)
         .new_layout(new_layout)
         .image(image)
-        .subresource_range(super::subresource_range(vk::ImageAspectFlags::COLOR, 1))
+        .subresource_range(subresource_range)
         .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
         .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED);
 
@@ -187,36 +275,23 @@ unsafe fn transition_image_layout(
     );
 }
 
-unsafe fn copy_buffer_to_image(device: &Device, cmd: vk::CommandBuffer, buffer: vk::Buffer, image: vk::Image, width: u32, height: u32) {
-    let subresource = vk::ImageSubresourceLayers::builder()
+fn create_array_image_view(device: &Device, image: vk::Image, layer_count: u32) -> anyhow::Result<vk::ImageView> {
+    let subresource_range = *vk::ImageSubresourceRange::builder()
         .aspect_mask(vk::ImageAspectFlags::COLOR)
-        .mip_level(0)
-        .base_array_layer(0)
-        .layer_count(1);
+        .level_count(1)
+        .layer_count(layer_count);
 
-    let region = vk::BufferImageCopy::builder()
-        .buffer_offset(0)
-        .buffer_row_length(0)
-        .buffer_image_height(0)
-        .image_subresource(*subresource)
-        .image_offset(*vk::Offset3D::builder().x(0).y(0).z(0))
-        .image_extent(*vk::Extent3D::builder().width(width).height(height).depth(1));
-
-    device.cmd_copy_buffer_to_image(cmd, buffer, image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[*region]);
-}
-
-fn create_image_view(device: &Device, image: vk::Image) -> anyhow::Result<vk::ImageView> {
-    let view_info = vk::ImageViewCreateInfo::builder()
+    let info = vk::ImageViewCreateInfo::builder()
         .image(image)
         .format(TEXTURE_FORMAT)
-        .view_type(vk::ImageViewType::_2D)
-        .subresource_range(super::subresource_range(vk::ImageAspectFlags::COLOR, 1));
+        .view_type(vk::ImageViewType::_2D_ARRAY)
+        .subresource_range(subresource_range);
 
-    Ok(unsafe { device.create_image_view(&view_info, None)? })
+    Ok(unsafe { device.create_image_view(&info, None)? })
 }
 
 fn create_sampler(device: &Device) -> anyhow::Result<vk::Sampler> {
-    let sampler_info = vk::SamplerCreateInfo::builder()
+    let info = vk::SamplerCreateInfo::builder()
         .mag_filter(vk::Filter::NEAREST)
         .min_filter(vk::Filter::NEAREST)
         .address_mode_u(vk::SamplerAddressMode::REPEAT)
@@ -229,7 +304,7 @@ fn create_sampler(device: &Device) -> anyhow::Result<vk::Sampler> {
         .max_lod(0.0)
         .mip_lod_bias(0.0);
 
-    Ok(unsafe { device.create_sampler(&sampler_info, None)? })
+    Ok(unsafe { device.create_sampler(&info, None)? })
 }
 
 /// Destroys the texture sampler, image view, image, and frees its device memory.

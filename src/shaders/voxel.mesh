@@ -1,0 +1,213 @@
+#version 450
+#extension GL_EXT_mesh_shader : require
+#extension GL_EXT_multiview : enable
+
+layout(local_size_x = 64) in;
+layout(triangles, max_vertices = 252, max_primitives = 126) out;
+
+struct MeshChunkInfo {
+    vec3 aabb_min;
+    uint voxel_slot;
+    vec3 aabb_max;
+    uint boundary_slot;
+};
+
+layout(std430, set = 0, binding = 5) readonly buffer ChunkInfoBuffer {
+    MeshChunkInfo chunks[];
+};
+
+layout(std430, set = 0, binding = 3) readonly buffer VoxelDataBuffer {
+    uint voxel_data[];
+};
+
+layout(std430, set = 0, binding = 4) readonly buffer BoundaryDataBuffer {
+    uint boundary_data[];
+};
+
+layout(set = 0, binding = 1) uniform CameraUBO {
+    mat4 view_projection[2];
+    mat4 inverse_view_projection[2];
+    vec3 light_direction;
+    float ambient_strength;
+} camera;
+
+layout(push_constant) uniform PushConstants {
+    vec4 planes[6];
+    vec3 camera_pos;
+    uint chunk_count;
+    vec2 screen_size;
+    uint phase;
+    uint opaque_mask;
+};
+
+struct MeshPayload {
+    uint chunk_index;
+    uint sub_chunk_index;
+};
+
+taskPayloadSharedEXT MeshPayload payloads[64];
+
+// Fragment shader outputs
+layout(location = 0) out vec2 fragTexCoord[];
+layout(location = 1) out vec3 fragNormalWorld[];
+layout(location = 2) flat out uint fragMaterialId[];
+layout(location = 3) out vec3 fragWorldPos[];
+
+// Shared state for two-pass allocation
+shared uint total_faces;
+shared uint thread_base[64]; // each thread's starting face slot
+
+// Face normals: +X, -X, +Y, -Y, +Z, -Z
+const vec3 FACE_NORMALS[6] = vec3[6](
+    vec3(1, 0, 0), vec3(-1, 0, 0), vec3(0, 1, 0),
+    vec3(0, -1, 0), vec3(0, 0, 1), vec3(0, 0, -1)
+);
+
+const vec3 FACE_TANGENTS[6] = vec3[6](
+    vec3(0, 0, 1), vec3(0, 0, -1), vec3(1, 0, 0),
+    vec3(1, 0, 0), vec3(-1, 0, 0), vec3(1, 0, 0)
+);
+
+const vec3 FACE_BITANGENTS[6] = vec3[6](
+    vec3(0, 1, 0), vec3(0, 1, 0), vec3(0, 0, 1),
+    vec3(0, 0, -1), vec3(0, 1, 0), vec3(0, 1, 0)
+);
+
+const vec2 CORNER_UVS[4] = vec2[4](
+    vec2(0, 1), vec2(1, 1), vec2(1, 0), vec2(0, 0)
+);
+
+uint read_block(uint voxel_slot, uint x, uint y, uint z) {
+    uint idx = x + z * 16u + y * 256u;
+    uint word = voxel_data[voxel_slot * 1024u + idx / 4u];
+    return (word >> ((idx % 4u) * 8u)) & 0xFFu;
+}
+
+uint read_boundary(uint boundary_slot, uint face, uint u, uint v) {
+    uint idx = face * 256u + u + v * 16u;
+    uint word = boundary_data[boundary_slot * 384u + idx / 4u];
+    return (word >> ((idx % 4u) * 8u)) & 0xFFu;
+}
+
+bool is_opaque_block(uint block_type) {
+    return (opaque_mask & (1u << block_type)) != 0u;
+}
+
+bool should_emit(uint block, uint neighbor) {
+    if (is_opaque_block(block)) return !is_opaque_block(neighbor);
+    if (block == 4u) return neighbor == 0u;
+    return false;
+}
+
+uint get_neighbor(uint voxel_slot, uint boundary_slot, int x, int y, int z, uint face) {
+    if (x >= 0 && x < 16 && y >= 0 && y < 16 && z >= 0 && z < 16) {
+        return read_block(voxel_slot, uint(x), uint(y), uint(z));
+    }
+    uint bu, bv;
+    if (face == 0u) { bu = uint(z); bv = uint(y); }
+    else if (face == 1u) { bu = uint(z); bv = uint(y); }
+    else if (face == 2u) { bu = uint(x); bv = uint(z); }
+    else if (face == 3u) { bu = uint(x); bv = uint(z); }
+    else if (face == 4u) { bu = uint(x); bv = uint(y); }
+    else { bu = uint(x); bv = uint(y); }
+    return read_boundary(boundary_slot, face, bu, bv);
+}
+
+// Per-thread face visibility mask (6 bits, one per face direction)
+uint compute_face_mask(uint voxel_slot, uint boundary_slot, uint block, uint gx, uint gy, uint gz) {
+    if (block == 0u) return 0u;
+    uint mask = 0u;
+    for (uint face = 0u; face < 6u; face++) {
+        ivec3 ndir = ivec3(FACE_NORMALS[face]);
+        int nx = int(gx) + ndir.x;
+        int ny = int(gy) + ndir.y;
+        int nz = int(gz) + ndir.z;
+        uint neighbor = get_neighbor(voxel_slot, boundary_slot, nx, ny, nz, face);
+        if (should_emit(block, neighbor)) {
+            mask |= (1u << face);
+        }
+    }
+    return mask;
+}
+
+void emit_face(uint slot, vec3 center, uint face, uint material_id) {
+    vec3 n = FACE_NORMALS[face];
+    vec3 t = FACE_TANGENTS[face];
+    vec3 b = FACE_BITANGENTS[face];
+    vec3 face_center = center + n * 0.5;
+
+    uint vi = slot * 4u;
+    uint pi = slot * 2u;
+
+    for (uint c = 0u; c < 4u; c++) {
+        float u_off = (c == 0u || c == 3u) ? -0.5 : 0.5;
+        float v_off = (c < 2u) ? -0.5 : 0.5;
+        vec3 world_pos = face_center + t * u_off + b * v_off;
+
+        gl_MeshVerticesEXT[vi + c].gl_Position =
+            camera.view_projection[gl_ViewIndex] * vec4(world_pos, 1.0);
+        fragWorldPos[vi + c] = world_pos;
+        fragTexCoord[vi + c] = CORNER_UVS[c];
+        fragNormalWorld[vi + c] = n;
+        fragMaterialId[vi + c] = material_id;
+    }
+
+    gl_PrimitiveTriangleIndicesEXT[pi]     = uvec3(vi, vi + 1u, vi + 2u);
+    gl_PrimitiveTriangleIndicesEXT[pi + 1u] = uvec3(vi, vi + 2u, vi + 3u);
+}
+
+void main() {
+    MeshPayload payload = payloads[gl_WorkGroupID.x];
+    MeshChunkInfo chunk = chunks[payload.chunk_index];
+
+    uint sub_idx = payload.sub_chunk_index;
+    uint sx = (sub_idx & 3u) * 4u;
+    uint sy = ((sub_idx >> 2u) & 3u) * 4u;
+    uint sz = ((sub_idx >> 4u) & 3u) * 4u;
+
+    uint tid = gl_LocalInvocationID.x;
+
+    // Decode local block position within 4x4x4 sub-chunk
+    uint lx = tid & 3u;
+    uint ly = (tid >> 2u) & 3u;
+    uint lz = (tid >> 4u) & 3u;
+    uint gx = sx + lx;
+    uint gy = sy + ly;
+    uint gz = sz + lz;
+
+    uint block = read_block(chunk.voxel_slot, gx, gy, gz);
+
+    // === Pass 1: Count faces per thread ===
+    uint face_mask = compute_face_mask(chunk.voxel_slot, chunk.boundary_slot, block, gx, gy, gz);
+    uint my_count = bitCount(face_mask);
+
+    if (tid == 0u) total_faces = 0u;
+    barrier();
+
+    // Reserve slots for this thread's faces
+    uint my_base = 0u;
+    if (my_count > 0u) {
+        my_base = atomicAdd(total_faces, my_count);
+    }
+    thread_base[tid] = my_base;
+
+    barrier();
+
+    // === SetMeshOutputsEXT BEFORE any writes (spec requirement) ===
+    uint clamped_total = min(total_faces, 63u);
+    SetMeshOutputsEXT(clamped_total * 4u, clamped_total * 2u);
+
+    barrier();
+
+    // === Pass 2: Write faces at allocated slots ===
+    if (my_count > 0u && my_base < 63u) {
+        vec3 center = chunk.aabb_min + vec3(float(gx) + 0.5, float(gy) + 0.5, float(gz) + 0.5);
+        uint write_slot = my_base;
+        for (uint face = 0u; face < 6u; face++) {
+            if ((face_mask & (1u << face)) != 0u && write_slot < 63u) {
+                emit_face(write_slot, center, face, block);
+                write_slot++;
+            }
+        }
+    }
+}
