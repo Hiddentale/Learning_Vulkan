@@ -85,7 +85,7 @@ pub struct VulkanApplicationData {
 
 use crate::voxel::world::{MAX_CHUNK_Y, MIN_CHUNK_Y};
 
-const RENDER_DISTANCE: i32 = 5;
+const RENDER_DISTANCE: i32 = 16;
 const CHUNK_LAYERS: usize = (MAX_CHUNK_Y - MIN_CHUNK_Y + 1) as usize;
 const MAX_LOADED_CHUNKS: usize = ((2 * RENDER_DISTANCE + 1) * (2 * RENDER_DISTANCE + 1)) as usize * CHUNK_LAYERS;
 /// Each chunk can emit up to 6 indirect draws (one per face-direction bucket).
@@ -716,7 +716,7 @@ mod tests {
 
     #[test]
     fn max_indirect_draws_accommodates_all_chunks() {
-        let columns = ((2 * 5 + 1) * (2 * 5 + 1)) as usize; // RENDER_DISTANCE = 5
+        let columns = ((2 * 16 + 1) * (2 * 16 + 1)) as usize; // RENDER_DISTANCE = 16
         let max_chunks = columns * CHUNK_LAYERS;
         assert_eq!(MAX_INDIRECT_DRAWS, max_chunks * 6);
     }
