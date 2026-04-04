@@ -118,6 +118,10 @@ pub unsafe fn record_command_buffer(
 
     // Draw phase 1 (begins render pass with clear)
     begin_render_pass(device, cmd, data, image_index);
+
+    // Sky pass: fullscreen triangle before voxel geometry
+    draw_sky(device, cmd, data);
+
     bind_graphics_state(device, cmd, data, vertex_buffer, index_buffer);
     draw_indirect(
         device,
@@ -235,6 +239,23 @@ unsafe fn draw_indirect(
     {
         device.cmd_draw_indexed_indirect_count(cmd, buffer, offset, _count_buffer, _count_offset, max_draws, stride);
     }
+}
+
+/// Draws a fullscreen triangle with the sky shader before voxel geometry.
+unsafe fn draw_sky(device: &Device, cmd: vk::CommandBuffer, data: &VulkanApplicationData) {
+    device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, data.sky_pipeline);
+    device.cmd_bind_descriptor_sets(
+        cmd,
+        vk::PipelineBindPoint::GRAPHICS,
+        data.sky_pipeline_layout,
+        0,
+        &[data.descriptor_set],
+        &[],
+    );
+    let screen_size: [f32; 2] = [data.swapchain_extent.width as f32, data.swapchain_extent.height as f32];
+    let push_bytes: &[u8] = std::slice::from_raw_parts(screen_size.as_ptr() as *const u8, std::mem::size_of::<[f32; 2]>());
+    device.cmd_push_constants(cmd, data.sky_pipeline_layout, vk::ShaderStageFlags::FRAGMENT, 0, push_bytes);
+    device.cmd_draw(cmd, 3, 1, 0, 0);
 }
 
 unsafe fn begin_render_pass(device: &Device, cmd: vk::CommandBuffer, data: &VulkanApplicationData, framebuffer_index: usize) {

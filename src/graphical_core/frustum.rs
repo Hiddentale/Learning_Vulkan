@@ -42,6 +42,38 @@ impl Frustum {
         self.planes[index].to_array()
     }
 
+    /// Build a frustum that encloses both eyes' view volumes.
+    /// Takes the outermost left/right planes and the most conservative
+    /// top/bottom/near/far from each eye.
+    pub fn combined_stereo(left_vp: &Mat4, right_vp: &Mat4) -> Self {
+        let left = Self::from_view_projection(left_vp);
+        let right = Self::from_view_projection(right_vp);
+
+        // For each plane pair, pick the one further from center (more permissive).
+        // Left plane: use left eye's left plane (it extends further left)
+        // Right plane: use right eye's right plane (it extends further right)
+        // Top/bottom/near/far: use whichever is more permissive (larger d value)
+        Self {
+            planes: [
+                Self::more_permissive(left.planes[0], right.planes[0]), // left
+                Self::more_permissive(right.planes[1], left.planes[1]), // right
+                Self::more_permissive(left.planes[2], right.planes[2]), // bottom
+                Self::more_permissive(left.planes[3], right.planes[3]), // top
+                Self::more_permissive(left.planes[4], right.planes[4]), // near
+                Self::more_permissive(left.planes[5], right.planes[5]), // far
+            ],
+        }
+    }
+
+    /// Pick the plane that culls less (further from origin along its normal).
+    fn more_permissive(a: Vec4, b: Vec4) -> Vec4 {
+        if a.w > b.w {
+            a
+        } else {
+            b
+        }
+    }
+
     #[cfg(test)]
     /// Returns true if an axis-aligned bounding box is at least partially inside the frustum.
     /// Uses the "p-vertex" test: for each plane, find the box corner most aligned with

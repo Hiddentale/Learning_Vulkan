@@ -3,7 +3,7 @@ mod graphical_core;
 mod voxel;
 mod vr;
 use anyhow::Result;
-use graphical_core::camera::Camera;
+use graphical_core::camera::{Camera, EyeMatrices};
 use graphical_core::input::InputState;
 use graphical_core::vulkan_object::VulkanApplication;
 use log::info;
@@ -27,7 +27,7 @@ const DEVICE_EXTENSIONS: &[&std::ffi::CStr] = &[vk::extension_names::KHR_SWAPCHA
 
 fn main() -> Result<()> {
     initialize_error_handler();
-    let _vr_context = probe_vr();
+    let vr_context = probe_vr();
 
     let event_handler = EventLoop::new()?;
     let user_window = WindowBuilder::new()
@@ -37,7 +37,7 @@ fn main() -> Result<()> {
 
     grab_cursor(&user_window);
 
-    let mut application = unsafe { VulkanApplication::create_vulkan_application(&user_window) }?;
+    let mut application = unsafe { VulkanApplication::create_vulkan_application(&user_window, vr_context) }?;
     let mut destroy_application = false;
     let mut minimized = false;
     let mut camera = Camera::default();
@@ -109,7 +109,29 @@ fn main() -> Result<()> {
                 ..
             } => {
                 if !destroy_application && !minimized {
-                    if let Err(e) = unsafe { application.render_frame(&user_window, &camera) } {
+                    // Poll OpenXR events (session state transitions)
+                    if application.has_vr() {
+                        if let Err(e) = application.poll_vr_events() {
+                            eprintln!("VR event error: {e}");
+                        }
+                    }
+
+                    // VR frame: submit to headset, get eye matrices for spectator view
+                    let vr_eyes = if application.has_vr() {
+                        match unsafe { application.render_vr_frame() } {
+                            Ok(eyes) => eyes,
+                            Err(e) => {
+                                eprintln!("VR frame error: {e}");
+                                None
+                            }
+                        }
+                    } else {
+                        None
+                    };
+
+                    // Desktop frame: use VR eyes as spectator, or desktop camera
+                    let eyes = vr_eyes.unwrap_or_else(|| EyeMatrices::from_camera(&camera, application.swapchain_extent()));
+                    if let Err(e) = unsafe { application.render_frame(&user_window, &camera, &eyes) } {
                         eprintln!("Render error: {e}");
                         exit_program(&mut destroy_application, current_window, &mut application);
                     }

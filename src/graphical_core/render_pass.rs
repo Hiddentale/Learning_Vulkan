@@ -4,17 +4,19 @@ use vulkan_rust::{vk, Device, Instance};
 
 /// Creates both render passes: one that clears (phase 1) and one that loads (phase 2).
 pub unsafe fn create_render_pass(_instance: &Instance, device: &Device, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
-    data.render_pass = create_render_pass_with_load_op(
+    data.render_pass = create_multiview_render_pass(
         device,
         data.swapchain_format,
+        1,
         vk::AttachmentLoadOp::CLEAR,
         vk::ImageLayout::UNDEFINED,
         vk::ImageLayout::UNDEFINED,
     )?;
 
-    data.render_pass_load = create_render_pass_with_load_op(
+    data.render_pass_load = create_multiview_render_pass(
         device,
         data.swapchain_format,
+        1,
         vk::AttachmentLoadOp::LOAD,
         vk::ImageLayout::PRESENT_SRC,
         vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
@@ -23,22 +25,33 @@ pub unsafe fn create_render_pass(_instance: &Instance, device: &Device, data: &m
     Ok(())
 }
 
-unsafe fn create_render_pass_with_load_op(
+/// Creates a multiview-enabled render pass.
+///
+/// `view_count` controls how many views (array layers) are rendered
+/// simultaneously: 1 for desktop, 2 for stereo VR.
+pub unsafe fn create_multiview_render_pass(
     device: &Device,
-    swapchain_format: vk::Format,
+    color_format: vk::Format,
+    view_count: u32,
     load_op: vk::AttachmentLoadOp,
     color_initial_layout: vk::ImageLayout,
     depth_initial_layout: vk::ImageLayout,
 ) -> anyhow::Result<vk::RenderPass> {
+    let final_color_layout = if view_count > 1 {
+        vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL
+    } else {
+        vk::ImageLayout::PRESENT_SRC
+    };
+
     let color_attachment = vk::AttachmentDescription::builder()
-        .format(swapchain_format)
+        .format(color_format)
         .samples(vk::SampleCountFlags::_1)
         .load_op(load_op)
         .store_op(vk::AttachmentStoreOp::STORE)
         .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
         .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
         .initial_layout(color_initial_layout)
-        .final_layout(vk::ImageLayout::PRESENT_SRC);
+        .final_layout(final_color_layout);
 
     let depth_attachment = vk::AttachmentDescription::builder()
         .format(depth_format())
@@ -72,13 +85,22 @@ unsafe fn create_render_pass_with_load_op(
         .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS)
         .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE);
 
+    let view_mask = (1u32 << view_count) - 1; // 0b1 for desktop, 0b11 for stereo
+    let correlation_mask = view_mask;
+    let view_masks = [view_mask];
+    let correlation_masks = [correlation_mask];
+    let mut multiview_info = vk::RenderPassMultiviewCreateInfo::builder()
+        .view_masks(&view_masks)
+        .correlation_masks(&correlation_masks);
+
     let attachments = &[*color_attachment, *depth_attachment];
     let subpasses = &[*subpass];
     let dependencies = &[*dependency];
     let info = vk::RenderPassCreateInfo::builder()
         .attachments(attachments)
         .subpasses(subpasses)
-        .dependencies(dependencies);
+        .dependencies(dependencies)
+        .push_next(&mut *multiview_info);
 
     Ok(device.create_render_pass(&info, None)?)
 }

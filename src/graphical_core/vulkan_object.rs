@@ -1,5 +1,5 @@
 use crate::graphical_core::{
-    camera::{create_uniform_buffer, destroy_uniform_buffer, update_uniform_buffer, view_projection_matrix, Camera, UniformBufferObject},
+    camera::{create_uniform_buffer, destroy_uniform_buffer, update_uniform_buffer, Camera, EyeMatrices, UniformBufferObject},
     commands::{allocate_command_buffers, create_command_pool, create_frame_buffers, create_sync_objects, record_command_buffer},
     compute_cull::{self, ComputeCullResources, CullPushConstants, DepthPyramidResources},
     depth::{create_depth_image, create_depth_pyramid, destroy_depth_image, destroy_depth_pyramid},
@@ -9,7 +9,7 @@ use crate::graphical_core::{
     instance::{create_instance, create_logical_device},
     mesh_pool::MeshPool,
     palette_buffer::{create_palette_buffer, destroy_palette_buffer},
-    pipeline::create_pipeline,
+    pipeline::{create_pipeline, create_sky_pipeline},
     render_pass::create_render_pass,
     scene::Transform,
     swapchain::{create_swapchain, create_swapchain_image_views},
@@ -21,8 +21,10 @@ use crate::voxel::{
     meshing::{self, ChunkNeighbors},
     world::World,
 };
+use crate::vr::{VrContext, VrSession, VrSwapchain};
 use crate::VALIDATION_ENABLED;
 use anyhow::anyhow;
+use log::info;
 use vk::Handle;
 use vulkan_rust::{vk, Device, Entry, Instance, LibloadingLoader};
 use winit::window::Window;
@@ -77,6 +79,8 @@ pub struct VulkanApplicationData {
     pub indirect_buffer: vk::Buffer,
     pub indirect_buffer_memory: vk::DeviceMemory,
     pub indirect_buffer_ptr: *mut DrawIndexedIndirectCommand,
+    pub sky_pipeline: vk::Pipeline,
+    pub sky_pipeline_layout: vk::PipelineLayout,
 }
 
 const RENDER_DISTANCE: i32 = 5;
@@ -109,11 +113,50 @@ pub struct VulkanApplication {
     chunk_count: u32,
     depth_pyramid_needs_init: bool,
     last_player_chunk: [i32; 2],
+    _vr_session: Option<VrSession>,
+    _vr_swapchain: Option<VrSwapchain>,
 }
 
 impl VulkanApplication {
     pub fn world(&self) -> &World {
         &self.world
+    }
+
+    pub fn swapchain_extent(&self) -> vk::Extent2D {
+        self.vulkan_application_data.swapchain_extent
+    }
+
+    pub fn has_vr(&self) -> bool {
+        self._vr_session.is_some()
+    }
+
+    /// Poll OpenXR events and handle session state transitions.
+    /// Returns `false` if the VR session should be abandoned.
+    pub fn poll_vr_events(&mut self) -> anyhow::Result<bool> {
+        match &mut self._vr_session {
+            Some(session) => session.poll_events(),
+            None => Ok(true),
+        }
+    }
+
+    /// Run one VR frame. Returns eye matrices if the headset rendered.
+    ///
+    /// # Safety
+    /// Calls unsafe Vulkan and OpenXR APIs.
+    pub unsafe fn render_vr_frame(&mut self) -> anyhow::Result<Option<EyeMatrices>> {
+        let (Some(session), Some(swapchain)) = (&mut self._vr_session, &mut self._vr_swapchain) else {
+            return Ok(None);
+        };
+        crate::vr::frame::render_vr_frame(
+            &self.device,
+            &self.vulkan_application_data,
+            session,
+            swapchain,
+            self.mesh_pool.vertex_buffer,
+            self.mesh_pool.index_buffer,
+            self.vulkan_application_data.indirect_buffer,
+            self.chunk_count * 6,
+        )
     }
 }
 
@@ -123,8 +166,15 @@ impl VulkanApplication {
     /// # Safety
     /// Calls unsafe Vulkan APIs. The caller must call [`destroy_vulkan_application`]
     /// before dropping the returned value or closing the window.
-    pub unsafe fn create_vulkan_application(user_window: &Window) -> anyhow::Result<Self> {
-        let (entry, instance, device, mut data) = create_core_infrastructure(user_window)?;
+    pub unsafe fn create_vulkan_application(user_window: &Window, vr_context: Option<VrContext>) -> anyhow::Result<Self> {
+        let CoreInfrastructure {
+            entry,
+            instance,
+            device,
+            mut data,
+            vr_session,
+            vr_swapchain,
+        } = create_core_infrastructure(user_window, vr_context)?;
         create_presentation_pipeline(user_window, &instance, &device, &mut data)?;
         create_resources(&device, &instance, &mut data)?;
         allocate_command_buffers(&device, &mut data)?;
@@ -156,19 +206,67 @@ impl VulkanApplication {
             chunk_count,
             depth_pyramid_needs_init: true,
             last_player_chunk: [0, 0],
+            _vr_session: vr_session,
+            _vr_swapchain: vr_swapchain,
         })
     }
 }
 
-unsafe fn create_core_infrastructure(window: &Window) -> anyhow::Result<(Entry, Instance, Device, VulkanApplicationData)> {
+struct CoreInfrastructure {
+    entry: Entry,
+    instance: Instance,
+    device: Device,
+    data: VulkanApplicationData,
+    vr_session: Option<VrSession>,
+    vr_swapchain: Option<VrSwapchain>,
+}
+
+unsafe fn create_core_infrastructure(window: &Window, vr_context: Option<VrContext>) -> anyhow::Result<CoreInfrastructure> {
     let loader = LibloadingLoader::new().map_err(|e| anyhow!("{}", e))?;
     let entry = unsafe { Entry::new(loader) }.map_err(|b| anyhow!("{}", b))?;
     let mut data = VulkanApplicationData::default();
-    let instance = create_instance(window, &entry, &mut data)?;
+    let instance = create_instance(window, &entry, &mut data, vr_context.as_ref())?;
     data.surface = instance.create_surface(&window, &window, None).map_err(|e| anyhow!("{}", e))?;
-    choose_gpu(&instance, &mut data)?;
-    let device = create_logical_device(&entry, &instance, &mut data)?;
-    Ok((entry, instance, device, data))
+
+    let vr_preferred_gpu = match &vr_context {
+        Some(vr) => match vr.preferred_gpu(instance.handle()) {
+            Ok(gpu) => {
+                info!("OpenXR preferred GPU identified");
+                Some(gpu)
+            }
+            Err(e) => {
+                log::warn!("Could not query VR preferred GPU: {e:#} — falling back");
+                None
+            }
+        },
+        None => None,
+    };
+
+    choose_gpu(&instance, &mut data, vr_preferred_gpu)?;
+    let device = create_logical_device(&entry, &instance, &mut data, vr_context.as_ref())?;
+
+    let vr_session = match vr_context {
+        Some(vr) => {
+            let indices = crate::graphical_core::queue_families::RequiredQueueFamilies::get(&instance, &data, data.physical_device)?;
+            let session = vr.create_session(instance.handle(), data.physical_device, device.handle(), indices.graphics_queue_index)?;
+            Some(session)
+        }
+        None => None,
+    };
+
+    let vr_swapchain = match &vr_session {
+        Some(session) => Some(VrSwapchain::create(session, &device, &instance, data.physical_device, data.command_pool)?),
+        None => None,
+    };
+
+    Ok(CoreInfrastructure {
+        entry,
+        instance,
+        device,
+        data,
+        vr_session,
+        vr_swapchain,
+    })
 }
 
 unsafe fn create_presentation_pipeline(
@@ -184,6 +282,7 @@ unsafe fn create_presentation_pipeline(
     create_render_pass(instance, device, data)?;
     descriptors::create_layout(device, data)?;
     create_pipeline(device, data)?;
+    create_sky_pipeline(device, data)?;
     create_frame_buffers(device, data)?;
     Ok(())
 }
@@ -327,17 +426,20 @@ impl VulkanApplication {
     ///
     /// # Safety
     /// Calls unsafe Vulkan queue and synchronization APIs.
-    pub unsafe fn render_frame(&mut self, window: &Window, camera: &Camera) -> anyhow::Result<()> {
+    pub unsafe fn render_frame(&mut self, window: &Window, camera: &Camera, eyes: &EyeMatrices) -> anyhow::Result<()> {
         self.update_chunks(camera)?;
 
         let image_index = match self.acquire_next_image(window)? {
             Some(index) => index,
             None => return Ok(()), // swapchain was recreated, skip this frame
         };
-        update_uniform_buffer(&self.vulkan_application_data, camera)?;
+        update_uniform_buffer(&self.vulkan_application_data, eyes)?;
 
-        let vp = view_projection_matrix(camera, self.vulkan_application_data.swapchain_extent);
-        let frustum = Frustum::from_view_projection(&vp);
+        let frustum = if eyes.is_stereo() {
+            Frustum::combined_stereo(&eyes.view_projection[0], &eyes.view_projection[1])
+        } else {
+            Frustum::from_view_projection(&eyes.primary_vp())
+        };
         let cull_push = CullPushConstants {
             planes: [
                 frustum.plane(0),
@@ -492,6 +594,7 @@ impl VulkanApplication {
         self.depth_pyramid_needs_init = true;
         create_render_pass(&self.vulkan_instance, &self.device, &mut self.vulkan_application_data)?;
         create_pipeline(&self.device, &mut self.vulkan_application_data)?;
+        create_sky_pipeline(&self.device, &mut self.vulkan_application_data)?;
         create_frame_buffers(&self.device, &mut self.vulkan_application_data)?;
         allocate_command_buffers(&self.device, &mut self.vulkan_application_data)?;
         self.vulkan_application_data
@@ -511,6 +614,9 @@ impl VulkanApplication {
             .for_each(|framebuffer| self.device.destroy_framebuffer(*framebuffer, None));
         self.device
             .free_command_buffers(self.vulkan_application_data.command_pool, &self.vulkan_application_data.command_buffers);
+        self.device.destroy_pipeline(self.vulkan_application_data.sky_pipeline, None);
+        self.device
+            .destroy_pipeline_layout(self.vulkan_application_data.sky_pipeline_layout, None);
         self.device.destroy_pipeline(self.vulkan_application_data.pipeline, None);
         self.device.destroy_pipeline_layout(self.vulkan_application_data.pipeline_layout, None);
         self.device.destroy_render_pass(self.vulkan_application_data.render_pass, None);
@@ -538,6 +644,9 @@ impl VulkanApplication {
     }
 
     unsafe fn destroy_resources(&mut self) {
+        if let Some(vr_sc) = self._vr_swapchain.take() {
+            vr_sc.destroy(&self.device);
+        }
         compute_cull::destroy_depth_pyramid_pipeline(&self.device, &self.depth_pyramid_pipeline);
         compute_cull::destroy_compute_cull(&self.device, &self.compute_cull);
         destroy_textures(&self.device, &mut self.vulkan_application_data);

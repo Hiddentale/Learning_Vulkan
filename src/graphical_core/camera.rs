@@ -48,10 +48,54 @@ impl Default for Camera {
     }
 }
 
+/// Eye count for the VP matrix arrays. Desktop uses both slots with the
+/// same matrix; VR fills left eye at index 0, right eye at index 1.
+pub const MAX_VIEWS: usize = 2;
+
+/// Per-eye view/projection matrices — the camera abstraction's output.
+/// Desktop: both entries identical. VR: left eye at 0, right eye at 1.
+#[derive(Copy, Clone, Debug)]
+pub struct EyeMatrices {
+    pub view_projection: [Mat4; MAX_VIEWS],
+    pub inverse_view_projection: [Mat4; MAX_VIEWS],
+}
+
+impl EyeMatrices {
+    /// Build from a desktop camera — same matrix for both eyes.
+    pub fn from_camera(camera: &Camera, extent: vk::Extent2D) -> Self {
+        let vp = view_projection_matrix(camera, extent);
+        let inv = vp.inverse();
+        Self {
+            view_projection: [vp, vp],
+            inverse_view_projection: [inv, inv],
+        }
+    }
+
+    /// Build from per-eye view and projection matrices (for VR).
+    #[allow(dead_code)]
+    pub fn from_stereo(left_vp: Mat4, right_vp: Mat4) -> Self {
+        Self {
+            view_projection: [left_vp, right_vp],
+            inverse_view_projection: [left_vp.inverse(), right_vp.inverse()],
+        }
+    }
+
+    /// The primary VP matrix (eye 0). Used for frustum culling on desktop.
+    pub fn primary_vp(&self) -> Mat4 {
+        self.view_projection[0]
+    }
+
+    /// Whether both eyes have distinct matrices (stereo VR).
+    pub fn is_stereo(&self) -> bool {
+        self.view_projection[0] != self.view_projection[1]
+    }
+}
+
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct UniformBufferObject {
-    view_projection_matrix: [[f32; 4]; 4],
+    view_projection: [[[f32; 4]; 4]; MAX_VIEWS],
+    inverse_view_projection: [[[f32; 4]; 4]; MAX_VIEWS],
     light_direction: [f32; 3],
     ambient_strength: f32,
 }
@@ -81,19 +125,21 @@ pub fn create_uniform_buffer(device: &Device, instance: &Instance, vulkan_applic
     Ok(())
 }
 
-/// Computes model/view/projection matrices and writes them to the mapped UBO.
-pub fn update_uniform_buffer(vulkan_application_data: &VulkanApplicationData, camera: &Camera) -> anyhow::Result<()> {
-    let view_projection = view_projection_matrix(camera, vulkan_application_data.swapchain_extent);
-
+/// Writes per-eye VP matrices and lighting params to the mapped UBO.
+pub fn update_uniform_buffer(data: &VulkanApplicationData, eyes: &EyeMatrices) -> anyhow::Result<()> {
     let sun_direction = Vec3::new(0.3, -1.0, 0.5).normalize();
     let ubo = UniformBufferObject {
-        view_projection_matrix: view_projection.to_cols_array_2d(),
+        view_projection: [eyes.view_projection[0].to_cols_array_2d(), eyes.view_projection[1].to_cols_array_2d()],
+        inverse_view_projection: [
+            eyes.inverse_view_projection[0].to_cols_array_2d(),
+            eyes.inverse_view_projection[1].to_cols_array_2d(),
+        ],
         light_direction: sun_direction.to_array(),
         ambient_strength: 0.15,
     };
 
     unsafe {
-        std::ptr::copy_nonoverlapping(&ubo, vulkan_application_data.uniform_buffer_ptr, 1);
+        std::ptr::copy_nonoverlapping(&ubo, data.uniform_buffer_ptr, 1);
     }
     Ok(())
 }
