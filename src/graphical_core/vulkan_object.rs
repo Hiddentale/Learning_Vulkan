@@ -72,6 +72,10 @@ pub struct VulkanApplicationData {
     pub palette_buffer_memory: vk::DeviceMemory,
     pub sky_pipeline: vk::Pipeline,
     pub sky_pipeline_layout: vk::PipelineLayout,
+    pub svdag_output_image: vk::Image,
+    pub svdag_output_memory: vk::DeviceMemory,
+    pub svdag_output_view: vk::ImageView,
+    pub svdag_output_needs_init: bool,
 }
 
 use crate::voxel::world::{MAX_CHUNK_Y, MIN_CHUNK_Y};
@@ -196,6 +200,7 @@ impl VulkanApplication {
         }
         let mesh_shader_pipeline = MeshShaderPipeline::create(&device, &data, &voxel_pool)?;
 
+        create_svdag_output_image(&device, &instance, &mut data)?;
         let svdag_pool = SvdagPool::new(MAX_LOADED_CHUNKS as u32, &device, &instance, &mut data)?;
         let svdag_pipeline = SvdagPipeline::create(&device, &data, &svdag_pool)?;
         let svdag_compressor = SvdagCompressor::new();
@@ -327,6 +332,58 @@ unsafe fn create_resources(device: &Device, instance: &Instance, data: &mut Vulk
     Ok(())
 }
 
+unsafe fn create_svdag_output_image(device: &Device, instance: &Instance, data: &mut VulkanApplicationData) -> anyhow::Result<()> {
+    let extent = data.swapchain_extent;
+    let format = vk::Format::R8G8B8A8_UNORM;
+
+    let image_info = vk::ImageCreateInfo::builder()
+        .image_type(vk::ImageType::_2D)
+        .format(format)
+        .extent(vk::Extent3D {
+            width: extent.width,
+            height: extent.height,
+            depth: 1,
+        })
+        .mip_levels(1)
+        .array_layers(1)
+        .samples(vk::SampleCountFlags::_1)
+        .tiling(vk::ImageTiling::OPTIMAL)
+        .usage(vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::TRANSFER_SRC)
+        .sharing_mode(vk::SharingMode::EXCLUSIVE)
+        .initial_layout(vk::ImageLayout::UNDEFINED);
+
+    data.svdag_output_image = device.create_image(&image_info, None)?;
+
+    let mem_requirements = device.get_image_memory_requirements(data.svdag_output_image);
+    let mem_properties = instance.get_physical_device_memory_properties(data.physical_device);
+    let mem_type_index =
+        crate::graphical_core::memory::find_memory_type(&mem_properties, mem_requirements.memory_type_bits, vk::MemoryPropertyFlags::DEVICE_LOCAL)?;
+
+    let alloc_info = vk::MemoryAllocateInfo::builder()
+        .allocation_size(mem_requirements.size)
+        .memory_type_index(mem_type_index);
+
+    data.svdag_output_memory = device.allocate_memory(&alloc_info, None)?;
+    device.bind_image_memory(data.svdag_output_image, data.svdag_output_memory, 0)?;
+
+    let view_info = vk::ImageViewCreateInfo::builder()
+        .image(data.svdag_output_image)
+        .view_type(vk::ImageViewType::_2D)
+        .format(format)
+        .subresource_range(super::subresource_range(vk::ImageAspectFlags::COLOR, 1));
+
+    data.svdag_output_view = device.create_image_view(&view_info, None)?;
+    data.svdag_output_needs_init = true;
+
+    Ok(())
+}
+
+unsafe fn destroy_svdag_output_image(device: &Device, data: &mut VulkanApplicationData) {
+    device.destroy_image_view(data.svdag_output_view, None);
+    device.destroy_image(data.svdag_output_image, None);
+    device.free_memory(data.svdag_output_memory, None);
+}
+
 impl VulkanApplication {
     /// Acquires a swapchain image, submits the command buffer, and presents the result.
     ///
@@ -384,6 +441,7 @@ impl VulkanApplication {
             Some(&svdag_push),
         )?;
         self.depth_pyramid_needs_init = false;
+        self.vulkan_application_data.svdag_output_needs_init = false;
         self.submit_command_buffer(image_index)?;
         self.present_frame(image_index, window)?;
         self.frame = (self.frame + 1) % MAX_FRAMES_IN_FLIGHT;
@@ -550,6 +608,7 @@ impl VulkanApplication {
         use crate::graphical_core::compute_cull;
         self.device.device_wait_idle()?;
         compute_cull::destroy_depth_pyramid_pipeline(&self.device, &self.depth_pyramid_pipeline);
+        destroy_svdag_output_image(&self.device, &mut self.vulkan_application_data);
         self.destroy_swapchain();
         create_swapchain(user_window, &self.vulkan_instance, &self.device, &mut self.vulkan_application_data)?;
         create_swapchain_image_views(&self.device, &mut self.vulkan_application_data)?;
@@ -557,6 +616,7 @@ impl VulkanApplication {
         create_depth_pyramid(&self.device, &self.vulkan_instance, &mut self.vulkan_application_data)?;
         self.depth_pyramid_pipeline = compute_cull::create_depth_pyramid_pipeline(&self.device, &self.vulkan_application_data)?;
         self.depth_pyramid_needs_init = true;
+        create_svdag_output_image(&self.device, &self.vulkan_instance, &mut self.vulkan_application_data)?;
         create_render_pass(&self.vulkan_instance, &self.device, &mut self.vulkan_application_data)?;
         create_sky_pipeline(&self.device, &mut self.vulkan_application_data)?;
         create_frame_buffers(&self.device, &mut self.vulkan_application_data)?;
@@ -612,6 +672,7 @@ impl VulkanApplication {
         }
         self.svdag_pipeline.destroy(&self.device);
         self.svdag_pool.destroy(&self.device);
+        destroy_svdag_output_image(&self.device, &mut self.vulkan_application_data);
         self.mesh_shader_pipeline.destroy(&self.device);
         self.voxel_pool.destroy(&self.device);
         compute_cull::destroy_depth_pyramid_pipeline(&self.device, &self.depth_pyramid_pipeline);

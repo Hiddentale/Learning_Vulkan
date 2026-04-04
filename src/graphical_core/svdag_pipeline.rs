@@ -157,9 +157,9 @@ unsafe fn write_descriptors(device: &Device, set: vk::DescriptorSet, data: &Vulk
     // Binding 3: SVDAG chunk info
     let chunk_info = [*vk::DescriptorBufferInfo::builder().buffer(pool.chunk_info_buffer).range(vk::WHOLE_SIZE)];
 
-    // Binding 4: Color output (swapchain image as storage image)
+    // Binding 4: Color output (dedicated SVDAG storage image)
     let color_info = [*vk::DescriptorImageInfo::builder()
-        .image_view(data.swapchain_image_views[0])
+        .image_view(data.svdag_output_view)
         .image_layout(vk::ImageLayout::GENERAL)];
 
     // Binding 5: Depth input
