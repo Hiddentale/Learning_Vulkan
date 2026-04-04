@@ -16,7 +16,7 @@ const TEXTURE_FILES: &[Option<&str>] = &[
     Some("dirt.png"),  // 2: Dirt
     Some("stone.png"), // 3: Stone
     Some("water.png"), // 4: Water
-    None,              // 5: Sand
+    Some("sand.png"),  // 5: Sand
     None,              // 6: Snow
     None,              // 7: Gravel
 ];
