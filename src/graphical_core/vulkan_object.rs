@@ -403,17 +403,32 @@ impl VulkanApplication {
             self.svdag_pool.remove_chunk(pos);
         }
 
-        if delta.loaded.is_empty() && delta.unloaded.is_empty() && delta.promoted.is_empty() && delta.demoted.is_empty() {
+        if delta.loaded.is_empty()
+            && delta.unloaded.is_empty()
+            && delta.promoted.is_empty()
+            && delta.demoted.is_empty()
+            && delta.entered_transition.is_empty()
+        {
             self.last_player_chunk = [player_cx, player_cz];
             return Ok(());
         }
         self.last_player_chunk = [player_cx, player_cz];
 
-        // Queue demoted chunks for SVDAG compression
-        for pos in &delta.demoted {
+        // Pre-compress transition chunks so SVDAG is ready before they become far
+        for pos in &delta.entered_transition {
             let [cx, cy, cz] = *pos;
             if let Some(chunk) = self.world.get_chunk(cx, cy, cz) {
                 self.svdag_compressor.request(*pos, chunk.clone());
+            }
+        }
+
+        // Queue demoted chunks for SVDAG compression (if not already in transition)
+        for pos in &delta.demoted {
+            let [cx, cy, cz] = *pos;
+            if !self.svdag_pool.has_chunk(pos) {
+                if let Some(chunk) = self.world.get_chunk(cx, cy, cz) {
+                    self.svdag_compressor.request(*pos, chunk.clone());
+                }
             }
         }
 

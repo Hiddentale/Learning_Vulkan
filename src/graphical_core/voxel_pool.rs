@@ -197,16 +197,18 @@ impl VoxelPool {
         self.chunk_slots.contains_key(pos)
     }
 
-    pub fn chunk_tier_counts(&self) -> (u32, u32) {
+    pub fn chunk_tier_counts(&self) -> (u32, u32, u32) {
         let mut near = 0u32;
+        let mut transition = 0u32;
         let mut far = 0u32;
         for (_, tier) in self.chunk_slots.values() {
             match tier {
                 ChunkTier::Near => near += 1,
+                ChunkTier::Transition => transition += 1,
                 ChunkTier::Far => far += 1,
             }
         }
-        (near, far)
+        (near, transition, far)
     }
 
     pub fn set_chunk_tier(&mut self, pos: &[i32; 3], tier: ChunkTier) {

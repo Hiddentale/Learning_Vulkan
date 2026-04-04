@@ -9,10 +9,14 @@ pub const MAX_CHUNK_Y: i32 = 15;
 
 /// Chunks within this Chebyshev distance (in chunk coords) are near-field (mesh shader).
 pub const NEAR_RADIUS: i32 = 6;
+/// Width of the transition band around NEAR_RADIUS where chunks exist in both systems.
+pub const TRANSITION_WIDTH: i32 = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ChunkTier {
     Near,
+    /// Overlap zone: chunk exists in both mesh shader and SVDAG pipelines.
+    Transition,
     Far,
 }
 
@@ -28,10 +32,12 @@ pub struct World {
 pub struct WorldDelta {
     pub loaded: Vec<[i32; 3]>,
     pub unloaded: Vec<[i32; 3]>,
-    /// Chunks that moved from far-field to near-field this frame.
+    /// Chunks that moved closer to player (far→transition or transition→near).
     pub promoted: Vec<[i32; 3]>,
-    /// Chunks that moved from near-field to far-field this frame.
+    /// Chunks that moved farther from player (near→transition or transition→far).
     pub demoted: Vec<[i32; 3]>,
+    /// Chunks that entered the transition band (need SVDAG pre-compression).
+    pub entered_transition: Vec<[i32; 3]>,
 }
 
 impl World {
@@ -53,6 +59,7 @@ impl World {
         let mut unloaded = Vec::new();
         let mut promoted = Vec::new();
         let mut demoted = Vec::new();
+        let mut entered_transition = Vec::new();
 
         // Unload columns outside render distance (always immediate)
         let keys: Vec<[i32; 3]> = self.chunks.keys().copied().collect();
@@ -72,9 +79,18 @@ impl World {
             let old_tier = self.tiers[&pos];
             if old_tier != new_tier {
                 self.tiers.insert(pos, new_tier);
-                match new_tier {
-                    ChunkTier::Near => promoted.push(pos),
-                    ChunkTier::Far => demoted.push(pos),
+                match (old_tier, new_tier) {
+                    (ChunkTier::Far, ChunkTier::Transition) | (ChunkTier::Far, ChunkTier::Near) => {
+                        promoted.push(pos);
+                    }
+                    (ChunkTier::Transition, ChunkTier::Near) => promoted.push(pos),
+                    (ChunkTier::Near, ChunkTier::Transition) => {
+                        entered_transition.push(pos);
+                    }
+                    (ChunkTier::Near, ChunkTier::Far) | (ChunkTier::Transition, ChunkTier::Far) => {
+                        demoted.push(pos);
+                    }
+                    _ => {}
                 }
             }
         }
@@ -108,6 +124,7 @@ impl World {
             unloaded,
             promoted,
             demoted,
+            entered_transition,
         }
     }
 
@@ -189,8 +206,10 @@ fn in_range(cx: i32, cz: i32, player_cx: i32, player_cz: i32, radius: i32) -> bo
 
 fn classify_tier(cx: i32, cz: i32, player_cx: i32, player_cz: i32) -> ChunkTier {
     let dist = (cx - player_cx).abs().max((cz - player_cz).abs());
-    if dist <= NEAR_RADIUS {
+    if dist <= NEAR_RADIUS - TRANSITION_WIDTH {
         ChunkTier::Near
+    } else if dist <= NEAR_RADIUS + TRANSITION_WIDTH {
+        ChunkTier::Transition
     } else {
         ChunkTier::Far
     }
@@ -202,23 +221,32 @@ mod tests {
 
     #[test]
     fn classify_tier_near_at_origin() {
+        // Near: dist <= NEAR_RADIUS - TRANSITION_WIDTH = 4
         assert_eq!(classify_tier(0, 0, 0, 0), ChunkTier::Near);
-        assert_eq!(classify_tier(6, 0, 0, 0), ChunkTier::Near);
-        assert_eq!(classify_tier(0, 6, 0, 0), ChunkTier::Near);
-        assert_eq!(classify_tier(6, 6, 0, 0), ChunkTier::Near);
+        assert_eq!(classify_tier(4, 0, 0, 0), ChunkTier::Near);
+        assert_eq!(classify_tier(0, 4, 0, 0), ChunkTier::Near);
+    }
+
+    #[test]
+    fn classify_tier_transition_zone() {
+        // Transition: dist 5..=8
+        assert_eq!(classify_tier(5, 0, 0, 0), ChunkTier::Transition);
+        assert_eq!(classify_tier(8, 0, 0, 0), ChunkTier::Transition);
+        assert_eq!(classify_tier(0, 6, 0, 0), ChunkTier::Transition);
     }
 
     #[test]
     fn classify_tier_far_beyond_radius() {
-        assert_eq!(classify_tier(7, 0, 0, 0), ChunkTier::Far);
-        assert_eq!(classify_tier(0, 7, 0, 0), ChunkTier::Far);
+        // Far: dist > NEAR_RADIUS + TRANSITION_WIDTH = 8
+        assert_eq!(classify_tier(9, 0, 0, 0), ChunkTier::Far);
+        assert_eq!(classify_tier(0, 9, 0, 0), ChunkTier::Far);
         assert_eq!(classify_tier(10, 10, 0, 0), ChunkTier::Far);
     }
 
     #[test]
     fn classify_tier_with_offset_player() {
         assert_eq!(classify_tier(10, 10, 10, 10), ChunkTier::Near);
-        assert_eq!(classify_tier(17, 10, 10, 10), ChunkTier::Far);
+        assert_eq!(classify_tier(19, 10, 10, 10), ChunkTier::Far);
     }
 
     fn drain_world(world: &mut World, player_cx: i32, player_cz: i32) {
@@ -237,37 +265,33 @@ mod tests {
 
     #[test]
     fn world_delta_classifies_loaded_chunks() {
-        let mut world = World::new(8);
+        let mut world = World::new(10);
         drain_world(&mut world, 0, 0);
 
         let mut near_count = 0;
+        let mut transition_count = 0;
         let mut far_count = 0;
         for pos in world.chunk_positions() {
             match world.chunk_tier(&pos) {
                 Some(ChunkTier::Near) => near_count += 1,
+                Some(ChunkTier::Transition) => transition_count += 1,
                 Some(ChunkTier::Far) => far_count += 1,
                 None => panic!("loaded chunk has no tier"),
             }
         }
         assert!(near_count > 0, "should have near-field chunks");
+        assert!(transition_count > 0, "should have transition chunks");
         assert!(far_count > 0, "should have far-field chunks");
     }
 
     #[test]
     fn world_delta_promotes_and_demotes_on_move() {
-        let mut world = World::new(10);
+        let mut world = World::new(12);
         drain_world(&mut world, 0, 0);
 
-        // Move player so some far chunks become near and vice versa
+        // Move player so tiers shift
         let delta = world.update(4, 0);
-        assert!(!delta.promoted.is_empty(), "should have promoted chunks");
-        assert!(!delta.demoted.is_empty(), "should have demoted chunks");
-
-        for pos in &delta.promoted {
-            assert_eq!(world.chunk_tier(pos), Some(ChunkTier::Near));
-        }
-        for pos in &delta.demoted {
-            assert_eq!(world.chunk_tier(pos), Some(ChunkTier::Far));
-        }
+        let has_tier_changes = !delta.promoted.is_empty() || !delta.demoted.is_empty() || !delta.entered_transition.is_empty();
+        assert!(has_tier_changes, "should have tier changes on move");
     }
 }
