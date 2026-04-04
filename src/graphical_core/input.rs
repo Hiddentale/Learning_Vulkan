@@ -1,5 +1,6 @@
 use crate::graphical_core::camera::Camera;
 use std::collections::HashSet;
+use winit::event::MouseButton;
 use winit::keyboard::KeyCode;
 
 const MOVE_SPEED: f32 = 3.0;
@@ -10,6 +11,8 @@ const MAX_PITCH: f32 = 89.0_f32 * (std::f32::consts::PI / 180.0);
 pub struct InputState {
     pressed_keys: HashSet<KeyCode>,
     mouse_delta: (f64, f64),
+    left_click: bool,
+    right_click: bool,
 }
 
 impl InputState {
@@ -17,6 +20,8 @@ impl InputState {
         Self {
             pressed_keys: HashSet::new(),
             mouse_delta: (0.0, 0.0),
+            left_click: false,
+            right_click: false,
         }
     }
 
@@ -31,6 +36,27 @@ impl InputState {
     pub fn accumulate_mouse_delta(&mut self, dx: f64, dy: f64) {
         self.mouse_delta.0 += dx;
         self.mouse_delta.1 += dy;
+    }
+
+    /// Records a mouse button press as a one-shot event (consumed on read).
+    pub fn mouse_pressed(&mut self, button: MouseButton) {
+        match button {
+            MouseButton::Left => self.left_click = true,
+            MouseButton::Right => self.right_click = true,
+            _ => {}
+        }
+    }
+
+    /// Returns and clears the left-click flag.
+    #[allow(dead_code)] // wired up in block interaction commit
+    pub fn take_left_click(&mut self) -> bool {
+        std::mem::take(&mut self.left_click)
+    }
+
+    /// Returns and clears the right-click flag.
+    #[allow(dead_code)] // wired up in block interaction commit
+    pub fn take_right_click(&mut self) -> bool {
+        std::mem::take(&mut self.right_click)
     }
 
     pub fn is_pressed(&self, key: KeyCode) -> bool {

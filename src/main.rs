@@ -89,6 +89,14 @@ fn main() -> Result<()> {
                     }
                 }
             }
+            Event::WindowEvent {
+                event: WindowEvent::MouseInput { state, button, .. },
+                ..
+            } => {
+                if state == ElementState::Pressed {
+                    input.mouse_pressed(button);
+                }
+            }
             Event::DeviceEvent {
                 event: DeviceEvent::MouseMotion { delta: (dx, dy) },
                 ..
