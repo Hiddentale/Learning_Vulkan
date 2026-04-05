@@ -18,7 +18,7 @@ use crate::graphical_core::{
     voxel_pool::VoxelPool,
     MAX_FRAMES_IN_FLIGHT,
 };
-use crate::voxel::chunk::CHUNK_SIZE;
+use crate::voxel::chunk::{Chunk, CHUNK_SIZE};
 use crate::voxel::svdag_compressor::SvdagCompressor;
 use crate::voxel::world::World;
 use crate::vr::{VrContext, VrSession, VrSwapchain};
@@ -79,7 +79,7 @@ use crate::voxel::world::{MAX_CHUNK_Y, MIN_CHUNK_Y};
 
 /// Mesh shader renders chunks within this distance. Full detail, editable, textured.
 const MESH_DISTANCE: i32 = 8;
-/// SVDAG ray march renders chunks from MESH_DISTANCE to SVDAG_DISTANCE.
+/// SVDAG ray march renders 64³ super-chunks from MESH_DISTANCE to SVDAG_DISTANCE.
 const SVDAG_DISTANCE: i32 = 24;
 /// World generates terrain out to this distance.
 const WORLD_DISTANCE: i32 = SVDAG_DISTANCE;
@@ -107,6 +107,8 @@ pub struct VulkanApplication {
     svdag_compressor: SvdagCompressor,
     /// Far chunks awaiting SVDAG compression. Drained in distance order each frame.
     svdag_pending: std::collections::HashSet<[i32; 3]>,
+    /// Super-chunk group positions currently being compressed (prevents duplicate submissions).
+    svdag_in_flight: std::collections::HashSet<[i32; 3]>,
 }
 
 impl VulkanApplication {
@@ -224,6 +226,7 @@ impl VulkanApplication {
             svdag_pipeline,
             svdag_compressor,
             svdag_pending: std::collections::HashSet::new(),
+            svdag_in_flight: std::collections::HashSet::new(),
         })
     }
 }
@@ -426,17 +429,21 @@ impl VulkanApplication {
 
         let delta = self.world.update(player_cx, player_cz);
 
-        // Process completed SVDAG compressions
+        // Process completed SVDAG compressions — drop results that don't fit (no eviction thrashing)
         for result in self.svdag_compressor.receive() {
-            if self.world.get_chunk(result.pos[0], result.pos[1], result.pos[2]).is_none() {
-                continue;
-            }
-            if self.svdag_pool.chunk_count() >= MAX_SVDAG_CHUNKS - 1 {
-                self.svdag_pool.evict_farthest(64, player_cx, player_cz);
-            }
-            if self.svdag_pool.is_near_budget() {
-                self.svdag_pool.evict_farthest(64, player_cx, player_cz);
-            }
+            let [rx, ry, rz] = result.pos;
+            let still_relevant = if result.lod_level == 0 {
+                self.world.get_chunk(rx, ry, rz).is_some()
+            } else {
+                (ry..ry + (1 << result.lod_level))
+                    .any(|y| self.world.get_chunk(rx, y, rz).is_some())
+            };
+            self.svdag_in_flight.remove(&result.pos);
+            if !still_relevant { continue; }
+            // Skip all-air super-chunks (header + one empty leaf = 68 bytes)
+            if result.dag_data.len() <= 68 { continue; }
+            if self.svdag_pool.chunk_count() >= MAX_SVDAG_CHUNKS - 1 { continue; }
+            if self.svdag_pool.is_near_budget() { continue; }
             self.svdag_pool.upload_chunk(result.pos, &result.dag_data, result.lod_level);
         }
 
@@ -496,12 +503,45 @@ impl VulkanApplication {
                 let dz = pos[2] - player_cz;
                 dx * dx + dz * dz
             });
-            for pos in candidates.into_iter().take(COMPRESSIONS_PER_FRAME) {
+            let mut submitted = 0;
+            for pos in candidates {
+                if submitted >= COMPRESSIONS_PER_FRAME { break; }
                 let [cx, cy, cz] = pos;
-                if let Some(chunk) = self.world.get_chunk(cx, cy, cz) {
-                    self.svdag_compressor.request(pos, chunk.clone());
-                    self.svdag_pending.remove(&pos);
+                // 64³ super-chunk: group 4×4×4 chunks. Align to multiples of 4.
+                let gx = cx & !3;
+                let gy = cy & !3;
+                let gz = cz & !3;
+                let group_pos = [gx, gy, gz];
+                if self.svdag_in_flight.contains(&group_pos) {
+                    // Compression already in progress — wait for it
+                    continue;
                 }
+                if self.svdag_pool.has_chunk(&group_pos) {
+                    // Group exists but a new chunk loaded — rebuild it
+                    self.svdag_pool.remove_chunk(&group_pos);
+                }
+                let mut chunks: Vec<Option<Chunk>> = Vec::with_capacity(64);
+                for dy in 0..4i32 {
+                    for dz in 0..4i32 {
+                        for dx in 0..4i32 {
+                            chunks.push(self.world.get_chunk(gx + dx, gy + dy, gz + dz).cloned());
+                        }
+                    }
+                }
+                let boxed: Box<[Option<Chunk>; 64]> = match chunks.into_boxed_slice().try_into() {
+                    Ok(b) => b,
+                    Err(_) => unreachable!("collected exactly 64 entries"),
+                };
+                self.svdag_compressor.request_super_chunk(group_pos, boxed);
+                self.svdag_in_flight.insert(group_pos);
+                for dy in 0..4i32 {
+                    for dz in 0..4i32 {
+                        for dx in 0..4i32 {
+                            self.svdag_pending.remove(&[gx + dx, gy + dy, gz + dz]);
+                        }
+                    }
+                }
+                submitted += 1;
             }
         }
 

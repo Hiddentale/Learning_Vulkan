@@ -131,7 +131,7 @@ impl SvdagPipeline {
                 .descriptor_count(4)
                 .r#type(vk::DescriptorType::STORAGE_IMAGE),
             *vk::DescriptorPoolSize::builder()
-                .descriptor_count(2)
+                .descriptor_count(3)
                 .r#type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER),
         ];
         let pool_info = vk::DescriptorPoolCreateInfo::builder().max_sets(4).pool_sizes(&pool_sizes);
@@ -163,6 +163,7 @@ impl SvdagPipeline {
                 (vk::DescriptorType::STORAGE_BUFFER, vk::ShaderStageFlags::COMPUTE), // visible indices
                 (vk::DescriptorType::STORAGE_BUFFER, vk::ShaderStageFlags::COMPUTE), // visible count
                 (vk::DescriptorType::STORAGE_BUFFER, vk::ShaderStageFlags::COMPUTE), // tile data
+                (vk::DescriptorType::COMBINED_IMAGE_SAMPLER, vk::ShaderStageFlags::COMPUTE), // depth pyramid
             ],
         )?;
         let tile_desc_set = alloc_desc_set(device, descriptor_pool, tile_desc_layout)?;
@@ -176,6 +177,19 @@ impl SvdagPipeline {
                 (3, tile_buffer),
             ],
         );
+        // Binding 4: depth pyramid sampler
+        {
+            let pyramid_info = [*vk::DescriptorImageInfo::builder()
+                .image_view(data.depth_pyramid_full_view)
+                .sampler(data.depth_pyramid_sampler)
+                .image_layout(vk::ImageLayout::GENERAL)];
+            let write = [*vk::WriteDescriptorSet::builder()
+                .dst_set(tile_desc_set)
+                .dst_binding(4)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .image_info(&pyramid_info)];
+            device.update_descriptor_sets(&write, &[] as &[vk::CopyDescriptorSet]);
+        }
         let tile_layout = create_pipeline_layout(device, tile_desc_layout, std::mem::size_of::<TileAssignPush>() as u32)?;
         let tile_pipeline = create_compute_pipeline(device, tile_layout, include_bytes!("../shaders/svdag_tile_assign.comp.spv"))?;
 

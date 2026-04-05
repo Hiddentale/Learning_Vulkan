@@ -4,29 +4,74 @@ use super::block::BlockType;
 use super::chunk::{Chunk, CHUNK_SIZE};
 use std::collections::HashMap;
 
-// 3-level SVDAG for a 16³ chunk:
-//   Level 0 (root):  16³ → 8 children (8³ octants)
-//   Level 1 (mid):   8³  → 8 children (4³ octants)
-//   Level 2 (leaf):  4³  → 64-bit occupancy bitmap
+// SVDAG tree: recursive octree down to 4³ leaves.
+//   16³ chunk: 3 levels (16 → 8 → 4 → leaf)
+//   64³ super-chunk: 5 levels (64 → 32 → 16 → 8 → 4 → leaf)
 
 const LEAF_SIZE: usize = 4;
 const LEAF_BYTES: usize = LEAF_SIZE * LEAF_SIZE * LEAF_SIZE; // 64
 const HEADER_SIZE: usize = 4;
 
+/// Trait for looking up voxels at arbitrary coordinates.
+/// Allows SVDAG compression over single chunks or multi-chunk grids.
+pub trait VoxelSource {
+    fn get(&self, x: usize, y: usize, z: usize) -> BlockType;
+}
+
+impl VoxelSource for Chunk {
+    fn get(&self, x: usize, y: usize, z: usize) -> BlockType {
+        self.get(x, y, z)
+    }
+}
+
+/// A 4×4×4 grid of chunks forming a 64³ voxel volume.
+/// Missing chunks (None) are treated as all air.
+pub struct SuperChunkGrid {
+    pub chunks: Box<[Option<Chunk>; 64]>,
+}
+
+impl VoxelSource for SuperChunkGrid {
+    fn get(&self, x: usize, y: usize, z: usize) -> BlockType {
+        let cx = x / CHUNK_SIZE;
+        let cy = y / CHUNK_SIZE;
+        let cz = z / CHUNK_SIZE;
+        let idx = cx + cz * 4 + cy * 16;
+        match &self.chunks[idx] {
+            Some(chunk) => chunk.get(x % CHUNK_SIZE, y % CHUNK_SIZE, z % CHUNK_SIZE),
+            None => BlockType::Air,
+        }
+    }
+}
+
 /// Compresses a dense chunk into an SVDAG byte buffer with subtree deduplication.
 /// First 4 bytes are the root offset (little-endian u32).
 pub fn svdag_from_chunk(chunk: &Chunk) -> Vec<u8> {
-    let mut buf = vec![0u8; HEADER_SIZE]; // reserve header
+    svdag_compress(chunk, CHUNK_SIZE)
+}
+
+/// Compresses a 64³ super-chunk grid into a 5-level SVDAG.
+pub fn svdag_from_super_chunk(grid: &SuperChunkGrid) -> Vec<u8> {
+    svdag_compress(grid, CHUNK_SIZE * 4)
+}
+
+/// Generic SVDAG compression over any voxel source at any power-of-two size.
+fn svdag_compress(source: &dyn VoxelSource, size: usize) -> Vec<u8> {
+    let mut buf = vec![0u8; HEADER_SIZE];
     let mut dedup: HashMap<Vec<u8>, u32> = HashMap::new();
-    let root = build_node(&mut buf, &mut dedup, chunk, 0, 0, 0, CHUNK_SIZE);
+    let root = build_node(&mut buf, &mut dedup, source, 0, 0, 0, size);
     buf[..4].copy_from_slice(&root.to_le_bytes());
     buf
 }
 
-/// Random-access lookup into a compressed SVDAG. Returns the block type at (x, y, z).
+/// Random-access lookup into a 16³ SVDAG. Returns the block type at (x, y, z).
 pub fn svdag_lookup(dag: &[u8], x: u8, y: u8, z: u8) -> BlockType {
+    svdag_lookup_sized(dag, x as usize, y as usize, z as usize, CHUNK_SIZE)
+}
+
+/// Random-access lookup into an SVDAG of arbitrary root size.
+pub fn svdag_lookup_sized(dag: &[u8], x: usize, y: usize, z: usize, root_size: usize) -> BlockType {
     let root = u32::from_le_bytes(dag[..4].try_into().unwrap()) as usize;
-    lookup_node(dag, root, x as usize, y as usize, z as usize, CHUNK_SIZE)
+    lookup_node(dag, root, x, y, z, root_size)
 }
 
 /// Merges 8 LOD-0 SVDAGs (one per octant child) into a single LOD-1 SVDAG at half resolution.
@@ -41,7 +86,7 @@ pub fn svdag_lod_merge(children: [&Chunk; 8]) -> Vec<u8> {
 /// Each solid voxel's material (BlockType as u8) appears in DFS traversal order.
 pub fn svdag_materials(chunk: &Chunk) -> Vec<u8> {
     let mut materials = Vec::new();
-    collect_materials_dfs(chunk, 0, 0, 0, CHUNK_SIZE, &mut materials);
+    collect_materials_dfs(chunk as &dyn VoxelSource, 0, 0, 0, CHUNK_SIZE, &mut materials);
     materials
 }
 
@@ -81,9 +126,9 @@ pub fn rle_decode(rle: &[u8]) -> Vec<u8> {
 
 // --- Internal ---
 
-fn build_node(buf: &mut Vec<u8>, dedup: &mut HashMap<Vec<u8>, u32>, chunk: &Chunk, ox: usize, oy: usize, oz: usize, size: usize) -> u32 {
+fn build_node(buf: &mut Vec<u8>, dedup: &mut HashMap<Vec<u8>, u32>, source: &dyn VoxelSource, ox: usize, oy: usize, oz: usize, size: usize) -> u32 {
     if size == LEAF_SIZE {
-        return build_leaf(buf, dedup, chunk, ox, oy, oz);
+        return build_leaf(buf, dedup, source, ox, oy, oz);
     }
 
     let half = size / 2;
@@ -96,14 +141,13 @@ fn build_node(buf: &mut Vec<u8>, dedup: &mut HashMap<Vec<u8>, u32>, chunk: &Chun
         let cy = oy + dy * half;
         let cz = oz + dz * half;
 
-        if !is_uniform_air(chunk, cx, cy, cz, half) {
+        if !is_uniform_air(source, cx, cy, cz, half) {
             child_mask |= 1 << i;
-            child_offsets[i as usize] = build_node(buf, dedup, chunk, cx, cy, cz, half);
+            child_offsets[i as usize] = build_node(buf, dedup, source, cx, cy, cz, half);
         }
     }
 
     if child_mask == 0 {
-        // Entirely air — encode as a leaf of all zeros
         return build_leaf_raw(buf, dedup, 0);
     }
 
@@ -127,13 +171,13 @@ fn build_node(buf: &mut Vec<u8>, dedup: &mut HashMap<Vec<u8>, u32>, chunk: &Chun
 
 /// Leaf: 64 bytes — one u8 material ID per voxel in 4³ block. 0 = air.
 /// Layout: x + z * 4 + y * 16 (same as occupancy bitmap bit order).
-fn build_leaf(buf: &mut Vec<u8>, dedup: &mut HashMap<Vec<u8>, u32>, chunk: &Chunk, ox: usize, oy: usize, oz: usize) -> u32 {
+fn build_leaf(buf: &mut Vec<u8>, dedup: &mut HashMap<Vec<u8>, u32>, source: &dyn VoxelSource, ox: usize, oy: usize, oz: usize) -> u32 {
     let mut leaf = [0u8; LEAF_BYTES];
     for y in 0..LEAF_SIZE {
         for z in 0..LEAF_SIZE {
             for x in 0..LEAF_SIZE {
                 let idx = x + z * LEAF_SIZE + y * LEAF_SIZE * LEAF_SIZE;
-                leaf[idx] = chunk.get(ox + x, oy + y, oz + z) as u8;
+                leaf[idx] = source.get(ox + x, oy + y, oz + z) as u8;
             }
         }
     }
@@ -190,11 +234,11 @@ fn octant_index(x: usize, y: usize, z: usize, half: usize) -> u8 {
     xi | (yi << 1) | (zi << 2)
 }
 
-fn is_uniform_air(chunk: &Chunk, ox: usize, oy: usize, oz: usize, size: usize) -> bool {
+fn is_uniform_air(source: &dyn VoxelSource, ox: usize, oy: usize, oz: usize, size: usize) -> bool {
     for y in oy..oy + size {
         for z in oz..oz + size {
             for x in ox..ox + size {
-                if chunk.get(x, y, z).is_opaque() {
+                if source.get(x, y, z).is_opaque() {
                     return false;
                 }
             }
@@ -248,12 +292,12 @@ fn majority_block(chunk: &Chunk, bx: usize, by: usize, bz: usize) -> BlockType {
     }
 }
 
-fn collect_materials_dfs(chunk: &Chunk, ox: usize, oy: usize, oz: usize, size: usize, materials: &mut Vec<u8>) {
+fn collect_materials_dfs(source: &dyn VoxelSource, ox: usize, oy: usize, oz: usize, size: usize, materials: &mut Vec<u8>) {
     if size == LEAF_SIZE {
         for y in 0..LEAF_SIZE {
             for z in 0..LEAF_SIZE {
                 for x in 0..LEAF_SIZE {
-                    let block = chunk.get(ox + x, oy + y, oz + z);
+                    let block = source.get(ox + x, oy + y, oz + z);
                     if block.is_opaque() {
                         materials.push(block as u8);
                     }
@@ -269,8 +313,8 @@ fn collect_materials_dfs(chunk: &Chunk, ox: usize, oy: usize, oz: usize, size: u
         let cx = ox + dx * half;
         let cy = oy + dy * half;
         let cz = oz + dz * half;
-        if !is_uniform_air(chunk, cx, cy, cz, half) {
-            collect_materials_dfs(chunk, cx, cy, cz, half, materials);
+        if !is_uniform_air(source, cx, cy, cz, half) {
+            collect_materials_dfs(source, cx, cy, cz, half, materials);
         }
     }
 }
@@ -413,5 +457,83 @@ mod tests {
         let encoded = rle_encode(&data);
         assert_eq!(encoded.len(), 2);
         assert_eq!(encoded, vec![255, 5]);
+    }
+
+    #[test]
+    fn super_chunk_roundtrip_ground_plane() {
+        // Build a 4×4×4 grid where the bottom layer (y=0) of each chunk is solid
+        let mut chunks: Vec<Option<Chunk>> = Vec::with_capacity(64);
+        for _cy in 0..4 {
+            for _cz in 0..4 {
+                for _cx in 0..4 {
+                    let mut chunk = Chunk::new(BlockType::Air);
+                    for z in 0..CHUNK_SIZE {
+                        for x in 0..CHUNK_SIZE {
+                            chunk.set(x, 0, z, BlockType::Stone);
+                        }
+                    }
+                    chunks.push(Some(chunk));
+                }
+            }
+        }
+        let grid = SuperChunkGrid {
+            chunks: match chunks.into_boxed_slice().try_into() {
+                Ok(b) => b,
+                Err(_) => unreachable!(),
+            },
+        };
+        let dag = svdag_from_super_chunk(&grid);
+        let size = CHUNK_SIZE * 4; // 64
+
+        // Bottom of each 16-chunk layer should be solid
+        for cy in 0..4 {
+            let y_solid = cy * CHUNK_SIZE; // y=0, 16, 32, 48
+            assert!(
+                svdag_lookup_sized(&dag, 0, y_solid, 0, size).is_opaque(),
+                "expected solid at y={y_solid}"
+            );
+            let y_air = cy * CHUNK_SIZE + 1;
+            assert!(
+                !svdag_lookup_sized(&dag, 0, y_air, 0, size).is_opaque(),
+                "expected air at y={y_air}"
+            );
+        }
+    }
+
+    #[test]
+    fn super_chunk_cross_boundary_lookup() {
+        // Place a block at (17, 0, 0) — that's chunk (1,0,0) local (1,0,0)
+        let mut chunks: Vec<Option<Chunk>> = (0..64).map(|_| Some(Chunk::new(BlockType::Air))).collect();
+        // chunk index for (cx=1, cy=0, cz=0) = 1 + 0*4 + 0*16 = 1
+        chunks[1].as_mut().unwrap().set(1, 0, 0, BlockType::Stone);
+        let grid = SuperChunkGrid {
+            chunks: match chunks.into_boxed_slice().try_into() {
+                Ok(b) => b,
+                Err(_) => unreachable!(),
+            },
+        };
+        // Global coordinate (17, 0, 0) should be stone
+        assert_eq!(grid.get(17, 0, 0), BlockType::Stone);
+        assert_eq!(grid.get(16, 0, 0), BlockType::Air);
+        assert_eq!(grid.get(0, 0, 0), BlockType::Air);
+
+        let dag = svdag_from_super_chunk(&grid);
+        assert_eq!(svdag_lookup_sized(&dag, 17, 0, 0, 64), BlockType::Stone);
+        assert_eq!(svdag_lookup_sized(&dag, 16, 0, 0, 64), BlockType::Air);
+    }
+
+    #[test]
+    fn super_chunk_all_air() {
+        let chunks: Vec<Option<Chunk>> = (0..64).map(|_| None).collect();
+        let grid = SuperChunkGrid {
+            chunks: match chunks.into_boxed_slice().try_into() {
+                Ok(b) => b,
+                Err(_) => unreachable!(),
+            },
+        };
+        let dag = svdag_from_super_chunk(&grid);
+        assert!(dag.len() < 200, "all-air super-chunk should be small, got {} bytes", dag.len());
+        assert_eq!(svdag_lookup_sized(&dag, 0, 0, 0, 64), BlockType::Air);
+        assert_eq!(svdag_lookup_sized(&dag, 63, 63, 63, 64), BlockType::Air);
     }
 }

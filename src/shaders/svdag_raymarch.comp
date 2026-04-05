@@ -65,9 +65,9 @@ uint octant_index(uvec3 pos, uint half_size) {
 }
 
 // --- SVDAG lookup: returns material ID (0 = air) ---
-uint svdag_lookup(uint dag_base, uint x, uint y, uint z) {
+uint svdag_lookup(uint dag_base, uint x, uint y, uint z, uint root_size) {
     uint offset = dag_base + read_u32(dag_base);
-    uint size = 16u;
+    uint size = root_size;
 
     while (size > 4u) {
         uint child_mask = read_byte(offset);
@@ -102,10 +102,11 @@ bool ray_aabb(vec3 ro, vec3 inv_rd, vec3 aabb_min, vec3 aabb_max, out float t_ne
 
 // --- DDA ray march through one chunk ---
 bool trace_chunk(vec3 ro, vec3 rd, vec3 aabb_min, float t_enter, float t_exit,
-                 uint dag_base, out float t_hit, out vec3 hit_normal, out uint hit_material) {
+                 uint dag_base, uint chunk_size, out float t_hit, out vec3 hit_normal, out uint hit_material) {
     vec3 pos = ro + rd * (t_enter + 0.001);
     vec3 local = pos - aabb_min;
-    ivec3 voxel = clamp(ivec3(floor(local)), ivec3(0), ivec3(15));
+    int max_coord = int(chunk_size) - 1;
+    ivec3 voxel = clamp(ivec3(floor(local)), ivec3(0), ivec3(max_coord));
 
     ivec3 step_dir = ivec3(sign(rd));
     vec3 t_delta = abs(1.0 / rd);
@@ -116,11 +117,11 @@ bool trace_chunk(vec3 ro, vec3 rd, vec3 aabb_min, float t_enter, float t_exit,
         else                   t_max_val[i] = 1e30;
     }
 
-    for (int i = 0; i < 64; i++) {
-        if (voxel.x < 0 || voxel.x > 15 || voxel.y < 0 || voxel.y > 15 || voxel.z < 0 || voxel.z > 15)
+    for (int i = 0; i < 192; i++) {
+        if (voxel.x < 0 || voxel.x > max_coord || voxel.y < 0 || voxel.y > max_coord || voxel.z < 0 || voxel.z > max_coord)
             return false;
 
-        uint mat = svdag_lookup(dag_base, uint(voxel.x), uint(voxel.y), uint(voxel.z));
+        uint mat = svdag_lookup(dag_base, uint(voxel.x), uint(voxel.y), uint(voxel.z), chunk_size);
         // Skip air (0) and water (4) — matches mesh shader is_opaque()
         if (mat != 0u && mat != 4u) {
             t_hit = min(min(t_max_val.x, t_max_val.y), t_max_val.z);
@@ -202,7 +203,7 @@ void main() {
         vec3 hit_normal;
         uint hit_mat;
         if (trace_chunk(ro, rd, chunk.aabb_min, max(t_near, 0.0), t_far,
-                        chunk.dag_offset, t_hit, hit_normal, hit_mat)) {
+                        chunk.dag_offset, chunk.dag_size, t_hit, hit_normal, hit_mat)) {
             if (t_hit < best_t) {
                 best_t = t_hit;
                 best_normal = hit_normal;

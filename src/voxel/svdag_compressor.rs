@@ -1,7 +1,7 @@
 #![allow(dead_code)] // Wired up in Phase 3
 
 use super::chunk::Chunk;
-use super::svdag::{svdag_from_chunk, svdag_lod_merge};
+use super::svdag::{svdag_from_chunk, svdag_from_super_chunk, svdag_lod_merge, SuperChunkGrid};
 use crossbeam_channel::{Receiver, Sender};
 use std::thread;
 
@@ -16,6 +16,11 @@ pub enum CompressionRequest {
         pos: [i32; 3],
         children: Box<[Chunk; 8]>,
         lod_level: u32,
+    },
+    /// 4×4×4 chunks grouped into a single 64³ SVDAG at full resolution.
+    SuperChunk {
+        pos: [i32; 3],
+        chunks: Box<[Option<Chunk>; 64]>,
     },
 }
 
@@ -63,6 +68,11 @@ impl SvdagCompressor {
                             let dag_data = svdag_lod_merge(refs);
                             CompressionResult { pos, dag_data, lod_level }
                         }
+                        CompressionRequest::SuperChunk { pos, chunks } => {
+                            let grid = SuperChunkGrid { chunks };
+                            let dag_data = svdag_from_super_chunk(&grid);
+                            CompressionResult { pos, dag_data, lod_level: 2 }
+                        }
                     };
                     if tx.send(result).is_err() {
                         break;
@@ -86,6 +96,11 @@ impl SvdagCompressor {
     /// Queue a LOD merge of 8 chunks.
     pub fn request_lod_merge(&self, pos: [i32; 3], children: Box<[Chunk; 8]>, lod_level: u32) {
         let _ = self.request_tx.send(CompressionRequest::LodMerge { pos, children, lod_level });
+    }
+
+    /// Queue a 4×4×4 super-chunk for compression into a single 64³ SVDAG.
+    pub fn request_super_chunk(&self, pos: [i32; 3], chunks: Box<[Option<Chunk>; 64]>) {
+        let _ = self.request_tx.send(CompressionRequest::SuperChunk { pos, chunks });
     }
 
     /// Drain all completed compressions (non-blocking).

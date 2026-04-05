@@ -89,11 +89,13 @@ impl SvdagPool {
 
         let [cx, cy, cz] = pos;
         let cs = CHUNK_SIZE as f32;
+        let span = 1 << lod_level; // LOD-0 = 1 chunk, LOD-1 = 2×2×2, LOD-2 = 4×4×4
+        let root_size = (CHUNK_SIZE as u32) * span as u32; // 16, 32, or 64
         let info = GpuSvdagChunkInfo {
             aabb_min: [cx as f32 * cs, cy as f32 * cs, cz as f32 * cs],
             dag_offset,
-            aabb_max: [(cx + 1) as f32 * cs, (cy + 1) as f32 * cs, (cz + 1) as f32 * cs],
-            dag_size: lod_level, // repurpose as lod for now
+            aabb_max: [(cx + span) as f32 * cs, (cy + span) as f32 * cs, (cz + span) as f32 * cs],
+            dag_size: root_size,
         };
 
         let info_index = self.chunk_count;
