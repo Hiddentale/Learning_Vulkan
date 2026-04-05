@@ -247,6 +247,18 @@ fn main() -> Result<()> {
                         unsafe { application.update_world(&camera).ok() };
                         tick_pregen(&mut game_state, &mut application, &user_window, &mut camera, &mut player);
                     }
+                    GameState::EnteringWorld { .. } => {
+                        if let GameState::EnteringWorld { world_dir, seed } = std::mem::replace(&mut game_state, GameState::Playing) {
+                            if let Err(e) = unsafe { application.enter_world(&world_dir, seed) } {
+                                eprintln!("Failed to enter world: {e}");
+                                game_state = GameState::TitleScreen;
+                            } else {
+                                grab_cursor(&user_window);
+                                camera = Camera::default();
+                                player = Player::new();
+                            }
+                        }
+                    }
                     _ => {}
                 }
                 user_window.request_redraw();
@@ -329,14 +341,11 @@ fn draw_menu(ui: &mut UiPipeline, state: &mut GameState, sw: f32, sh: f32, curso
             }
             if let Some(i) = selected {
                 let (dir, meta) = &worlds[i];
-                let side = 2 * WORLD_DISTANCE + 1;
-                let next = GameState::PreGenerating {
+                // Existing world — enter directly, terrain streams in progressively
+                *state = GameState::EnteringWorld {
                     world_dir: dir.clone(),
                     seed: meta.seed,
-                    loaded: 0,
-                    total: (side * side) as usize,
                 };
-                *state = next;
                 return;
             }
 
@@ -402,7 +411,12 @@ fn draw_menu(ui: &mut UiPipeline, state: &mut GameState, sw: f32, sh: f32, curso
             }
         }
         GameState::PreGenerating { loaded, total, .. } => {
-            let title = "Generating World...";
+            let chunks_done = *loaded >= *total;
+            let title = if chunks_done {
+                "Building LOD terrain..."
+            } else {
+                "Generating terrain..."
+            };
             let tw = UiPipeline::text_width(title, TEXT_SIZE * 1.5);
             ui.draw_text(title, (sw - tw) / 2.0, sh * 0.35, TEXT_SIZE * 1.5, TEXT_COLOR);
 
@@ -418,7 +432,7 @@ fn draw_menu(ui: &mut UiPipeline, state: &mut GameState, sw: f32, sh: f32, curso
             let pct_w = UiPipeline::text_width(&pct, TEXT_SIZE);
             ui.draw_text(&pct, (sw - pct_w) / 2.0, by + 5.0, TEXT_SIZE, TEXT_COLOR);
         }
-        GameState::Playing => {}
+        GameState::EnteringWorld { .. } | GameState::Playing => {}
     }
 }
 
@@ -453,23 +467,22 @@ fn tick_pregen(state: &mut GameState, application: &mut VulkanApplication, windo
             return;
         }
     }
-    // update_world() is called before tick_pregen in the event loop,
-    // which handles world.update() + chunk routing to pools.
-    if let Some(world) = application.world() {
-        let mut col_count = 0usize;
+    let col_count = if let Some(world) = application.world() {
         let mut seen = std::collections::HashSet::new();
         for [cx, _cy, cz] in world.chunk_positions() {
-            if seen.insert((cx, cz)) {
-                col_count += 1;
-            }
+            seen.insert((cx, cz));
         }
-        *loaded = col_count;
-        if col_count >= *total {
-            *state = GameState::Playing;
-            grab_cursor(window);
-            *camera = Camera::default();
-            *player = Player::new();
-        }
+        seen.len()
+    } else {
+        0
+    };
+    *loaded = col_count;
+    // Done when raw terrain loaded AND LOD settled (no submissions, no in-flight, stable)
+    if col_count >= *total && application.lod_settled() {
+        *state = GameState::Playing;
+        grab_cursor(window);
+        *camera = Camera::default();
+        *player = Player::new();
     }
 }
 

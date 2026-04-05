@@ -13,10 +13,13 @@ pub enum GameState {
     PreGenerating {
         world_dir: PathBuf,
         seed: u32,
-        /// Columns loaded so far.
         loaded: usize,
-        /// Total columns to generate.
         total: usize,
+    },
+    /// Enter an existing world without pre-generation.
+    EnteringWorld {
+        world_dir: PathBuf,
+        seed: u32,
     },
     Playing,
 }

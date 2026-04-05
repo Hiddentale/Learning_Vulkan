@@ -1,11 +1,12 @@
 #![allow(dead_code)] // Wired up in Phase 3
 
 use super::chunk::Chunk;
-use super::svdag::{svdag_from_chunk, svdag_from_super_chunk, svdag_lod_merge, SuperChunkGrid};
+use super::svdag::{svdag_compress, svdag_from_chunk, svdag_from_super_chunk, svdag_lod_merge, svdag_lod_merge_super, SuperChunkGrid};
+use super::terrain;
 use crossbeam_channel::{Receiver, Sender};
 use std::thread;
 
-const WORKER_COUNT: usize = 2;
+const WORKER_COUNT: usize = 4;
 
 /// Request to compress a chunk (or group of chunks) into SVDAG format.
 pub enum CompressionRequest {
@@ -19,6 +20,20 @@ pub enum CompressionRequest {
     },
     /// 4×4×4 chunks grouped into a single 64³ SVDAG at full resolution.
     SuperChunk { pos: [i32; 3], chunks: Box<[Option<Chunk>; 64]> },
+    /// Merge 2×2×2 super-chunk SVDAGs into one LOD super-chunk at half resolution.
+    SuperChunkLodMerge {
+        pos: [i32; 3],
+        children: Box<[Vec<u8>; 8]>,
+        lod_level: u32,
+    },
+    /// Generate terrain directly at LOD resolution (no raw chunks needed).
+    LodGenerate {
+        pos: [i32; 3],
+        origin: [i32; 3],
+        voxel_size: u32,
+        lod_level: u32,
+        seed: u32,
+    },
 }
 
 /// Result of SVDAG compression.
@@ -88,6 +103,41 @@ impl SvdagCompressor {
                                 complete,
                             }
                         }
+                        CompressionRequest::SuperChunkLodMerge { pos, children, lod_level } => {
+                            let refs: [&[u8]; 8] = [
+                                &children[0],
+                                &children[1],
+                                &children[2],
+                                &children[3],
+                                &children[4],
+                                &children[5],
+                                &children[6],
+                                &children[7],
+                            ];
+                            let dag_data = svdag_lod_merge_super(refs);
+                            CompressionResult {
+                                pos,
+                                dag_data,
+                                lod_level,
+                                complete: true,
+                            }
+                        }
+                        CompressionRequest::LodGenerate {
+                            pos,
+                            origin,
+                            voxel_size,
+                            lod_level,
+                            seed,
+                        } => {
+                            let grid = terrain::generate_lod_super_chunk(origin, voxel_size, seed);
+                            let dag_data = svdag_compress(&grid, 64);
+                            CompressionResult {
+                                pos,
+                                dag_data,
+                                lod_level,
+                                complete: true,
+                            }
+                        }
                     };
                     if tx.send(result).is_err() {
                         break;
@@ -111,6 +161,22 @@ impl SvdagCompressor {
     /// Queue a LOD merge of 8 chunks.
     pub fn request_lod_merge(&self, pos: [i32; 3], children: Box<[Chunk; 8]>, lod_level: u32) {
         let _ = self.request_tx.send(CompressionRequest::LodMerge { pos, children, lod_level });
+    }
+
+    /// Queue a LOD merge of 2×2×2 super-chunk SVDAGs.
+    pub fn request_super_chunk_lod_merge(&self, pos: [i32; 3], children: Box<[Vec<u8>; 8]>, lod_level: u32) {
+        let _ = self.request_tx.send(CompressionRequest::SuperChunkLodMerge { pos, children, lod_level });
+    }
+
+    /// Generate terrain directly at LOD resolution on a background thread.
+    pub fn request_lod_generate(&self, pos: [i32; 3], origin: [i32; 3], voxel_size: u32, lod_level: u32, seed: u32) {
+        let _ = self.request_tx.send(CompressionRequest::LodGenerate {
+            pos,
+            origin,
+            voxel_size,
+            lod_level,
+            seed,
+        });
     }
 
     /// Queue a 4×4×4 super-chunk for compression into a single 64³ SVDAG.

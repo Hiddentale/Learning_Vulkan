@@ -114,26 +114,27 @@ bool ray_aabb(vec3 ro, vec3 inv_rd, vec3 aabb_min, vec3 aabb_max, out float t_ne
 }
 
 // --- DDA ray march through one chunk ---
-bool trace_chunk(vec3 ro, vec3 rd, vec3 aabb_min, float t_enter, float t_exit,
+// voxel_size = world-space size of one voxel (1.0 for LOD-0, 2.0 for LOD-1, etc.)
+bool trace_chunk(vec3 ro, vec3 rd, vec3 aabb_min, vec3 aabb_max, float t_enter, float t_exit,
                  uint dag_base, uint chunk_size, out float t_hit, out vec3 hit_normal, out uint hit_material) {
-    vec3 pos = ro + rd * (t_enter + 0.001);
-    vec3 local = pos - aabb_min;
+    float voxel_size = (aabb_max.x - aabb_min.x) / float(chunk_size);
+    vec3 pos = ro + rd * (t_enter + 0.001 * voxel_size);
+    vec3 local = (pos - aabb_min) / voxel_size;
     int max_coord = int(chunk_size) - 1;
     ivec3 voxel = clamp(ivec3(floor(local)), ivec3(0), ivec3(max_coord));
 
     ivec3 step_dir = ivec3(sign(rd));
-    vec3 t_delta = abs(1.0 / rd);
+    vec3 t_delta = abs(voxel_size / rd);
     vec3 t_max_val;
     for (int i = 0; i < 3; i++) {
-        if (rd[i] > 0.0)      t_max_val[i] = t_enter + (float(voxel[i] + 1) - local[i]) / rd[i];
-        else if (rd[i] < 0.0) t_max_val[i] = t_enter + (float(voxel[i]) - local[i]) / rd[i];
+        if (rd[i] > 0.0)      t_max_val[i] = t_enter + (float(voxel[i] + 1) - local[i]) * voxel_size / rd[i];
+        else if (rd[i] < 0.0) t_max_val[i] = t_enter + (float(voxel[i]) - local[i]) * voxel_size / rd[i];
         else                   t_max_val[i] = 1e30;
     }
 
-    // Track entry face normal. First voxel's entry face comes from the AABB intersection.
-    // Determine which axis the ray entered the AABB on (largest component of tmin).
+    // Track entry face normal from AABB intersection axis.
     vec3 t0 = (aabb_min - ro) / rd;
-    vec3 t1 = (aabb_min + vec3(float(chunk_size)) - ro) / rd;
+    vec3 t1 = (aabb_max - ro) / rd;
     vec3 tmin_axes = min(t0, t1);
     vec3 entry_normal;
     if (tmin_axes.x > tmin_axes.y && tmin_axes.x > tmin_axes.z)
@@ -155,7 +156,6 @@ bool trace_chunk(vec3 ro, vec3 rd, vec3 aabb_min, float t_enter, float t_exit,
             return true;
         }
 
-        // Step to next voxel and track which face we cross
         if (t_max_val.x < t_max_val.y) {
             if (t_max_val.x < t_max_val.z) {
                 t_enter = t_max_val.x;
@@ -269,7 +269,7 @@ void main() {
         float t_hit;
         vec3 hit_normal;
         uint hit_mat;
-        if (trace_chunk(ro, rd, chunk.aabb_min, max(t_near, 0.0), t_far,
+        if (trace_chunk(ro, rd, chunk.aabb_min, chunk.aabb_max, max(t_near, 0.0), t_far,
                         chunk.dag_offset, chunk.dag_size, t_hit, hit_normal, hit_mat)) {
             if (t_hit < best_t) {
                 best_t = t_hit;

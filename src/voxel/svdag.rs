@@ -55,7 +55,7 @@ pub fn svdag_from_super_chunk(grid: &SuperChunkGrid) -> Vec<u8> {
 }
 
 /// Generic SVDAG compression over any voxel source at any power-of-two size.
-fn svdag_compress(source: &dyn VoxelSource, size: usize) -> Vec<u8> {
+pub fn svdag_compress(source: &dyn VoxelSource, size: usize) -> Vec<u8> {
     let mut buf = vec![0u8; HEADER_SIZE];
     let mut dedup: HashMap<Vec<u8>, u32> = HashMap::new();
     let root = build_node(&mut buf, &mut dedup, source, 0, 0, 0, size);
@@ -80,6 +80,69 @@ pub fn svdag_lookup_sized(dag: &[u8], x: usize, y: usize, z: usize, root_size: u
 pub fn svdag_lod_merge(children: [&Chunk; 8]) -> Vec<u8> {
     let merged = downsample_chunks(children);
     svdag_from_chunk(&merged)
+}
+
+/// Merge 2×2×2 super-chunk SVDAGs into one LOD super-chunk at half resolution.
+/// Each child is a 64³ SVDAG. The result is a 64³ SVDAG covering 2× the space.
+pub fn svdag_lod_merge_super(children: [&[u8]; 8]) -> Vec<u8> {
+    let grid = SvdagOctantGrid {
+        children,
+        child_size: CHUNK_SIZE * 4,
+    };
+    let downsampled = DownsampledSource { source: &grid, scale: 2 };
+    svdag_compress(&downsampled, CHUNK_SIZE * 4)
+}
+
+/// 2×2×2 grid of SVDAGs forming a virtual volume at 2× the child resolution.
+struct SvdagOctantGrid<'a> {
+    children: [&'a [u8]; 8],
+    child_size: usize,
+}
+
+impl VoxelSource for SvdagOctantGrid<'_> {
+    fn get(&self, x: usize, y: usize, z: usize) -> BlockType {
+        let half = self.child_size;
+        let octant = (if x >= half { 1 } else { 0 }) | (if y >= half { 2 } else { 0 }) | (if z >= half { 4 } else { 0 });
+        svdag_lookup_sized(self.children[octant], x % half, y % half, z % half, half)
+    }
+}
+
+/// Wraps a VoxelSource, downsampling by majority-voting scale³ blocks.
+struct DownsampledSource<'a> {
+    source: &'a dyn VoxelSource,
+    scale: usize,
+}
+
+impl VoxelSource for DownsampledSource<'_> {
+    fn get(&self, x: usize, y: usize, z: usize) -> BlockType {
+        majority_block_source(self.source, x * self.scale, y * self.scale, z * self.scale, self.scale)
+    }
+}
+
+fn majority_block_source(source: &dyn VoxelSource, bx: usize, by: usize, bz: usize, scale: usize) -> BlockType {
+    let mut counts = [0u16; 8];
+    for dy in 0..scale {
+        for dz in 0..scale {
+            for dx in 0..scale {
+                let block = source.get(bx + dx, by + dy, bz + dz);
+                counts[block as usize] += 1;
+            }
+        }
+    }
+    let threshold = (scale * scale * scale / 2) as u16;
+    let mut best = BlockType::Air;
+    let mut best_count = 0u16;
+    for (i, &c) in counts.iter().enumerate().skip(1) {
+        if c > best_count {
+            best_count = c;
+            best = unsafe { std::mem::transmute::<u8, BlockType>(i as u8) };
+        }
+    }
+    if best_count >= threshold {
+        best
+    } else {
+        BlockType::Air
+    }
 }
 
 /// DFS-ordered flat material array for an SVDAG.
@@ -529,5 +592,53 @@ mod tests {
         assert!(dag.len() < 200, "all-air super-chunk should be small, got {} bytes", dag.len());
         assert_eq!(svdag_lookup_sized(&dag, 0, 0, 0, 64), BlockType::Air);
         assert_eq!(svdag_lookup_sized(&dag, 63, 63, 63, 64), BlockType::Air);
+    }
+
+    #[test]
+    fn lod_merge_super_all_solid() {
+        let solid_grid = make_solid_super_chunk(BlockType::Stone);
+        let dag = svdag_from_super_chunk(&solid_grid);
+        let children: [&[u8]; 8] = [&dag; 8];
+        let merged = svdag_lod_merge_super(children);
+        // Merged should be all solid at half resolution
+        for y in 0..CHUNK_SIZE * 4 {
+            assert!(
+                svdag_lookup_sized(&merged, 0, y, 0, CHUNK_SIZE * 4).is_opaque(),
+                "expected solid at y={y}"
+            );
+        }
+    }
+
+    #[test]
+    fn lod_merge_super_half_solid_preserves_boundary() {
+        let solid_grid = make_solid_super_chunk(BlockType::Stone);
+        let air_grid = make_air_super_chunk();
+        let solid_dag = svdag_from_super_chunk(&solid_grid);
+        let air_dag = svdag_from_super_chunk(&air_grid);
+        // Octant bit1 = Y. Bottom octants (Y=0): indices 0,1,4,5. Top (Y=1): 2,3,6,7.
+        let children: [&[u8]; 8] = [&solid_dag, &solid_dag, &air_dag, &air_dag, &solid_dag, &solid_dag, &air_dag, &air_dag];
+        let merged = svdag_lod_merge_super(children);
+        assert!(svdag_lookup_sized(&merged, 0, 0, 0, CHUNK_SIZE * 4).is_opaque());
+        assert!(!svdag_lookup_sized(&merged, 0, CHUNK_SIZE * 4 - 1, 0, CHUNK_SIZE * 4).is_opaque());
+    }
+
+    fn make_solid_super_chunk(block: BlockType) -> SuperChunkGrid {
+        let chunks: Vec<Option<Chunk>> = (0..64).map(|_| Some(Chunk::new(block))).collect();
+        SuperChunkGrid {
+            chunks: match chunks.into_boxed_slice().try_into() {
+                Ok(b) => b,
+                Err(_) => unreachable!(),
+            },
+        }
+    }
+
+    fn make_air_super_chunk() -> SuperChunkGrid {
+        let chunks: Vec<Option<Chunk>> = (0..64).map(|_| Some(Chunk::new(BlockType::Air))).collect();
+        SuperChunkGrid {
+            chunks: match chunks.into_boxed_slice().try_into() {
+                Ok(b) => b,
+                Err(_) => unreachable!(),
+            },
+        }
     }
 }

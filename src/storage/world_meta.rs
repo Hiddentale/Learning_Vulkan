@@ -77,9 +77,13 @@ pub fn create_world(name: &str, seed: u32) -> anyhow::Result<PathBuf> {
     Ok(dir)
 }
 
-/// Returns the svdag cache path for a world directory.
-pub fn svdag_dir(world_dir: &Path) -> PathBuf {
-    world_dir.join("svdag")
+/// Returns the svdag cache path for a world directory at the given LOD level.
+pub fn svdag_lod_dir(world_dir: &Path, lod_level: u32) -> PathBuf {
+    if lod_level == 0 {
+        world_dir.join("svdag")
+    } else {
+        world_dir.join(format!("svdag_lod{lod_level}"))
+    }
 }
 
 fn sanitize_dir_name(name: &str) -> String {

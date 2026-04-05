@@ -81,13 +81,20 @@ use crate::voxel::world::{MAX_CHUNK_Y, MIN_CHUNK_Y};
 
 /// Mesh shader renders chunks within this distance. Full detail, editable, textured.
 const MESH_DISTANCE: i32 = 8;
-/// SVDAG ray march renders 64³ super-chunks from MESH_DISTANCE to SVDAG_DISTANCE.
-const SVDAG_DISTANCE: i32 = 24;
-/// World generates terrain out to this distance.
-const WORLD_DISTANCE: i32 = SVDAG_DISTANCE;
+/// Mesh shader renders chunks within this distance.
+const LOD0_DISTANCE: i32 = 24; // 384m
+const LOD1_DISTANCE: i32 = 48; // 768m
+const LOD2_DISTANCE: i32 = 96; // 1536m
+const LOD3_DISTANCE: i32 = 192; // 3072m
+const LOD4_DISTANCE: i32 = 384; // 6144m (>5km)
+/// World generates terrain out to this distance (raw chunks for LOD-0 building).
+const WORLD_DISTANCE: i32 = LOD0_DISTANCE;
+/// Maximum SVDAG render distance across all LOD levels.
+const SVDAG_DISTANCE: i32 = LOD4_DISTANCE;
 const CHUNK_LAYERS: usize = (MAX_CHUNK_Y - MIN_CHUNK_Y + 1) as usize;
 const MAX_MESH_CHUNKS: usize = ((2 * MESH_DISTANCE + 1) * (2 * MESH_DISTANCE + 1)) as usize * CHUNK_LAYERS;
-const MAX_SVDAG_CHUNKS: u32 = 16384;
+const MAX_SVDAG_CHUNKS: u32 = 32768;
+const SUPER_CHUNK_VOXELS: u32 = 64;
 
 /// World-specific resources created when entering a world, destroyed when returning to menu.
 pub struct WorldResources {
@@ -99,8 +106,14 @@ pub struct WorldResources {
     svdag_compressor: SvdagCompressor,
     svdag_pending: std::collections::HashSet<[i32; 3]>,
     svdag_in_flight: std::collections::HashSet<[i32; 3]>,
-    svdag_cache: RegionStore,
+    /// Per-LOD disk caches. Index 0 = LOD-0, 1 = LOD-1, 2 = LOD-2.
+    svdag_caches: Vec<RegionStore>,
     last_player_chunk: [i32; 2],
+    seed: u32,
+    /// In-flight LOD generation requests (prevents duplicate submissions).
+    lod_in_flight: std::collections::HashSet<[i32; 3]>,
+    /// Consecutive frames where LOD scheduling had no work.
+    lod_idle_frames: u32,
 }
 
 pub struct VulkanApplication {
@@ -128,6 +141,11 @@ impl VulkanApplication {
     /// Returns true if a world is currently loaded.
     pub fn has_world(&self) -> bool {
         self.wr.is_some()
+    }
+
+    /// True if LOD generation has settled (nothing to submit, nothing in flight).
+    pub fn lod_settled(&self) -> bool {
+        self.wr.as_ref().is_none_or(|wr| wr.lod_idle_frames >= 3)
     }
 
     /// Sets a block in the world and re-uploads to the mesh shader pool.
@@ -255,7 +273,10 @@ impl VulkanApplication {
         let svdag_pool = SvdagPool::new(MAX_SVDAG_CHUNKS, &self.device, &self.vulkan_instance, &mut self.vulkan_application_data)?;
         let svdag_pipeline = SvdagPipeline::create(&self.device, &self.vulkan_instance, &mut self.vulkan_application_data, &svdag_pool)?;
         let svdag_compressor = SvdagCompressor::new();
-        let svdag_cache = RegionStore::new(&crate::storage::world_meta::svdag_dir(world_dir))?;
+        let mut svdag_caches = Vec::new();
+        for lod in 0..=LOD_BANDS.len() as u32 {
+            svdag_caches.push(RegionStore::new(&crate::storage::world_meta::svdag_lod_dir(world_dir, lod))?);
+        }
 
         self.wr = Some(WorldResources {
             world,
@@ -266,8 +287,11 @@ impl VulkanApplication {
             svdag_compressor,
             svdag_pending: std::collections::HashSet::new(),
             svdag_in_flight: std::collections::HashSet::new(),
-            svdag_cache,
+            svdag_caches,
             last_player_chunk: [0, 0],
+            lod_in_flight: std::collections::HashSet::new(),
+            lod_idle_frames: 0,
+            seed,
         });
         self.depth_pyramid_needs_init = true;
         Ok(())
@@ -518,7 +542,7 @@ impl VulkanApplication {
         Ok(())
     }
 
-    /// Loads/unloads chunks. Mesh shader gets 0..MESH_DISTANCE, SVDAG gets MESH_DISTANCE..WORLD_DISTANCE.
+    /// Loads/unloads chunks. Routes to mesh pool, SVDAG pool, and LOD merging.
     unsafe fn update_chunks_inner(wr: &mut WorldResources, camera: &Camera) -> anyhow::Result<()> {
         let player_cx = (camera.position.x / CHUNK_SIZE as f32).floor() as i32;
         let player_cz = (camera.position.z / CHUNK_SIZE as f32).floor() as i32;
@@ -527,28 +551,21 @@ impl VulkanApplication {
 
         // Process completed SVDAG compressions — drop results that don't fit (no eviction thrashing)
         for result in wr.svdag_compressor.receive() {
-            let [rx, ry, rz] = result.pos;
-            let still_relevant = if result.lod_level == 0 {
-                wr.world.get_chunk(rx, ry, rz).is_some()
-            } else {
-                (ry..ry + (1 << result.lod_level)).any(|y| wr.world.get_chunk(rx, y, rz).is_some())
-            };
             wr.svdag_in_flight.remove(&result.pos);
-            if !still_relevant {
-                continue;
-            }
+            wr.lod_in_flight.remove(&result.pos);
             if result.dag_data.len() <= 68 {
                 continue;
             }
-            if wr.svdag_pool.chunk_count() >= MAX_SVDAG_CHUNKS - 1 {
+            if wr.svdag_pool.chunk_count() >= MAX_SVDAG_CHUNKS - 1 || wr.svdag_pool.is_near_budget() {
                 continue;
             }
-            if wr.svdag_pool.is_near_budget() {
-                continue;
-            }
-            wr.svdag_pool.upload_chunk(result.pos, &result.dag_data, result.lod_level);
+            wr.svdag_pool
+                .upload_chunk(result.pos, &result.dag_data, result.lod_level, SUPER_CHUNK_VOXELS);
             let compressed = lz4_flex::compress_prepend_size(&result.dag_data);
-            let _ = wr.svdag_cache.write(result.pos, &compressed);
+            let cache_idx = result.lod_level.saturating_sub(2) as usize;
+            if cache_idx < wr.svdag_caches.len() {
+                let _ = wr.svdag_caches[cache_idx].write(result.pos, &compressed);
+            }
         }
 
         // Handle unloaded chunks — remove from whichever pool they're in
@@ -622,10 +639,10 @@ impl VulkanApplication {
                     cache_loaded.push(group_pos);
                     continue;
                 }
-                if let Some(compressed) = wr.svdag_cache.read(group_pos) {
+                if let Some(compressed) = wr.svdag_caches[0].read(group_pos) {
                     if let Ok(dag_data) = lz4_flex::decompress_size_prepended(compressed) {
                         if dag_data.len() > 68 && wr.svdag_pool.chunk_count() < MAX_SVDAG_CHUNKS - 1 && !wr.svdag_pool.is_near_budget() {
-                            wr.svdag_pool.upload_chunk(group_pos, &dag_data, 2);
+                            wr.svdag_pool.upload_chunk(group_pos, &dag_data, 2, SUPER_CHUNK_VOXELS);
                         }
                         cache_loaded.push(group_pos);
                     }
@@ -683,10 +700,107 @@ impl VulkanApplication {
             }
         }
 
+        // --- LOD super-chunk generation beyond LOD-0 range ---
+        let lod_submitted = schedule_lod_generation(wr, player_cx, player_cz);
+        if lod_submitted || !wr.lod_in_flight.is_empty() {
+            wr.lod_idle_frames = 0;
+        } else {
+            wr.lod_idle_frames = wr.lod_idle_frames.saturating_add(1);
+        }
+
         wr.last_player_chunk = [player_cx, player_cz];
         Ok(())
     }
+}
 
+/// LOD level definitions: (chunk alignment, voxel size in blocks, lod_level for pool, distance band).
+const LOD_BANDS: &[(i32, u32, u32, i32, i32)] = &[
+    // (align, voxel_size, lod_level, min_dist, max_dist)
+    (8, 2, 3, LOD0_DISTANCE, LOD1_DISTANCE),   // LOD-1: 128m coverage
+    (16, 4, 4, LOD1_DISTANCE, LOD2_DISTANCE),  // LOD-2: 256m coverage
+    (32, 8, 5, LOD2_DISTANCE, LOD3_DISTANCE),  // LOD-3: 512m coverage
+    (64, 16, 6, LOD3_DISTANCE, LOD4_DISTANCE), // LOD-4: 1024m coverage
+];
+const MAX_LOD_IN_FLIGHT: usize = 32;
+const LOD_SUBMISSIONS_PER_FRAME: usize = 8;
+
+/// Schedule direct LOD terrain generation for positions beyond LOD-0 range.
+/// Returns true if any LOD work was submitted this frame.
+unsafe fn schedule_lod_generation(wr: &mut WorldResources, player_cx: i32, player_cz: i32) -> bool {
+    if wr.lod_in_flight.len() >= MAX_LOD_IN_FLIGHT {
+        return true;
+    }
+    let mut total_submitted = 0usize;
+    for &(align, voxel_size, lod_level, min_dist, max_dist) in LOD_BANDS {
+        let half = max_dist / align + 1;
+        let pcx = player_cx.div_euclid(align) * align;
+        let pcz = player_cz.div_euclid(align) * align;
+        let mut submitted = 0;
+        let max_terrain_chunk_y = 13;
+        let y_layers = ((max_terrain_chunk_y - MIN_CHUNK_Y + 1) / align).max(1);
+
+        for ring in 0..=half {
+            if submitted >= LOD_SUBMISSIONS_PER_FRAME {
+                break;
+            }
+            for dz in -ring..=ring {
+                for dx in -ring..=ring {
+                    if dx.abs() != ring && dz.abs() != ring {
+                        continue;
+                    }
+                    let gx = pcx + dx * align;
+                    let gz = pcz + dz * align;
+                    if !in_lod_band(gx, gz, player_cx, player_cz, min_dist, max_dist) {
+                        continue;
+                    }
+                    for gy_idx in 0..y_layers {
+                        let gy = MIN_CHUNK_Y + gy_idx * align;
+                        let pos = [gx, gy, gz];
+                        if wr.svdag_pool.has_chunk(&pos) || wr.lod_in_flight.contains(&pos) {
+                            continue;
+                        }
+                        if try_load_cached_lod(wr, pos, lod_level) {
+                            continue;
+                        }
+                        if submitted >= LOD_SUBMISSIONS_PER_FRAME {
+                            break;
+                        }
+                        let origin = [gx * CHUNK_SIZE as i32, gy * CHUNK_SIZE as i32, gz * CHUNK_SIZE as i32];
+                        wr.svdag_compressor.request_lod_generate(pos, origin, voxel_size, lod_level, wr.seed);
+                        wr.lod_in_flight.insert(pos);
+                        submitted += 1;
+                    }
+                }
+            }
+        }
+        total_submitted += submitted;
+    }
+    total_submitted > 0
+}
+
+fn in_lod_band(gx: i32, gz: i32, px: i32, pz: i32, min_dist: i32, max_dist: i32) -> bool {
+    let dist = crate::voxel::world::chunk_distance(gx, gz, px, pz);
+    dist >= min_dist && dist <= max_dist
+}
+
+unsafe fn try_load_cached_lod(wr: &mut WorldResources, pos: [i32; 3], lod_level: u32) -> bool {
+    let cache_idx = lod_level.saturating_sub(2) as usize;
+    if cache_idx >= wr.svdag_caches.len() {
+        return false;
+    }
+    let Some(compressed) = wr.svdag_caches[cache_idx].read(pos) else {
+        return false;
+    };
+    let Ok(dag_data) = lz4_flex::decompress_size_prepended(compressed) else {
+        return false;
+    };
+    if dag_data.len() > 68 && wr.svdag_pool.chunk_count() < MAX_SVDAG_CHUNKS - 1 && !wr.svdag_pool.is_near_budget() {
+        wr.svdag_pool.upload_chunk(pos, &dag_data, lod_level, SUPER_CHUNK_VOXELS);
+    }
+    true
+}
+
+impl VulkanApplication {
     /// Waits for the current frame's fence, then acquires the next swapchain image.
     /// Returns `None` if the swapchain was out of date and had to be recreated.
     unsafe fn acquire_next_image(&mut self, window: &Window) -> anyhow::Result<Option<usize>> {

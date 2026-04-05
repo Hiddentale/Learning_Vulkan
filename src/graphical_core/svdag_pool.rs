@@ -6,9 +6,9 @@ use crate::voxel::chunk::CHUNK_SIZE;
 use std::collections::HashMap;
 use vulkan_rust::{vk, Device, Instance};
 
-/// Maximum SVDAG geometry budget in bytes (64 MB).
+/// Maximum SVDAG geometry budget in bytes (128 MB).
 /// Materials are embedded in leaf nodes, so this covers both geometry and materials.
-const SVDAG_GEOMETRY_BUDGET: u64 = 64 * 1024 * 1024;
+const SVDAG_GEOMETRY_BUDGET: u64 = 128 * 1024 * 1024;
 
 /// Per-chunk metadata for the ray marcher. Must match GLSL layout (std430).
 #[repr(C)]
@@ -78,7 +78,8 @@ impl SvdagPool {
     }
 
     /// Upload compressed SVDAG data for a chunk. Materials are embedded in leaf nodes.
-    pub unsafe fn upload_chunk(&mut self, pos: [i32; 3], dag_data: &[u8], lod_level: u32) {
+    /// `dag_size` = voxel grid dimension (always 64 for super-chunks).
+    pub unsafe fn upload_chunk(&mut self, pos: [i32; 3], dag_data: &[u8], lod_level: u32, dag_size: u32) {
         let dag_offset = self.alloc_geometry(dag_data.len() as u32);
         std::ptr::copy_nonoverlapping(dag_data.as_ptr(), self.geometry_ptr.add(dag_offset as usize), dag_data.len());
 
@@ -89,13 +90,12 @@ impl SvdagPool {
 
         let [cx, cy, cz] = pos;
         let cs = CHUNK_SIZE as f32;
-        let span = 1 << lod_level; // LOD-0 = 1 chunk, LOD-1 = 2×2×2, LOD-2 = 4×4×4
-        let root_size = (CHUNK_SIZE as u32) * span as u32; // 16, 32, or 64
+        let span = 1 << lod_level; // LOD-0=1, LOD-1=2, LOD-2=4 (super-chunk), LOD-3=8, etc.
         let info = GpuSvdagChunkInfo {
             aabb_min: [cx as f32 * cs, cy as f32 * cs, cz as f32 * cs],
             dag_offset,
             aabb_max: [(cx + span) as f32 * cs, (cy + span) as f32 * cs, (cz + span) as f32 * cs],
-            dag_size: root_size,
+            dag_size,
         };
 
         let info_index = self.chunk_count;
