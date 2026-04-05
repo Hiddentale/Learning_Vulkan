@@ -106,23 +106,18 @@ impl SvdagPool {
         self.chunk_count += 1;
     }
 
-    /// Remove a chunk's SVDAG data, freeing its geometry allocation.
     pub unsafe fn remove_chunk(&mut self, pos: &[i32; 3]) {
         let info_index = match self.chunk_slots.remove(pos) {
             Some(i) => i,
             None => return,
         };
-
         if let Some(handle) = self.chunk_handles.remove(pos) {
             self.geometry_free.push((handle.dag_offset, handle.dag_size));
         }
-
-        // Swap-remove from chunk info array
         let last_index = self.chunk_count - 1;
         if info_index != last_index {
             let last_info = std::ptr::read(self.chunk_info_ptr.add(last_index as usize));
             std::ptr::write(self.chunk_info_ptr.add(info_index as usize), last_info);
-
             if let Some((&moved_pos, _)) = self.chunk_slots.iter().find(|(_, &v)| v == last_index) {
                 self.chunk_slots.insert(moved_pos, info_index);
             }
@@ -144,9 +139,9 @@ impl SvdagPool {
 
     /// Evict the farthest chunks from the player to free space.
     pub unsafe fn evict_farthest(&mut self, count: usize, player_cx: i32, player_cz: i32) {
-        let mut keys: Vec<[i32; 3]> = self.chunk_slots.keys().copied().collect();
-        keys.sort_by_key(|pos| std::cmp::Reverse((pos[0] - player_cx).abs().max((pos[2] - player_cz).abs())));
-        for pos in keys.into_iter().take(count) {
+        let mut positions: Vec<[i32; 3]> = self.chunk_slots.keys().copied().collect();
+        positions.sort_by_key(|pos| std::cmp::Reverse((pos[0] - player_cx).abs().max((pos[2] - player_cz).abs())));
+        for pos in positions.into_iter().take(count) {
             self.remove_chunk(&pos);
         }
     }

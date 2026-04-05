@@ -7,3 +7,5 @@ docs/roadmap.md
 temp
 world_cache/
 worlds
+debug_log.txt
+docs/bug1_bisection.md

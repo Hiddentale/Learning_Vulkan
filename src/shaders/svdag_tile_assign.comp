@@ -138,7 +138,6 @@ void main() {
         if (int(tile_id.x) < t_min.x || int(tile_id.x) > t_max.x ||
             int(tile_id.y) < t_min.y || int(tile_id.y) > t_max.y) continue;
 
-        // Skip chunks fully occluded by mesh shader geometry
         if (!hiz_visible(chunk.aabb_min, chunk.aabb_max)) continue;
 
         // Distance from camera to AABB center

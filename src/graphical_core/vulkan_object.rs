@@ -87,8 +87,8 @@ const LOD1_DISTANCE: i32 = 48; // 768m
 const LOD2_DISTANCE: i32 = 96; // 1536m
 const LOD3_DISTANCE: i32 = 192; // 3072m
 const LOD4_DISTANCE: i32 = 384; // 6144m (>5km)
-/// World generates terrain out to this distance (raw chunks for LOD-0 building).
-const WORLD_DISTANCE: i32 = LOD0_DISTANCE;
+/// World generates terrain out to this distance (raw chunks for LOD-0 super-chunk building).
+const WORLD_DISTANCE: i32 = LOD0_DISTANCE + 8 + 4;
 /// Maximum SVDAG render distance across all LOD levels.
 const SVDAG_DISTANCE: i32 = LOD4_DISTANCE;
 const CHUNK_LAYERS: usize = (MAX_CHUNK_Y - MIN_CHUNK_Y + 1) as usize;
@@ -110,8 +110,10 @@ pub struct WorldResources {
     svdag_caches: Vec<RegionStore>,
     last_player_chunk: [i32; 2],
     seed: u32,
-    /// In-flight LOD generation requests (prevents duplicate submissions).
+    /// In-flight LOD generation requests.
     lod_in_flight: std::collections::HashSet<[i32; 3]>,
+    /// Chunks that generated as empty (all air). Never retry these.
+    lod_empty: std::collections::HashSet<[i32; 3]>,
     /// Consecutive frames where LOD scheduling had no work.
     lod_idle_frames: u32,
 }
@@ -290,6 +292,7 @@ impl VulkanApplication {
             svdag_caches,
             last_player_chunk: [0, 0],
             lod_in_flight: std::collections::HashSet::new(),
+            lod_empty: std::collections::HashSet::new(),
             lod_idle_frames: 0,
             seed,
         });
@@ -554,6 +557,7 @@ impl VulkanApplication {
             wr.svdag_in_flight.remove(&result.pos);
             wr.lod_in_flight.remove(&result.pos);
             if result.dag_data.len() <= 68 {
+                wr.lod_empty.insert(result.pos);
                 continue;
             }
             if wr.svdag_pool.chunk_count() >= MAX_SVDAG_CHUNKS - 1 || wr.svdag_pool.is_near_budget() {
@@ -615,7 +619,6 @@ impl VulkanApplication {
             }
         }
 
-        // Drain pending SVDAG compressions, closest first, budgeted
         const COMPRESSIONS_PER_FRAME: usize = 16;
         if !wr.svdag_pending.is_empty() {
             let mut candidates: Vec<[i32; 3]> = wr.svdag_pending.iter().copied().collect();
@@ -635,7 +638,7 @@ impl VulkanApplication {
 
             let mut cache_loaded = Vec::new();
             for &group_pos in &groups {
-                if wr.svdag_pool.has_chunk(&group_pos) || wr.svdag_in_flight.contains(&group_pos) {
+                if wr.svdag_pool.has_chunk(&group_pos) || wr.svdag_in_flight.contains(&group_pos) || wr.lod_empty.contains(&group_pos) {
                     cache_loaded.push(group_pos);
                     continue;
                 }
@@ -716,10 +719,13 @@ impl VulkanApplication {
 /// LOD level definitions: (chunk alignment, voxel size in blocks, lod_level for pool, distance band).
 const LOD_BANDS: &[(i32, u32, u32, i32, i32)] = &[
     // (align, voxel_size, lod_level, min_dist, max_dist)
-    (8, 2, 3, LOD0_DISTANCE, LOD1_DISTANCE),   // LOD-1: 128m coverage
-    (16, 4, 4, LOD1_DISTANCE, LOD2_DISTANCE),  // LOD-2: 256m coverage
-    (32, 8, 5, LOD2_DISTANCE, LOD3_DISTANCE),  // LOD-3: 512m coverage
-    (64, 16, 6, LOD3_DISTANCE, LOD4_DISTANCE), // LOD-4: 1024m coverage
+    // Each band extends +align beyond its nominal boundary so the inner LOD's chunks
+    // overlap into the outer band. This prevents gaps where shallow-angle rays miss
+    // terrain in the outer LOD's boundary chunks.
+    (8, 2, 3, LOD0_DISTANCE, LOD1_DISTANCE + 8),   // LOD-1: overlap into LOD-2
+    (16, 4, 4, LOD1_DISTANCE, LOD2_DISTANCE + 16), // LOD-2: overlap into LOD-3
+    (32, 8, 5, LOD2_DISTANCE, LOD3_DISTANCE + 32), // LOD-3: overlap into LOD-4
+    (64, 16, 6, LOD3_DISTANCE, LOD4_DISTANCE),     // LOD-4: outermost, no overlap needed
 ];
 const MAX_LOD_IN_FLIGHT: usize = 32;
 const LOD_SUBMISSIONS_PER_FRAME: usize = 8;
@@ -756,7 +762,7 @@ unsafe fn schedule_lod_generation(wr: &mut WorldResources, player_cx: i32, playe
                     for gy_idx in 0..y_layers {
                         let gy = MIN_CHUNK_Y + gy_idx * align;
                         let pos = [gx, gy, gz];
-                        if wr.svdag_pool.has_chunk(&pos) || wr.lod_in_flight.contains(&pos) {
+                        if wr.svdag_pool.has_chunk(&pos) || wr.lod_in_flight.contains(&pos) || wr.lod_empty.contains(&pos) {
                             continue;
                         }
                         if try_load_cached_lod(wr, pos, lod_level) {

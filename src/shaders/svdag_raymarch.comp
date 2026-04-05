@@ -256,7 +256,6 @@ void main() {
     float best_t = 1e30;
     vec3 best_normal = vec3(0.0);
     uint best_material = 0u;
-
     // Only iterate over this tile's chunks (typically 1-5, max 32)
     for (uint i = 0; i < tile_chunk_count; i++) {
         uint chunk_idx = tile_data[base + 1u + i];
@@ -279,7 +278,7 @@ void main() {
         }
     }
 
-    if (best_t >= 1e29) return; // No hit, leave pixel as-is
+    if (best_t >= 1e29) return; // No hit
 
     // Compute depth
     vec3 hit_world = ro + rd * best_t;

@@ -50,44 +50,59 @@ pub fn svdag_from_chunk(chunk: &Chunk) -> Vec<u8> {
 }
 
 /// Compresses a 64³ super-chunk grid into a 5-level SVDAG.
-/// Edge columns are stripped of underground to prevent visible walls at LOD boundaries.
+/// Underground is stripped from all columns — LOD-0 SVDAG (128m+) never shows underground.
 pub fn svdag_from_super_chunk(grid: &SuperChunkGrid) -> Vec<u8> {
-    let stripped = EdgeStrippedSource {
-        source: grid,
-        size: CHUNK_SIZE * 4,
-        depth: 4,
-    };
-    svdag_compress(&stripped, CHUNK_SIZE * 4)
+    let size = CHUNK_SIZE * 4;
+    let stripped = SurfaceStrippedSource::new(grid, size, SURFACE_STRIP_DEPTH);
+    svdag_compress(&stripped, size)
 }
 
-/// Wraps a VoxelSource to strip underground voxels at XZ edge columns.
-/// Prevents visible cross-section walls at chunk boundaries.
-struct EdgeStrippedSource<'a> {
-    source: &'a dyn VoxelSource,
+/// Voxels of underground to keep below the surface per column.
+/// Enough for surface texture but prevents cross-section walls at LOD boundaries.
+const SURFACE_STRIP_DEPTH: usize = 2;
+
+/// Materializes a VoxelSource and strips underground from every column,
+/// keeping only the top `depth` solid voxels. Prevents visible terrain
+/// cross-section walls at chunk/LOD boundaries.
+struct SurfaceStrippedSource {
+    blocks: Vec<BlockType>,
     size: usize,
-    depth: usize,
 }
 
-impl VoxelSource for EdgeStrippedSource<'_> {
+impl SurfaceStrippedSource {
+    fn new(source: &dyn VoxelSource, size: usize, depth: usize) -> Self {
+        let mut blocks = vec![BlockType::Air; size * size * size];
+        for y in 0..size {
+            for z in 0..size {
+                for x in 0..size {
+                    blocks[x + z * size + y * size * size] = source.get(x, y, z);
+                }
+            }
+        }
+        for z in 0..size {
+            for x in 0..size {
+                let col = x + z * size;
+                let mut top = 0;
+                for y in (0..size).rev() {
+                    if blocks[col + y * size * size] != BlockType::Air {
+                        top = y;
+                        break;
+                    }
+                }
+                if top >= depth {
+                    for y in 0..top - depth {
+                        blocks[col + y * size * size] = BlockType::Air;
+                    }
+                }
+            }
+        }
+        Self { blocks, size }
+    }
+}
+
+impl VoxelSource for SurfaceStrippedSource {
     fn get(&self, x: usize, y: usize, z: usize) -> BlockType {
-        let block = self.source.get(x, y, z);
-        if block == BlockType::Air {
-            return BlockType::Air;
-        }
-        let on_edge = x == 0 || x == self.size - 1 || z == 0 || z == self.size - 1;
-        if !on_edge {
-            return block;
-        }
-        // On edge: check if underground (has solid above within depth)
-        for dy in 1..=self.depth {
-            if y + dy >= self.size {
-                return block; // near top, keep
-            }
-            if self.source.get(x, y + dy, z) == BlockType::Air {
-                return block; // near surface, keep
-            }
-        }
-        BlockType::Air // deep underground at edge, strip
+        self.blocks[x + z * self.size + y * self.size * self.size]
     }
 }
 
@@ -560,18 +575,17 @@ mod tests {
     }
 
     #[test]
-    fn super_chunk_roundtrip_ground_plane() {
-        // Build a 4×4×4 grid where the bottom layer (y=0) of each chunk is solid
+    fn super_chunk_surface_stripping_keeps_top() {
+        // Build solid ground from y=0..16 (bottom chunk layer fully solid)
         let mut chunks: Vec<Option<Chunk>> = Vec::with_capacity(64);
-        for _cy in 0..4 {
+        for cy in 0..4 {
             for _cz in 0..4 {
                 for _cx in 0..4 {
-                    let mut chunk = Chunk::new(BlockType::Air);
-                    for z in 0..CHUNK_SIZE {
-                        for x in 0..CHUNK_SIZE {
-                            chunk.set(x, 0, z, BlockType::Stone);
-                        }
-                    }
+                    let chunk = if cy == 0 {
+                        Chunk::new(BlockType::Stone)
+                    } else {
+                        Chunk::new(BlockType::Air)
+                    };
                     chunks.push(Some(chunk));
                 }
             }
@@ -583,15 +597,17 @@ mod tests {
             },
         };
         let dag = svdag_from_super_chunk(&grid);
-        let size = CHUNK_SIZE * 4; // 64
+        let size = CHUNK_SIZE * 4;
 
-        // Bottom of each 16-chunk layer should be solid
-        for cy in 0..4 {
-            let y_solid = cy * CHUNK_SIZE; // y=0, 16, 32, 48
-            assert!(svdag_lookup_sized(&dag, 0, y_solid, 0, size).is_opaque(), "expected solid at y={y_solid}");
-            let y_air = cy * CHUNK_SIZE + 1;
-            assert!(!svdag_lookup_sized(&dag, 0, y_air, 0, size).is_opaque(), "expected air at y={y_air}");
-        }
+        // Surface (y=15) and 1 below (y=14) should survive stripping
+        assert!(svdag_lookup_sized(&dag, 0, 15, 0, size).is_opaque(), "surface should be solid");
+        assert!(svdag_lookup_sized(&dag, 0, 14, 0, size).is_opaque(), "1 below surface should be solid");
+        // Deep underground should be stripped
+        assert!(!svdag_lookup_sized(&dag, 0, 0, 0, size).is_opaque(), "underground should be stripped");
+        assert!(
+            !svdag_lookup_sized(&dag, 0, 10, 0, size).is_opaque(),
+            "deep underground should be stripped"
+        );
     }
 
     #[test]
@@ -633,30 +649,30 @@ mod tests {
 
     #[test]
     fn lod_merge_super_all_solid() {
+        // Use svdag_compress directly to test merge logic without surface stripping
         let solid_grid = make_solid_super_chunk(BlockType::Stone);
-        let dag = svdag_from_super_chunk(&solid_grid);
+        let size = CHUNK_SIZE * 4;
+        let dag = svdag_compress(&solid_grid, size);
         let children: [&[u8]; 8] = [&dag; 8];
         let merged = svdag_lod_merge_super(children);
-        // Merged should be all solid at half resolution
-        for y in 0..CHUNK_SIZE * 4 {
-            assert!(
-                svdag_lookup_sized(&merged, 0, y, 0, CHUNK_SIZE * 4).is_opaque(),
-                "expected solid at y={y}"
-            );
+        for y in 0..size {
+            assert!(svdag_lookup_sized(&merged, 0, y, 0, size).is_opaque(), "expected solid at y={y}");
         }
     }
 
     #[test]
     fn lod_merge_super_half_solid_preserves_boundary() {
+        // Use svdag_compress directly to test merge logic without surface stripping
         let solid_grid = make_solid_super_chunk(BlockType::Stone);
         let air_grid = make_air_super_chunk();
-        let solid_dag = svdag_from_super_chunk(&solid_grid);
-        let air_dag = svdag_from_super_chunk(&air_grid);
+        let size = CHUNK_SIZE * 4;
+        let solid_dag = svdag_compress(&solid_grid, size);
+        let air_dag = svdag_compress(&air_grid, size);
         // Octant bit1 = Y. Bottom octants (Y=0): indices 0,1,4,5. Top (Y=1): 2,3,6,7.
         let children: [&[u8]; 8] = [&solid_dag, &solid_dag, &air_dag, &air_dag, &solid_dag, &solid_dag, &air_dag, &air_dag];
         let merged = svdag_lod_merge_super(children);
-        assert!(svdag_lookup_sized(&merged, 0, 0, 0, CHUNK_SIZE * 4).is_opaque());
-        assert!(!svdag_lookup_sized(&merged, 0, CHUNK_SIZE * 4 - 1, 0, CHUNK_SIZE * 4).is_opaque());
+        assert!(svdag_lookup_sized(&merged, 0, 0, 0, size).is_opaque());
+        assert!(!svdag_lookup_sized(&merged, 0, size - 1, 0, size).is_opaque());
     }
 
     fn make_solid_super_chunk(block: BlockType) -> SuperChunkGrid {
