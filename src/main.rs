@@ -1,5 +1,6 @@
 #![allow(clippy::too_many_arguments)]
 mod graphical_core;
+mod storage;
 mod voxel;
 mod vr;
 use anyhow::Result;

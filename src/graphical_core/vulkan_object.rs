@@ -18,6 +18,7 @@ use crate::graphical_core::{
     voxel_pool::VoxelPool,
     MAX_FRAMES_IN_FLIGHT,
 };
+use crate::storage::region::RegionStore;
 use crate::voxel::chunk::{Chunk, CHUNK_SIZE};
 use crate::voxel::svdag_compressor::SvdagCompressor;
 use crate::voxel::world::World;
@@ -109,6 +110,8 @@ pub struct VulkanApplication {
     svdag_pending: std::collections::HashSet<[i32; 3]>,
     /// Super-chunk group positions currently being compressed (prevents duplicate submissions).
     svdag_in_flight: std::collections::HashSet<[i32; 3]>,
+    /// Disk cache for pre-compressed SVDAG super-chunks.
+    svdag_cache: RegionStore,
 }
 
 impl VulkanApplication {
@@ -227,6 +230,7 @@ impl VulkanApplication {
             svdag_compressor,
             svdag_pending: std::collections::HashSet::new(),
             svdag_in_flight: std::collections::HashSet::new(),
+            svdag_cache: RegionStore::new(std::path::Path::new("world_cache/svdag"))?,
         })
     }
 }
@@ -452,6 +456,9 @@ impl VulkanApplication {
                 continue;
             }
             self.svdag_pool.upload_chunk(result.pos, &result.dag_data, result.lod_level);
+            // Cache to disk (all super-chunks are complete — we only submit when all children present)
+            let compressed = lz4_flex::compress_prepend_size(&result.dag_data);
+            let _ = self.svdag_cache.write(result.pos, &compressed);
         }
 
         // Handle unloaded chunks — remove from whichever pool they're in
@@ -510,33 +517,70 @@ impl VulkanApplication {
                 let dz = pos[2] - player_cz;
                 dx * dx + dz * dz
             });
-            let mut submitted = 0;
-            for pos in candidates {
-                if submitted >= COMPRESSIONS_PER_FRAME {
-                    break;
-                }
-                let [cx, cy, cz] = pos;
-                // 64³ super-chunk: group 4×4×4 chunks. Align to multiples of 4.
-                let gx = cx & !3;
-                let gy = cy & !3;
-                let gz = cz & !3;
-                let group_pos = [gx, gy, gz];
-                if self.svdag_in_flight.contains(&group_pos) {
-                    // Compression already in progress — wait for it
+            // Deduplicate candidates to unique group positions
+            let mut groups: Vec<[i32; 3]> = candidates.iter().map(|&[cx, cy, cz]| [cx & !3, cy & !3, cz & !3]).collect();
+            groups.sort_unstable();
+            groups.dedup();
+            groups.sort_by_key(|pos| {
+                let dx = pos[0] - player_cx;
+                let dz = pos[2] - player_cz;
+                dx * dx + dz * dz
+            });
+
+            // First pass: load all cache hits (no budget — decompress + upload is ~0.1ms each)
+            let mut cache_loaded = Vec::new();
+            for &group_pos in &groups {
+                if self.svdag_pool.has_chunk(&group_pos) || self.svdag_in_flight.contains(&group_pos) {
+                    cache_loaded.push(group_pos); // already handled, still remove from pending
                     continue;
                 }
-                if self.svdag_pool.has_chunk(&group_pos) {
-                    // Group exists but a new chunk loaded — rebuild it
-                    self.svdag_pool.remove_chunk(&group_pos);
+                if let Some(compressed) = self.svdag_cache.read(group_pos) {
+                    if let Ok(dag_data) = lz4_flex::decompress_size_prepended(compressed) {
+                        if dag_data.len() > 68 && self.svdag_pool.chunk_count() < MAX_SVDAG_CHUNKS - 1 && !self.svdag_pool.is_near_budget() {
+                            self.svdag_pool.upload_chunk(group_pos, &dag_data, 2);
+                        }
+                        cache_loaded.push(group_pos);
+                    }
                 }
-                let mut chunks: Vec<Option<Chunk>> = Vec::with_capacity(64);
+            }
+            // Remove all pending entries for handled groups
+            for gp in &cache_loaded {
                 for dy in 0..4i32 {
                     for dz in 0..4i32 {
                         for dx in 0..4i32 {
-                            chunks.push(self.world.get_chunk(gx + dx, gy + dy, gz + dz).cloned());
+                            self.svdag_pending.remove(&[gp[0] + dx, gp[1] + dy, gp[2] + dz]);
                         }
                     }
                 }
+            }
+
+            // Second pass: submit remaining groups to compressor (budgeted)
+            let mut submitted = 0;
+            for &group_pos in &groups {
+                if submitted >= COMPRESSIONS_PER_FRAME {
+                    break;
+                }
+                let [gx, gy, gz] = group_pos;
+                if cache_loaded.contains(&group_pos) || self.svdag_in_flight.contains(&group_pos) || self.svdag_pool.has_chunk(&group_pos) {
+                    continue;
+                }
+                // Only submit when all 64 children are present — no partial builds
+                let mut chunks: Vec<Option<Chunk>> = Vec::with_capacity(64);
+                let mut all_present = true;
+                for dy in 0..4i32 {
+                    for dz in 0..4i32 {
+                        for dx in 0..4i32 {
+                            let c = self.world.get_chunk(gx + dx, gy + dy, gz + dz);
+                            if c.is_none() {
+                                all_present = false;
+                            }
+                            chunks.push(c.cloned());
+                        }
+                    }
+                }
+                if !all_present {
+                    continue;
+                } // wait for missing children
                 let boxed: Box<[Option<Chunk>; 64]> = match chunks.into_boxed_slice().try_into() {
                     Ok(b) => b,
                     Err(_) => unreachable!("collected exactly 64 entries"),

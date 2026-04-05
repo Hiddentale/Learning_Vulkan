@@ -26,6 +26,8 @@ pub struct CompressionResult {
     pub pos: [i32; 3],
     pub dag_data: Vec<u8>,
     pub lod_level: u32,
+    /// True if all source chunks were present (safe to cache to disk).
+    pub complete: bool,
 }
 
 /// Background thread pool that compresses dense chunks into SVDAGs.
@@ -49,7 +51,12 @@ impl SvdagCompressor {
                     let result = match req {
                         CompressionRequest::Single { pos, chunk } => {
                             let dag_data = svdag_from_chunk(&chunk);
-                            CompressionResult { pos, dag_data, lod_level: 0 }
+                            CompressionResult {
+                                pos,
+                                dag_data,
+                                lod_level: 0,
+                                complete: true,
+                            }
                         }
                         CompressionRequest::LodMerge { pos, children, lod_level } => {
                             let refs: [&Chunk; 8] = [
@@ -63,12 +70,23 @@ impl SvdagCompressor {
                                 &children[7],
                             ];
                             let dag_data = svdag_lod_merge(refs);
-                            CompressionResult { pos, dag_data, lod_level }
+                            CompressionResult {
+                                pos,
+                                dag_data,
+                                lod_level,
+                                complete: true,
+                            }
                         }
                         CompressionRequest::SuperChunk { pos, chunks } => {
+                            let complete = chunks.iter().all(|c| c.is_some());
                             let grid = SuperChunkGrid { chunks };
                             let dag_data = svdag_from_super_chunk(&grid);
-                            CompressionResult { pos, dag_data, lod_level: 2 }
+                            CompressionResult {
+                                pos,
+                                dag_data,
+                                lod_level: 2,
+                                complete,
+                            }
                         }
                     };
                     if tx.send(result).is_err() {
