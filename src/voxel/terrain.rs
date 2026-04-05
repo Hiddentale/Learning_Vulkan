@@ -213,6 +213,30 @@ pub fn generate_lod_super_chunk(origin: [i32; 3], voxel_size: u32, seed: u32) ->
         }
     }
 
+    // Strip underground: for each column, keep only the top SURFACE_DEPTH solid voxels.
+    // LOD chunks are only seen from above — removing underground prevents visible
+    // cross-section walls at LOD boundaries.
+    const SURFACE_DEPTH: usize = 4;
+    for gz in 0..grid_size {
+        for gx in 0..grid_size {
+            let col = gx + gz * grid_size;
+            // Find highest solid voxel in column
+            let mut top = 0;
+            for gy in (0..grid_size).rev() {
+                if blocks[col + gy * grid_size * grid_size] != BlockType::Air {
+                    top = gy;
+                    break;
+                }
+            }
+            // Clear everything below the surface skin
+            if top >= SURFACE_DEPTH {
+                for gy in 0..top - SURFACE_DEPTH {
+                    blocks[col + gy * grid_size * grid_size] = BlockType::Air;
+                }
+            }
+        }
+    }
+
     LodVoxelGrid { blocks, size: grid_size }
 }
 

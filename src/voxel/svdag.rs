@@ -50,8 +50,45 @@ pub fn svdag_from_chunk(chunk: &Chunk) -> Vec<u8> {
 }
 
 /// Compresses a 64³ super-chunk grid into a 5-level SVDAG.
+/// Edge columns are stripped of underground to prevent visible walls at LOD boundaries.
 pub fn svdag_from_super_chunk(grid: &SuperChunkGrid) -> Vec<u8> {
-    svdag_compress(grid, CHUNK_SIZE * 4)
+    let stripped = EdgeStrippedSource {
+        source: grid,
+        size: CHUNK_SIZE * 4,
+        depth: 4,
+    };
+    svdag_compress(&stripped, CHUNK_SIZE * 4)
+}
+
+/// Wraps a VoxelSource to strip underground voxels at XZ edge columns.
+/// Prevents visible cross-section walls at chunk boundaries.
+struct EdgeStrippedSource<'a> {
+    source: &'a dyn VoxelSource,
+    size: usize,
+    depth: usize,
+}
+
+impl VoxelSource for EdgeStrippedSource<'_> {
+    fn get(&self, x: usize, y: usize, z: usize) -> BlockType {
+        let block = self.source.get(x, y, z);
+        if block == BlockType::Air {
+            return BlockType::Air;
+        }
+        let on_edge = x == 0 || x == self.size - 1 || z == 0 || z == self.size - 1;
+        if !on_edge {
+            return block;
+        }
+        // On edge: check if underground (has solid above within depth)
+        for dy in 1..=self.depth {
+            if y + dy >= self.size {
+                return block; // near top, keep
+            }
+            if self.source.get(x, y + dy, z) == BlockType::Air {
+                return block; // near surface, keep
+            }
+        }
+        BlockType::Air // deep underground at edge, strip
+    }
 }
 
 /// Generic SVDAG compression over any voxel source at any power-of-two size.

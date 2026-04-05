@@ -9,7 +9,7 @@ use vk::Handle;
 use vulkan_rust::{vk, Device, Instance};
 
 const TILE_SIZE: u32 = 8;
-const MAX_CHUNKS_PER_TILE: u32 = 32;
+const MAX_CHUNKS_PER_TILE: u32 = 64;
 const TILE_STRIDE: u32 = MAX_CHUNKS_PER_TILE + 1;
 const MAX_VISIBLE_CHUNKS: u32 = 8192;
 

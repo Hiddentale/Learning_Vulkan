@@ -25,7 +25,7 @@ layout(set = 0, binding = 2) readonly buffer VisibleCount {
 // Layout: tile_data[tile_index * (MAX_CHUNKS_PER_TILE + 1)]
 //   [0] = count of chunks in this tile
 //   [1..MAX_CHUNKS_PER_TILE] = chunk indices into the main chunk info SSBO
-const uint MAX_CHUNKS_PER_TILE = 32;
+const uint MAX_CHUNKS_PER_TILE = 64;
 const uint TILE_STRIDE = MAX_CHUNKS_PER_TILE + 1; // count + entries
 const uint TILE_SIZE = 8;
 

@@ -1,4 +1,4 @@
-# Voxel Engine
+# Manifold
 
 A from-scratch voxel engine built with **Rust** and **Vulkan**, designed with VR in mind.
 

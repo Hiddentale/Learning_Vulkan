@@ -24,7 +24,7 @@ layout(set = 0, binding = 2) readonly buffer SvdagChunkInfoSSBO {
     SvdagChunkInfo chunks[];
 };
 
-const uint MAX_CHUNKS_PER_TILE = 32;
+const uint MAX_CHUNKS_PER_TILE = 64;
 const uint TILE_STRIDE = MAX_CHUNKS_PER_TILE + 1;
 const uint TILE_SIZE = 8;
 
