@@ -180,3 +180,156 @@ impl SvdagPool {
         offset
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// CPU-only simulation of SvdagPool's swap-remove pattern.
+    /// Tests the invariant: after any sequence of uploads and removals,
+    /// every remaining chunk has a unique slot in [0..count) and its
+    /// AABB data matches its position.
+    struct MockPool {
+        infos: Vec<GpuSvdagChunkInfo>,
+        slots: HashMap<[i32; 3], u32>,
+        count: u32,
+    }
+
+    impl MockPool {
+        fn new() -> Self {
+            Self {
+                infos: vec![GpuSvdagChunkInfo::default(); 64],
+                slots: HashMap::new(),
+                count: 0,
+            }
+        }
+
+        fn upload(&mut self, pos: [i32; 3]) {
+            let cs = CHUNK_SIZE as f32;
+            let info = GpuSvdagChunkInfo {
+                aabb_min: [pos[0] as f32 * cs, pos[1] as f32 * cs, pos[2] as f32 * cs],
+                dag_offset: 0,
+                aabb_max: [(pos[0] + 1) as f32 * cs, (pos[1] + 1) as f32 * cs, (pos[2] + 1) as f32 * cs],
+                dag_size: 0,
+            };
+            let idx = self.count;
+            self.infos[idx as usize] = info;
+            self.slots.insert(pos, idx);
+            self.count += 1;
+        }
+
+        fn remove(&mut self, pos: &[i32; 3]) {
+            let info_index = match self.slots.remove(pos) {
+                Some(i) => i,
+                None => return,
+            };
+            let last_index = self.count - 1;
+            if info_index != last_index {
+                self.infos[info_index as usize] = self.infos[last_index as usize];
+                if let Some((&moved_pos, _)) = self.slots.iter().find(|(_, &v)| v == last_index) {
+                    self.slots.insert(moved_pos, info_index);
+                }
+            }
+            self.count -= 1;
+        }
+
+        /// Verify all invariants: slots are valid, AABBs match positions.
+        fn assert_consistent(&self) {
+            assert_eq!(self.slots.len() as u32, self.count);
+            let mut used_slots: Vec<u32> = self.slots.values().copied().collect();
+            used_slots.sort();
+            used_slots.dedup();
+            assert_eq!(used_slots.len() as u32, self.count, "duplicate slot indices");
+
+            for (&pos, &slot) in &self.slots {
+                assert!(slot < self.count, "slot {slot} >= count {}", self.count);
+                let info = &self.infos[slot as usize];
+                let cs = CHUNK_SIZE as f32;
+                let expected_min = [pos[0] as f32 * cs, pos[1] as f32 * cs, pos[2] as f32 * cs];
+                assert_eq!(
+                    info.aabb_min, expected_min,
+                    "AABB mismatch at slot {slot} for pos {pos:?}: \
+                     got {:?}, expected {expected_min:?}",
+                    info.aabb_min
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn swap_remove_preserves_all_remaining() {
+        let mut pool = MockPool::new();
+        pool.upload([0, 0, 0]);
+        pool.upload([1, 0, 0]);
+        pool.upload([2, 0, 0]);
+        pool.upload([3, 0, 0]);
+
+        // Remove middle chunk — last chunk should swap into its slot
+        pool.remove(&[1, 0, 0]);
+        pool.assert_consistent();
+        assert_eq!(pool.count, 3);
+        assert!(!pool.slots.contains_key(&[1, 0, 0]));
+    }
+
+    #[test]
+    fn swap_remove_last_element() {
+        let mut pool = MockPool::new();
+        pool.upload([0, 0, 0]);
+        pool.upload([1, 0, 0]);
+        pool.upload([2, 0, 0]);
+
+        // Remove last — no swap needed
+        pool.remove(&[2, 0, 0]);
+        pool.assert_consistent();
+        assert_eq!(pool.count, 2);
+    }
+
+    #[test]
+    fn swap_remove_first_element() {
+        let mut pool = MockPool::new();
+        pool.upload([0, 0, 0]);
+        pool.upload([1, 0, 0]);
+        pool.upload([2, 0, 0]);
+
+        pool.remove(&[0, 0, 0]);
+        pool.assert_consistent();
+        assert_eq!(pool.count, 2);
+    }
+
+    #[test]
+    fn interleaved_upload_remove_stays_consistent() {
+        let mut pool = MockPool::new();
+        // Simulate streaming: upload, remove farthest, upload more
+        for i in 0..10 {
+            pool.upload([i, 0, 0]);
+        }
+        pool.assert_consistent();
+
+        // Evict "farthest" (highest index positions)
+        pool.remove(&[9, 0, 0]);
+        pool.remove(&[8, 0, 0]);
+        pool.remove(&[7, 0, 0]);
+        pool.assert_consistent();
+
+        // Upload new chunks into the freed space
+        pool.upload([10, 0, 0]);
+        pool.upload([11, 0, 0]);
+        pool.assert_consistent();
+        assert_eq!(pool.count, 9);
+
+        // Remove from the middle
+        pool.remove(&[3, 0, 0]);
+        pool.remove(&[5, 0, 0]);
+        pool.assert_consistent();
+        assert_eq!(pool.count, 7);
+    }
+
+    #[test]
+    fn remove_nonexistent_is_noop() {
+        let mut pool = MockPool::new();
+        pool.upload([0, 0, 0]);
+        pool.remove(&[99, 99, 99]); // doesn't exist
+        pool.assert_consistent();
+        assert_eq!(pool.count, 1);
+    }
+}

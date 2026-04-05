@@ -38,7 +38,7 @@ layout(set = 0, binding = 5, r32f) writeonly uniform image2D depth_output;
 
 layout(push_constant) uniform PushConstants {
     vec3 camera_pos;
-    uint _pad0;
+    uint _padding;
     uvec2 screen_size;
     uvec2 tile_count;
 };

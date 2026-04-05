@@ -383,16 +383,18 @@ impl VulkanApplication {
                     frustum.plane(5),
                 ],
                 total_chunks: svdag_chunk_count,
-                _pad: [0; 3],
+                _padding: [0; 3],
             };
             let svdag_tile = TileAssignPush {
                 view_projection: eyes.primary_vp().to_cols_array_2d(),
                 screen_size: [extent.width, extent.height],
                 tile_count: self.svdag_pipeline.tile_count,
+                camera_pos: camera.position.to_array(),
+                _padding: 0,
             };
             let svdag_march = RaymarchPush {
                 camera_pos: camera.position.to_array(),
-                _pad0: 0,
+                _padding: 0,
                 screen_size: [extent.width, extent.height],
                 tile_count: self.svdag_pipeline.tile_count,
             };

@@ -368,26 +368,12 @@ unsafe fn record_svdag_passes(
     device.cmd_push_constants(cmd, sp.tile_layout, vk::ShaderStageFlags::COMPUTE, 0, push_bytes(tile_pc));
     device.cmd_dispatch(cmd, sp.tile_count[0].div_ceil(8), sp.tile_count[1].div_ceil(8), 1);
 
-    // Barrier: tile writes → ray march reads + transition output images to GENERAL
+    // Barrier 1: tile writes → ray march reads (buffer only, COMPUTE → COMPUTE)
     let tile_barrier = *vk::BufferMemoryBarrier::builder()
         .src_access_mask(vk::AccessFlags::SHADER_WRITE)
         .dst_access_mask(vk::AccessFlags::SHADER_READ)
         .buffer(sp.tile_buffer)
         .size(vk::WHOLE_SIZE);
-    let color_to_general = *vk::ImageMemoryBarrier::builder()
-        .old_layout(vk::ImageLayout::UNDEFINED)
-        .new_layout(vk::ImageLayout::GENERAL)
-        .src_access_mask(vk::AccessFlags::empty())
-        .dst_access_mask(vk::AccessFlags::SHADER_WRITE)
-        .image(sp.color_image)
-        .subresource_range(color_range);
-    let depth_to_general = *vk::ImageMemoryBarrier::builder()
-        .old_layout(vk::ImageLayout::UNDEFINED)
-        .new_layout(vk::ImageLayout::GENERAL)
-        .src_access_mask(vk::AccessFlags::empty())
-        .dst_access_mask(vk::AccessFlags::SHADER_WRITE)
-        .image(sp.depth_image)
-        .subresource_range(color_range);
     device.cmd_pipeline_barrier(
         cmd,
         vk::PipelineStageFlags::COMPUTE_SHADER,
@@ -395,6 +381,31 @@ unsafe fn record_svdag_passes(
         vk::DependencyFlags::empty(),
         empty_mem,
         &[tile_barrier],
+        &[] as &[vk::ImageMemoryBarrier],
+    );
+
+    // Barrier 2: transition output images for clear (COMPUTE → TRANSFER)
+    let color_to_general = *vk::ImageMemoryBarrier::builder()
+        .old_layout(vk::ImageLayout::UNDEFINED)
+        .new_layout(vk::ImageLayout::GENERAL)
+        .src_access_mask(vk::AccessFlags::empty())
+        .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+        .image(sp.color_image)
+        .subresource_range(color_range);
+    let depth_to_general = *vk::ImageMemoryBarrier::builder()
+        .old_layout(vk::ImageLayout::UNDEFINED)
+        .new_layout(vk::ImageLayout::GENERAL)
+        .src_access_mask(vk::AccessFlags::empty())
+        .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+        .image(sp.depth_image)
+        .subresource_range(color_range);
+    device.cmd_pipeline_barrier(
+        cmd,
+        vk::PipelineStageFlags::COMPUTE_SHADER,
+        vk::PipelineStageFlags::TRANSFER,
+        vk::DependencyFlags::empty(),
+        empty_mem,
+        &[] as &[vk::BufferMemoryBarrier],
         &[color_to_general, depth_to_general],
     );
 
@@ -404,8 +415,8 @@ unsafe fn record_svdag_passes(
     device.cmd_clear_color_image(cmd, sp.color_image, vk::ImageLayout::GENERAL, &clear_color, &[color_range]);
     device.cmd_clear_color_image(cmd, sp.depth_image, vk::ImageLayout::GENERAL, &clear_depth, &[color_range]);
 
-    // Barrier: clear → compute write
-    let mem_barrier = *vk::MemoryBarrier::builder()
+    // Barrier 3: clear → compute write (TRANSFER → COMPUTE)
+    let clear_to_compute = *vk::MemoryBarrier::builder()
         .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
         .dst_access_mask(vk::AccessFlags::SHADER_WRITE | vk::AccessFlags::SHADER_READ);
     device.cmd_pipeline_barrier(
@@ -413,7 +424,7 @@ unsafe fn record_svdag_passes(
         vk::PipelineStageFlags::TRANSFER,
         vk::PipelineStageFlags::COMPUTE_SHADER,
         vk::DependencyFlags::empty(),
-        &[mem_barrier],
+        &[clear_to_compute],
         &[] as &[vk::BufferMemoryBarrier],
         &[] as &[vk::ImageMemoryBarrier],
     );

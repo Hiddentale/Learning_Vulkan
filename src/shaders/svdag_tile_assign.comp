@@ -37,6 +37,7 @@ layout(push_constant) uniform PushConstants {
     mat4 view_projection;
     uvec2 screen_size;
     uvec2 tile_count;
+    vec3 camera_pos;
 };
 
 // Project AABB to screen-space bounding rect (in tile coordinates)
@@ -78,10 +79,13 @@ void main() {
     uint tile_index = tile_id.x + tile_id.y * tile_count.x;
     uint base = tile_index * TILE_STRIDE;
 
-    // Reset this tile's count
-    tile_data[base] = 0u;
+    // Collect overlapping chunks with distances, keep closest MAX_CHUNKS_PER_TILE
+    uint count = 0u;
+    uint  local_idx[MAX_CHUNKS_PER_TILE];
+    float local_dist[MAX_CHUNKS_PER_TILE];
+    float worst_dist = 0.0;
+    uint  worst_slot = 0u;
 
-    // Test each visible chunk against this tile
     uint vis_count = visible_count;
     for (uint i = 0; i < vis_count; i++) {
         uint chunk_idx = visible_indices[i];
@@ -90,14 +94,40 @@ void main() {
         ivec2 t_min, t_max;
         if (!project_aabb(chunk.aabb_min, chunk.aabb_max, t_min, t_max)) continue;
 
-        // Does this chunk's screen rect overlap our tile?
-        if (int(tile_id.x) >= t_min.x && int(tile_id.x) <= t_max.x &&
-            int(tile_id.y) >= t_min.y && int(tile_id.y) <= t_max.y) {
-            uint count = tile_data[base];
-            if (count < MAX_CHUNKS_PER_TILE) {
-                tile_data[base + 1u + count] = chunk_idx;
-                tile_data[base] = count + 1u;
+        if (int(tile_id.x) < t_min.x || int(tile_id.x) > t_max.x ||
+            int(tile_id.y) < t_min.y || int(tile_id.y) > t_max.y) continue;
+
+        // Distance from camera to AABB center
+        vec3 center = (chunk.aabb_min + chunk.aabb_max) * 0.5;
+        vec3 d = center - camera_pos;
+        float dist = dot(d, d);
+
+        if (count < MAX_CHUNKS_PER_TILE) {
+            local_idx[count] = chunk_idx;
+            local_dist[count] = dist;
+            if (dist > worst_dist) {
+                worst_dist = dist;
+                worst_slot = count;
+            }
+            count++;
+        } else if (dist < worst_dist) {
+            // Replace the farthest chunk with this closer one
+            local_idx[worst_slot] = chunk_idx;
+            local_dist[worst_slot] = dist;
+            // Find new worst
+            worst_dist = 0.0;
+            for (uint j = 0u; j < MAX_CHUNKS_PER_TILE; j++) {
+                if (local_dist[j] > worst_dist) {
+                    worst_dist = local_dist[j];
+                    worst_slot = j;
+                }
             }
         }
+    }
+
+    // Write results
+    tile_data[base] = count;
+    for (uint i = 0u; i < count; i++) {
+        tile_data[base + 1u + i] = local_idx[i];
     }
 }

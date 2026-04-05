@@ -20,7 +20,7 @@ const MAX_VISIBLE_CHUNKS: u32 = 8192;
 pub struct CullPush {
     pub planes: [[f32; 4]; 6],
     pub total_chunks: u32,
-    pub _pad: [u32; 3],
+    pub _padding: [u32; 3],
 }
 
 #[repr(C)]
@@ -29,13 +29,15 @@ pub struct TileAssignPush {
     pub view_projection: [[f32; 4]; 4],
     pub screen_size: [u32; 2],
     pub tile_count: [u32; 2],
+    pub camera_pos: [f32; 3],
+    pub _padding: u32,
 }
 
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct RaymarchPush {
     pub camera_pos: [f32; 3],
-    pub _pad0: u32,
+    pub _padding: u32,
     pub screen_size: [u32; 2],
     pub tile_count: [u32; 2],
 }
@@ -512,7 +514,7 @@ mod tests {
     #[test]
     fn push_constant_sizes() {
         assert_eq!(std::mem::size_of::<CullPush>(), 112);
-        assert_eq!(std::mem::size_of::<TileAssignPush>(), 80);
+        assert_eq!(std::mem::size_of::<TileAssignPush>(), 96);
         assert_eq!(std::mem::size_of::<RaymarchPush>(), 32);
     }
 }

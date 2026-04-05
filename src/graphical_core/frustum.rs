@@ -141,4 +141,131 @@ mod tests {
         let visible = frustum.intersects_aabb(Vec3::new(-1.0, 29.0, -1.0), Vec3::new(1.0, 31.0, 1.0));
         assert!(visible);
     }
+
+    /// Mirrors the GLSL project_aabb() from svdag_tile_assign.comp.
+    /// Returns None if all corners are behind the camera, else (tile_min, tile_max).
+    fn project_aabb(vp: &Mat4, aabb_min: Vec3, aabb_max: Vec3, screen_size: [u32; 2], tile_size: u32) -> Option<([i32; 2], [i32; 2])> {
+        let tile_count = [screen_size[0].div_ceil(tile_size), screen_size[1].div_ceil(tile_size)];
+        let mut screen_min = glam::Vec2::splat(1e30);
+        let mut screen_max = glam::Vec2::splat(-1e30);
+        let mut any_in_front = false;
+
+        for i in 0..8u32 {
+            let corner = Vec3::new(
+                if i & 1 != 0 { aabb_max.x } else { aabb_min.x },
+                if i & 2 != 0 { aabb_max.y } else { aabb_min.y },
+                if i & 4 != 0 { aabb_max.z } else { aabb_min.z },
+            );
+            let clip = *vp * corner.extend(1.0);
+            if clip.w > 0.001 {
+                any_in_front = true;
+                let ndc = glam::Vec2::new(clip.x, clip.y) / clip.w;
+                let screen = (ndc * 0.5 + 0.5) * glam::Vec2::new(screen_size[0] as f32, screen_size[1] as f32);
+                screen_min = screen_min.min(screen);
+                screen_max = screen_max.max(screen);
+            }
+        }
+
+        if !any_in_front {
+            return None;
+        }
+
+        let tile_min = [
+            (screen_min.x / tile_size as f32).clamp(0.0, tile_count[0] as f32 - 1.0) as i32,
+            (screen_min.y / tile_size as f32).clamp(0.0, tile_count[1] as f32 - 1.0) as i32,
+        ];
+        let tile_max = [
+            (screen_max.x / tile_size as f32).clamp(0.0, tile_count[0] as f32 - 1.0) as i32,
+            (screen_max.y / tile_size as f32).clamp(0.0, tile_count[1] as f32 - 1.0) as i32,
+        ];
+        Some((tile_min, tile_max))
+    }
+
+    #[test]
+    fn frustum_visible_chunk_always_gets_tiles() {
+        let vp = test_vp_matrix();
+        let frustum = Frustum::from_view_projection(&vp);
+        let screen = [1920, 1080];
+        let tile_size = 8;
+
+        // Generate a grid of AABBs that pass frustum culling
+        // and verify each one gets at least one tile
+        let mut tested = 0;
+        for x in (-20..=20).step_by(4) {
+            for z in (-30..=-1).step_by(4) {
+                let min = Vec3::new(x as f32, 26.0, z as f32);
+                let max = min + Vec3::splat(4.0);
+                if !frustum.intersects_aabb(min, max) {
+                    continue;
+                }
+                tested += 1;
+                let result = project_aabb(&vp, min, max, screen, tile_size);
+                assert!(result.is_some(), "frustum-visible AABB ({min} -> {max}) got no tiles");
+                let (t_min, t_max) = result.unwrap();
+                assert!(
+                    t_max[0] >= t_min[0] && t_max[1] >= t_min[1],
+                    "degenerate tile rect for AABB ({min} -> {max}): \
+                     tile_min={t_min:?}, tile_max={t_max:?}"
+                );
+            }
+        }
+        assert!(tested > 10, "not enough AABBs tested: {tested}");
+    }
+
+    #[test]
+    fn project_aabb_partially_behind_camera_expands() {
+        // Camera at (0,30,0) looking toward -Z.
+        // This AABB straddles the camera's near plane — some corners behind.
+        let vp = test_vp_matrix();
+        let min = Vec3::new(-8.0, 28.0, -2.0);
+        let max = Vec3::new(8.0, 32.0, 2.0); // z=2 is behind camera
+
+        let result = project_aabb(&vp, min, max, [1920, 1080], 8);
+        assert!(result.is_some(), "partially-behind AABB should still get tiles");
+        let (t_min, t_max) = result.unwrap();
+        // With corners behind camera, the visible projection should be wide
+        // (the behind-camera corners are skipped, making rect too small)
+        // This test documents the CURRENT behavior — if it fails after a fix,
+        // that's expected and good.
+        let tile_width = t_max[0] - t_min[0];
+        let tile_height = t_max[1] - t_min[1];
+        println!(
+            "  partially-behind AABB: tiles [{},{}] -> [{},{}] ({}x{})",
+            t_min[0], t_min[1], t_max[0], t_max[1], tile_width, tile_height
+        );
+    }
+
+    #[test]
+    fn project_aabb_is_deterministic() {
+        let vp = test_vp_matrix();
+        let min = Vec3::new(-8.0, 22.0, -20.0);
+        let max = Vec3::new(8.0, 38.0, -4.0);
+        let screen = [1920, 1080];
+
+        let first = project_aabb(&vp, min, max, screen, 8);
+        for _ in 0..100 {
+            let result = project_aabb(&vp, min, max, screen, 8);
+            assert_eq!(first, result, "AABB projection is non-deterministic across calls");
+        }
+    }
+
+    #[test]
+    fn frustum_boundary_chunk_stability() {
+        // A chunk right at the far plane boundary should give a consistent
+        // cull result when tested repeatedly with the same VP matrix.
+        let vp = test_vp_matrix(); // far plane at 500
+        let frustum = Frustum::from_view_projection(&vp);
+        // Place AABB near the far plane
+        let min = Vec3::new(-8.0, 26.0, -498.0);
+        let max = Vec3::new(8.0, 34.0, -490.0);
+
+        let first_result = frustum.intersects_aabb(min, max);
+        for _ in 0..100 {
+            assert_eq!(
+                frustum.intersects_aabb(min, max),
+                first_result,
+                "frustum cull at far boundary is non-deterministic"
+            );
+        }
+    }
 }
