@@ -4,7 +4,6 @@ use super::chunk::{Chunk, CHUNK_SIZE};
 use super::world::{MAX_CHUNK_Y, MIN_CHUNK_Y};
 use noise::{Fbm, MultiFractal, NoiseFn, Perlin, RidgedMulti};
 
-const SEED: u32 = 42;
 const SEA_LEVEL: usize = 64;
 const DIRT_DEPTH: usize = 4;
 const MIN_HEIGHT: usize = 4;
@@ -83,8 +82,8 @@ impl WorldNoises {
 }
 
 /// Generates a full column of chunks at the given (chunk_x, chunk_z) coordinates.
-pub fn generate_column(chunk_x: i32, chunk_z: i32) -> Vec<Chunk> {
-    let noises = WorldNoises::new(SEED);
+pub fn generate_column(chunk_x: i32, chunk_z: i32, seed: u32) -> Vec<Chunk> {
+    let noises = WorldNoises::new(seed);
     let mut chunks: Vec<Chunk> = (0..CHUNK_LAYERS).map(|_| Chunk::new(BlockType::Air)).collect();
 
     for z in 0..CHUNK_SIZE {

@@ -99,7 +99,7 @@ mod tests {
     use crate::voxel::metric::Anomaly;
 
     fn test_world_with_block(bx: i32, by: i32, bz: i32) -> World {
-        let mut world = World::new(2);
+        let mut world = World::new(2, 42);
         let [cx, cy, cz] = World::block_to_chunk(bx, by, bz);
         world.insert_empty_chunk(cx, cy, cz);
         world.set_block(bx, by, bz, BlockType::Stone);
@@ -138,7 +138,7 @@ mod tests {
         // Manhattan distance: 6+6 = 12 (way out of reach)
         // With normal Euclidean, a block at 5 diagonal would be sqrt(50) ~ 7.07 (in reach)
         // With Manhattan, 5+5 = 10 (out of reach at MAX_REACH=8)
-        let mut world = World::new(2);
+        let mut world = World::new(2, 42);
         world.insert_empty_chunk(0, 0, 0);
         world.set_block(5, 0, 5, BlockType::Stone);
 

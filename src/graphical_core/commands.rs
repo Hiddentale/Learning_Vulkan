@@ -68,7 +68,7 @@ unsafe fn transition_pyramid_undefined_to_general(device: &Device, cmd: vk::Comm
 }
 
 /// Draws a fullscreen triangle with the sky shader before voxel geometry.
-unsafe fn draw_sky(device: &Device, cmd: vk::CommandBuffer, data: &VulkanApplicationData) {
+pub unsafe fn draw_sky(device: &Device, cmd: vk::CommandBuffer, data: &VulkanApplicationData) {
     device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, data.sky_pipeline);
     device.cmd_bind_descriptor_sets(
         cmd,

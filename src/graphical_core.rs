@@ -19,6 +19,7 @@ pub mod svdag_pipeline;
 pub mod svdag_pool;
 pub mod swapchain;
 pub mod texture_mapping;
+pub mod ui_pipeline;
 pub mod voxel_pool;
 pub mod vulkan_object;
 

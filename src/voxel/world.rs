@@ -21,11 +21,11 @@ pub struct WorldDelta {
 }
 
 impl World {
-    pub fn new(render_distance: i32) -> Self {
+    pub fn new(render_distance: i32, seed: u32) -> Self {
         Self {
             chunks: HashMap::new(),
             render_distance,
-            generator: ChunkGenerator::new(),
+            generator: ChunkGenerator::new(seed),
             metric: MetricField::new(),
         }
     }
@@ -169,7 +169,7 @@ mod tests {
 
     #[test]
     fn chunks_load_within_render_distance() {
-        let mut world = World::new(4);
+        let mut world = World::new(4, 42);
         drain_world(&mut world, 0, 0);
         let expected = ((2 * 4 + 1) * (2 * 4 + 1)) as usize * 16;
         assert_eq!(world.chunks.len(), expected);
@@ -177,7 +177,7 @@ mod tests {
 
     #[test]
     fn chunks_unload_on_move() {
-        let mut world = World::new(4);
+        let mut world = World::new(4, 42);
         drain_world(&mut world, 0, 0);
         let delta = world.update(10, 0);
         assert!(!delta.unloaded.is_empty());
