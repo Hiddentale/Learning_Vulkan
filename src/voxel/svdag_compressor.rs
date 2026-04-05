@@ -18,10 +18,7 @@ pub enum CompressionRequest {
         lod_level: u32,
     },
     /// 4×4×4 chunks grouped into a single 64³ SVDAG at full resolution.
-    SuperChunk {
-        pos: [i32; 3],
-        chunks: Box<[Option<Chunk>; 64]>,
-    },
+    SuperChunk { pos: [i32; 3], chunks: Box<[Option<Chunk>; 64]> },
 }
 
 /// Result of SVDAG compression.

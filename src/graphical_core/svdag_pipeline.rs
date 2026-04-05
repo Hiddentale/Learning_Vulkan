@@ -122,7 +122,7 @@ impl SvdagPipeline {
         // --- Descriptor pool (4 sets) ---
         let pool_sizes = [
             *vk::DescriptorPoolSize::builder()
-                .descriptor_count(2)
+                .descriptor_count(3)
                 .r#type(vk::DescriptorType::UNIFORM_BUFFER),
             *vk::DescriptorPoolSize::builder()
                 .descriptor_count(12)
@@ -131,7 +131,7 @@ impl SvdagPipeline {
                 .descriptor_count(4)
                 .r#type(vk::DescriptorType::STORAGE_IMAGE),
             *vk::DescriptorPoolSize::builder()
-                .descriptor_count(3)
+                .descriptor_count(4)
                 .r#type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER),
         ];
         let pool_info = vk::DescriptorPoolCreateInfo::builder().max_sets(4).pool_sizes(&pool_sizes);
@@ -203,6 +203,8 @@ impl SvdagPipeline {
                 (vk::DescriptorType::STORAGE_BUFFER, vk::ShaderStageFlags::COMPUTE), // tile data
                 (vk::DescriptorType::STORAGE_IMAGE, vk::ShaderStageFlags::COMPUTE),  // color output
                 (vk::DescriptorType::STORAGE_IMAGE, vk::ShaderStageFlags::COMPUTE),  // depth output
+                (vk::DescriptorType::COMBINED_IMAGE_SAMPLER, vk::ShaderStageFlags::COMPUTE), // texture array
+                (vk::DescriptorType::UNIFORM_BUFFER, vk::ShaderStageFlags::COMPUTE), // material palette
             ],
         )?;
         let march_desc_set = alloc_desc_set(device, descriptor_pool, march_desc_layout)?;
@@ -234,6 +236,30 @@ impl SvdagPipeline {
                     .image_info(&depth_info),
             ];
             device.update_descriptor_sets(&writes, &[] as &[vk::CopyDescriptorSet]);
+
+            // Binding 6: texture array sampler
+            let tex_info = [*vk::DescriptorImageInfo::builder()
+                .image_view(data.texture_image_view)
+                .sampler(data.texture_sampler)
+                .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
+            // Binding 7: material palette UBO
+            let palette_info = [*vk::DescriptorBufferInfo::builder()
+                .buffer(data.palette_buffer)
+                .offset(0)
+                .range(vk::WHOLE_SIZE)];
+            let writes2 = [
+                *vk::WriteDescriptorSet::builder()
+                    .dst_set(march_desc_set)
+                    .dst_binding(6)
+                    .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                    .image_info(&tex_info),
+                *vk::WriteDescriptorSet::builder()
+                    .dst_set(march_desc_set)
+                    .dst_binding(7)
+                    .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+                    .buffer_info(&palette_info),
+            ];
+            device.update_descriptor_sets(&writes2, &[] as &[vk::CopyDescriptorSet]);
         }
         let march_layout = create_pipeline_layout(device, march_desc_layout, std::mem::size_of::<RaymarchPush>() as u32)?;
         let march_pipeline = create_compute_pipeline(device, march_layout, include_bytes!("../shaders/svdag_raymarch.comp.spv"))?;

@@ -435,15 +435,22 @@ impl VulkanApplication {
             let still_relevant = if result.lod_level == 0 {
                 self.world.get_chunk(rx, ry, rz).is_some()
             } else {
-                (ry..ry + (1 << result.lod_level))
-                    .any(|y| self.world.get_chunk(rx, y, rz).is_some())
+                (ry..ry + (1 << result.lod_level)).any(|y| self.world.get_chunk(rx, y, rz).is_some())
             };
             self.svdag_in_flight.remove(&result.pos);
-            if !still_relevant { continue; }
+            if !still_relevant {
+                continue;
+            }
             // Skip all-air super-chunks (header + one empty leaf = 68 bytes)
-            if result.dag_data.len() <= 68 { continue; }
-            if self.svdag_pool.chunk_count() >= MAX_SVDAG_CHUNKS - 1 { continue; }
-            if self.svdag_pool.is_near_budget() { continue; }
+            if result.dag_data.len() <= 68 {
+                continue;
+            }
+            if self.svdag_pool.chunk_count() >= MAX_SVDAG_CHUNKS - 1 {
+                continue;
+            }
+            if self.svdag_pool.is_near_budget() {
+                continue;
+            }
             self.svdag_pool.upload_chunk(result.pos, &result.dag_data, result.lod_level);
         }
 
@@ -505,7 +512,9 @@ impl VulkanApplication {
             });
             let mut submitted = 0;
             for pos in candidates {
-                if submitted >= COMPRESSIONS_PER_FRAME { break; }
+                if submitted >= COMPRESSIONS_PER_FRAME {
+                    break;
+                }
                 let [cx, cy, cz] = pos;
                 // 64³ super-chunk: group 4×4×4 chunks. Align to multiples of 4.
                 let gx = cx & !3;

@@ -238,7 +238,7 @@ fn is_uniform_air(source: &dyn VoxelSource, ox: usize, oy: usize, oz: usize, siz
     for y in oy..oy + size {
         for z in oz..oz + size {
             for x in ox..ox + size {
-                if source.get(x, y, z).is_opaque() {
+                if source.get(x, y, z) != BlockType::Air {
                     return false;
                 }
             }
@@ -298,7 +298,7 @@ fn collect_materials_dfs(source: &dyn VoxelSource, ox: usize, oy: usize, oz: usi
             for z in 0..LEAF_SIZE {
                 for x in 0..LEAF_SIZE {
                     let block = source.get(ox + x, oy + y, oz + z);
-                    if block.is_opaque() {
+                    if block != BlockType::Air {
                         materials.push(block as u8);
                     }
                 }
@@ -488,15 +488,9 @@ mod tests {
         // Bottom of each 16-chunk layer should be solid
         for cy in 0..4 {
             let y_solid = cy * CHUNK_SIZE; // y=0, 16, 32, 48
-            assert!(
-                svdag_lookup_sized(&dag, 0, y_solid, 0, size).is_opaque(),
-                "expected solid at y={y_solid}"
-            );
+            assert!(svdag_lookup_sized(&dag, 0, y_solid, 0, size).is_opaque(), "expected solid at y={y_solid}");
             let y_air = cy * CHUNK_SIZE + 1;
-            assert!(
-                !svdag_lookup_sized(&dag, 0, y_air, 0, size).is_opaque(),
-                "expected air at y={y_air}"
-            );
+            assert!(!svdag_lookup_sized(&dag, 0, y_air, 0, size).is_opaque(), "expected air at y={y_air}");
         }
     }
 

@@ -10,7 +10,7 @@ pub unsafe fn create_shader_module(device: &Device, bytecode: &[u8]) -> anyhow::
         }
         Err(_) => {
             // include_bytes! pointer not 4-byte aligned — copy into aligned Vec
-            assert!(bytecode.len() % 4 == 0, "SPIR-V size must be a multiple of 4");
+            assert!(bytecode.len().is_multiple_of(4), "SPIR-V size must be a multiple of 4");
             let mut aligned = vec![0u32; bytecode.len() / 4];
             std::ptr::copy_nonoverlapping(bytecode.as_ptr(), aligned.as_mut_ptr() as *mut u8, bytecode.len());
             aligned

@@ -36,6 +36,19 @@ layout(set = 0, binding = 3) readonly buffer TileChunks {
 layout(set = 0, binding = 4, rgba8) writeonly uniform image2D color_output;
 layout(set = 0, binding = 5, r32f) writeonly uniform image2D depth_output;
 
+layout(set = 0, binding = 6) uniform sampler2DArray texArray;
+
+struct MaterialEntry {
+    vec3 color;
+    float roughness;
+    vec3 emissive;
+    float _padding;
+};
+
+layout(set = 0, binding = 7) uniform MaterialPaletteUBO {
+    MaterialEntry entries[256];
+} palette;
+
 layout(push_constant) uniform PushConstants {
     vec3 camera_pos;
     uint _padding;
@@ -117,30 +130,52 @@ bool trace_chunk(vec3 ro, vec3 rd, vec3 aabb_min, float t_enter, float t_exit,
         else                   t_max_val[i] = 1e30;
     }
 
+    // Track entry face normal. First voxel's entry face comes from the AABB intersection.
+    // Determine which axis the ray entered the AABB on (largest component of tmin).
+    vec3 t0 = (aabb_min - ro) / rd;
+    vec3 t1 = (aabb_min + vec3(float(chunk_size)) - ro) / rd;
+    vec3 tmin_axes = min(t0, t1);
+    vec3 entry_normal;
+    if (tmin_axes.x > tmin_axes.y && tmin_axes.x > tmin_axes.z)
+        entry_normal = vec3(-float(step_dir.x), 0.0, 0.0);
+    else if (tmin_axes.y > tmin_axes.z)
+        entry_normal = vec3(0.0, -float(step_dir.y), 0.0);
+    else
+        entry_normal = vec3(0.0, 0.0, -float(step_dir.z));
+
     for (int i = 0; i < 192; i++) {
         if (voxel.x < 0 || voxel.x > max_coord || voxel.y < 0 || voxel.y > max_coord || voxel.z < 0 || voxel.z > max_coord)
             return false;
 
         uint mat = svdag_lookup(dag_base, uint(voxel.x), uint(voxel.y), uint(voxel.z), chunk_size);
-        // Skip air (0) and water (4) — matches mesh shader is_opaque()
-        if (mat != 0u && mat != 4u) {
-            t_hit = min(min(t_max_val.x, t_max_val.y), t_max_val.z);
-            if (t_max_val.x < t_max_val.y && t_max_val.x < t_max_val.z)
-                hit_normal = vec3(-float(step_dir.x), 0.0, 0.0);
-            else if (t_max_val.y < t_max_val.z)
-                hit_normal = vec3(0.0, -float(step_dir.y), 0.0);
-            else
-                hit_normal = vec3(0.0, 0.0, -float(step_dir.z));
+        if (mat != 0u) {
+            t_hit = t_enter;
+            hit_normal = entry_normal;
             hit_material = mat;
             return true;
         }
 
+        // Step to next voxel and track which face we cross
         if (t_max_val.x < t_max_val.y) {
-            if (t_max_val.x < t_max_val.z) { voxel.x += step_dir.x; t_max_val.x += t_delta.x; }
-            else                            { voxel.z += step_dir.z; t_max_val.z += t_delta.z; }
+            if (t_max_val.x < t_max_val.z) {
+                t_enter = t_max_val.x;
+                entry_normal = vec3(-float(step_dir.x), 0.0, 0.0);
+                voxel.x += step_dir.x; t_max_val.x += t_delta.x;
+            } else {
+                t_enter = t_max_val.z;
+                entry_normal = vec3(0.0, 0.0, -float(step_dir.z));
+                voxel.z += step_dir.z; t_max_val.z += t_delta.z;
+            }
         } else {
-            if (t_max_val.y < t_max_val.z) { voxel.y += step_dir.y; t_max_val.y += t_delta.y; }
-            else                            { voxel.z += step_dir.z; t_max_val.z += t_delta.z; }
+            if (t_max_val.y < t_max_val.z) {
+                t_enter = t_max_val.y;
+                entry_normal = vec3(0.0, -float(step_dir.y), 0.0);
+                voxel.y += step_dir.y; t_max_val.y += t_delta.y;
+            } else {
+                t_enter = t_max_val.z;
+                entry_normal = vec3(0.0, 0.0, -float(step_dir.z));
+                voxel.z += step_dir.z; t_max_val.z += t_delta.z;
+            }
         }
 
         if (min(t_max_val.x, min(t_max_val.y, t_max_val.z)) > t_exit)
@@ -149,16 +184,48 @@ bool trace_chunk(vec3 ro, vec3 rd, vec3 aabb_min, float t_enter, float t_exit,
     return false;
 }
 
-// Must match MaterialPalette in material.rs exactly
-vec3 material_color(uint mat_id) {
-    if (mat_id == 1u) return vec3(0.30, 0.70, 0.20); // Grass
-    if (mat_id == 2u) return vec3(0.55, 0.35, 0.15); // Dirt
-    if (mat_id == 3u) return vec3(0.50, 0.50, 0.50); // Stone
-    if (mat_id == 4u) return vec3(0.10, 0.30, 0.80); // Water
-    if (mat_id == 5u) return vec3(0.85, 0.75, 0.50); // Sand
-    if (mat_id == 6u) return vec3(0.95, 0.95, 0.97); // Snow
-    if (mat_id == 7u) return vec3(0.55, 0.50, 0.45); // Gravel
-    return vec3(0.0);
+// --- Texture sampling (mirrors shader.frag) ---
+
+float hash1(vec2 cell) {
+    return fract(sin(dot(cell, vec2(127.1, 311.7))) * 43758.5453);
+}
+
+vec3 stochastic_sample(uint layer, vec2 faceUV, vec2 worldCell, float atlasOffsetU) {
+    float r = hash1(worldCell);
+    bool flipX = r > 0.5;
+    bool flipY = atlasOffsetU > 0.25 && fract(r * 3.7) > 0.5;
+    vec2 uv = vec2(flipX ? 1.0 - faceUV.x : faceUV.x,
+                   flipY ? 1.0 - faceUV.y : faceUV.y);
+    uv.x = uv.x * 0.5 + atlasOffsetU;
+    return texture(texArray, vec3(uv, float(layer))).rgb;
+}
+
+/// Compute base color for a material at a world-space hit point with a given face normal.
+vec3 material_color(uint mat_id, vec3 world_pos, vec3 normal) {
+    MaterialEntry mat = palette.entries[mat_id];
+
+    // Check if this material has a texture
+    vec3 texCenter = texture(texArray, vec3(0.25, 0.5, float(mat_id))).rgb;
+    bool hasTexture = texCenter.r < 0.99 || texCenter.g < 0.99 || texCenter.b < 0.99;
+
+    if (!hasTexture) return mat.color;
+
+    // Compute face UV and cell from world position + normal (same as shader.frag)
+    bool isTop = normal.y > 0.5;
+    float atlasOffset = isTop ? 0.5 : 0.0;
+    vec2 faceUV;
+    vec2 cell;
+    if (isTop) {
+        faceUV = fract(world_pos.xz);
+        cell = floor(world_pos.xz);
+    } else if (abs(normal.x) > 0.5) {
+        faceUV = fract(world_pos.zy);
+        cell = floor(world_pos.zy);
+    } else {
+        faceUV = fract(world_pos.xy);
+        cell = floor(world_pos.xy);
+    }
+    return stochastic_sample(mat_id, faceUV, cell, atlasOffset);
 }
 
 void main() {
@@ -220,11 +287,12 @@ void main() {
     float depth = hit_clip.z / hit_clip.w;
 
     // Lighting — matches shader.frag formula
-    vec3 base_color = material_color(best_material);
+    vec3 base_color = material_color(best_material, hit_world, best_normal);
     vec3 N = best_normal;
     vec3 L = normalize(-camera.light_direction);
     float diffuse = max(dot(N, L), 0.0);
-    vec3 color = (camera.ambient_strength + diffuse) * base_color;
+    MaterialEntry mat = palette.entries[best_material];
+    vec3 color = (camera.ambient_strength + diffuse) * base_color + mat.emissive;
 
     imageStore(color_output, ivec2(pixel), vec4(color, 1.0));
     imageStore(depth_output, ivec2(pixel), vec4(depth));
