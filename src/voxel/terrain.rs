@@ -4,7 +4,7 @@ use super::chunk::{Chunk, CHUNK_SIZE};
 use super::world::{TERRAIN_MAX_CY, TERRAIN_MIN_CY};
 use noise::{Fbm, MultiFractal, NoiseFn, Perlin, RidgedMulti};
 
-const SEA_LEVEL: usize = 64;
+pub(crate) const SEA_LEVEL: usize = 64;
 const DIRT_DEPTH: usize = 4;
 const MIN_HEIGHT: usize = 4;
 const MAX_HEIGHT: usize = 200;
@@ -29,7 +29,7 @@ const CONTINENT_AMPLITUDE: f64 = 40.0;
 const DETAIL_AMPLITUDE: f64 = 8.0;
 const MOUNTAIN_AMPLITUDE: f64 = 50.0;
 
-struct WorldNoises {
+pub(crate) struct WorldNoises {
     continent: Fbm<Perlin>,
     detail: Fbm<Perlin>,
     mountain: RidgedMulti<Perlin>,
@@ -42,7 +42,7 @@ struct WorldNoises {
 }
 
 impl WorldNoises {
-    fn new(seed: u32) -> Self {
+    pub(crate) fn new(seed: u32) -> Self {
         Self {
             continent: Fbm::<Perlin>::new(seed)
                 .set_frequency(CONTINENT_SCALE)
@@ -108,7 +108,7 @@ pub fn generate_column(chunk_x: i32, chunk_z: i32, seed: u32) -> Vec<Chunk> {
     chunks
 }
 
-fn sample_height(noises: &WorldNoises, wx: f64, wz: f64, temperature: f64) -> usize {
+pub(crate) fn sample_height(noises: &WorldNoises, wx: f64, wz: f64, temperature: f64) -> usize {
     let base = SEA_LEVEL as f64 + noises.continent.get([wx, wz]) * CONTINENT_AMPLITUDE;
     let detail = noises.detail.get([wx, wz]) * DETAIL_AMPLITUDE;
 
@@ -118,6 +118,19 @@ fn sample_height(noises: &WorldNoises, wx: f64, wz: f64, temperature: f64) -> us
 
     let height = (base + detail + mountain).clamp(MIN_HEIGHT as f64, MAX_HEIGHT as f64);
     height as usize
+}
+
+/// Sample the surface block type at world coordinates, applying domain warping.
+/// Returns (height, surface_block_type). Used by heightmap generator.
+pub(crate) fn sample_surface(noises: &WorldNoises, wx: f64, wz: f64) -> (usize, BlockType) {
+    let warped_x = wx + noises.warp_x.get([wx, wz]) * WARP_STRENGTH;
+    let warped_z = wz + noises.warp_z.get([wx, wz]) * WARP_STRENGTH;
+    let temperature = noises.temperature.get([warped_x, warped_z]);
+    let humidity = noises.humidity.get([warped_x, warped_z]);
+    let height = sample_height(noises, warped_x, warped_z, temperature);
+    let biome = biome::determine_biome(temperature, humidity, height, SEA_LEVEL);
+    let surface = biome::surface_block(biome);
+    (height, surface)
 }
 
 fn fill_surface(chunks: &mut [Chunk], x: usize, z: usize, wx: f64, wz: f64, surface_y: usize, biome: Biome, noises: &WorldNoises) {

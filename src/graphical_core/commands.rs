@@ -1,4 +1,6 @@
 use crate::graphical_core::compute_cull::{CullPushConstants, DepthPyramidResources, DepthReducePush};
+use crate::graphical_core::heightmap_pipeline::{HeightmapPipeline, HeightmapPush};
+use crate::graphical_core::heightmap_pool::{HeightmapPool, TileDrawInfo};
 use crate::graphical_core::svdag_pipeline::{CullPush, RaymarchPush, SvdagPipeline, TileAssignPush};
 use crate::graphical_core::vulkan_object::VulkanApplicationData;
 use crate::graphical_core::{self, MAX_FRAMES_IN_FLIGHT};
@@ -231,6 +233,7 @@ pub unsafe fn record_mesh_shader_command_buffer(
     pyramid_needs_init: bool,
     svdag: Option<(&SvdagPipeline, &CullPush, &TileAssignPush, &RaymarchPush)>,
     ui: &crate::graphical_core::ui_pipeline::UiPipeline,
+    heightmap: Option<(&HeightmapPipeline, &HeightmapPool, &[TileDrawInfo], &HeightmapPush)>,
 ) -> anyhow::Result<()> {
     let cmd = data.command_buffers[image_index];
     device.reset_command_buffer(cmd, vk::CommandBufferResetFlags::empty())?;
@@ -287,6 +290,13 @@ pub unsafe fn record_mesh_shader_command_buffer(
     device.cmd_push_constants(cmd, mesh_pipeline.pipeline_layout, task_mesh_flags, 0, push2_bytes);
     device.cmd_draw_mesh_tasks_ext(cmd, push2.chunk_count, 1, 1);
 
+    // === Heightmap tiles (rasterized far terrain) ===
+    if let Some((hm_pipeline, hm_pool, visible_tiles, hm_push)) = heightmap {
+        if !visible_tiles.is_empty() {
+            record_heightmap_draws(device, cmd, hm_pipeline, hm_pool, visible_tiles, hm_push);
+        }
+    }
+
     device.cmd_end_render_pass(cmd);
 
     // === SVDAG 3-pass compute pipeline + composite ===
@@ -304,6 +314,35 @@ pub unsafe fn record_mesh_shader_command_buffer(
 
     device.end_command_buffer(cmd)?;
     Ok(())
+}
+
+unsafe fn record_heightmap_draws(
+    device: &Device,
+    cmd: vk::CommandBuffer,
+    pipeline: &HeightmapPipeline,
+    pool: &HeightmapPool,
+    visible_tiles: &[TileDrawInfo],
+    push: &HeightmapPush,
+) {
+    device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline.pipeline);
+    device.cmd_bind_descriptor_sets(
+        cmd,
+        vk::PipelineBindPoint::GRAPHICS,
+        pipeline.pipeline_layout,
+        0,
+        &[pipeline.descriptor_set],
+        &[],
+    );
+
+    let push_bytes: &[u8] = std::slice::from_raw_parts(push as *const HeightmapPush as *const u8, std::mem::size_of::<HeightmapPush>());
+    device.cmd_push_constants(cmd, pipeline.pipeline_layout, vk::ShaderStageFlags::VERTEX, 0, push_bytes);
+
+    device.cmd_bind_vertex_buffers(cmd, 0, &[pool.vertex_buffer], &[0]);
+    device.cmd_bind_index_buffer(cmd, pool.index_buffer, 0, vk::IndexType::UINT16);
+
+    for tile in visible_tiles {
+        device.cmd_draw_indexed(cmd, tile.index_count, 1, tile.index_offset, tile.vertex_offset as i32, 0);
+    }
 }
 
 unsafe fn push_bytes<T>(val: &T) -> &[u8] {

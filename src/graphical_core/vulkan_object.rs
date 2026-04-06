@@ -6,6 +6,8 @@ use crate::graphical_core::{
     descriptors,
     frustum::Frustum,
     gpu::choose_gpu,
+    heightmap_pipeline::HeightmapPipeline,
+    heightmap_pool::HeightmapPool,
     instance::{create_instance, create_logical_device},
     mesh_pipeline::MeshShaderPipeline,
     palette_buffer::{create_palette_buffer, destroy_palette_buffer},
@@ -21,6 +23,7 @@ use crate::graphical_core::{
 };
 use crate::storage::region::RegionStore;
 use crate::voxel::chunk::{Chunk, CHUNK_SIZE};
+use crate::voxel::heightmap_generator::{HeightmapGenerator, HeightmapRequest};
 use crate::voxel::svdag_compressor::SvdagCompressor;
 use crate::voxel::world::World;
 use crate::vr::{VrContext, VrSession, VrSwapchain};
@@ -113,6 +116,10 @@ pub struct WorldResources {
     lod_empty: std::collections::HashSet<[i32; 3]>,
     /// Consecutive frames where LOD scheduling had no work.
     lod_idle_frames: u32,
+    heightmap_pool: HeightmapPool,
+    heightmap_pipeline: HeightmapPipeline,
+    heightmap_generator: HeightmapGenerator,
+    heightmap_in_flight: std::collections::HashSet<[i32; 2]>,
 }
 
 pub struct VulkanApplication {
@@ -276,6 +283,10 @@ impl VulkanApplication {
             svdag_caches.push(RegionStore::new(&crate::storage::world_meta::svdag_lod_dir(world_dir, lod))?);
         }
 
+        let heightmap_pool = HeightmapPool::new(&self.device, &self.vulkan_instance, &mut self.vulkan_application_data)?;
+        let heightmap_pipeline = HeightmapPipeline::create(&self.device, &self.vulkan_application_data)?;
+        let heightmap_generator = HeightmapGenerator::new();
+
         self.wr = Some(WorldResources {
             world,
             voxel_pool,
@@ -291,6 +302,10 @@ impl VulkanApplication {
             lod_empty: std::collections::HashSet::new(),
             lod_idle_frames: 0,
             seed,
+            heightmap_pool,
+            heightmap_pipeline,
+            heightmap_generator,
+            heightmap_in_flight: std::collections::HashSet::new(),
         });
         self.depth_pyramid_needs_init = true;
         Ok(())
@@ -303,6 +318,8 @@ impl VulkanApplication {
     pub unsafe fn exit_world(&mut self) {
         self.device.device_wait_idle().unwrap();
         if let Some(mut wr) = self.wr.take() {
+            wr.heightmap_pipeline.destroy(&self.device);
+            wr.heightmap_pool.destroy(&self.device);
             wr.svdag_pipeline.destroy(&self.device);
             wr.svdag_pool.destroy(&self.device);
             wr.mesh_shader_pipeline.destroy(&self.device);
@@ -485,6 +502,11 @@ impl VulkanApplication {
         } else {
             None
         };
+        let heightmap_visible = wr.heightmap_pool.visible_tiles(&frustum);
+        let heightmap_push = crate::graphical_core::heightmap_pipeline::HeightmapPush {
+            camera_pos: camera.position.to_array(),
+            morph_factor: 0.0, // TODO: compute from distance to band boundary
+        };
         record_mesh_shader_command_buffer(
             &self.device,
             &self.vulkan_application_data,
@@ -495,6 +517,7 @@ impl VulkanApplication {
             self.depth_pyramid_needs_init,
             svdag_args.as_ref().map(|(sp, c, t, m)| (*sp, c, t, m)),
             &self.ui,
+            Some((&wr.heightmap_pipeline, &wr.heightmap_pool, &heightmap_visible, &heightmap_push)),
         )?;
         self.depth_pyramid_needs_init = false;
         self.submit_command_buffer(image_index)?;
@@ -711,6 +734,14 @@ impl VulkanApplication {
             wr.lod_idle_frames = wr.lod_idle_frames.saturating_add(1);
         }
 
+        // --- Heightmap tile generation (replaces LOD-3 and LOD-4) ---
+        wr.heightmap_pool.tick();
+        for mesh in wr.heightmap_generator.receive() {
+            wr.heightmap_in_flight.remove(&mesh.pos);
+            wr.heightmap_pool.upload_tile(&mesh);
+        }
+        schedule_heightmap_generation(wr, player_cx, player_cz);
+
         wr.last_player_chunk = [player_cx, player_cy, player_cz];
         Ok(())
     }
@@ -728,10 +759,9 @@ const LOD_BANDS: &[(i32, u32, u32, i32, i32)] = &[
     // Each band extends inward to the previous band's nominal start as a fallback
     // while finer LODs assemble. Coarser LODs generate from noise (no child dependency)
     // so they're available immediately. Finer LODs replace them once ready.
-    (8, 2, 3, MESH_DISTANCE, LOD1_DISTANCE + 8),   // LOD-1: covers LOD-0 area (8-24) as fallback
+    (8, 2, 3, MESH_DISTANCE, LOD1_DISTANCE + 8), // LOD-1: covers LOD-0 area (8-24) as fallback
     (16, 4, 4, LOD0_DISTANCE, LOD2_DISTANCE + 16), // LOD-2: covers LOD-1 area (24-48) as fallback
-    (32, 8, 5, LOD1_DISTANCE, LOD3_DISTANCE + 32), // LOD-3: covers LOD-2 area (48-96) as fallback
-    (64, 16, 6, LOD2_DISTANCE, LOD4_DISTANCE),     // LOD-4: covers LOD-3 area (96-192) as fallback
+                                                 // LOD-3 and LOD-4 replaced by rasterized heightmap tiles (HEIGHTMAP_BANDS)
 ];
 const MAX_LOD_IN_FLIGHT: usize = 32;
 const LOD_SUBMISSIONS_PER_FRAME: usize = 32;
@@ -824,6 +854,64 @@ unsafe fn try_load_cached_lod(wr: &mut WorldResources, pos: [i32; 3], lod_level:
         wr.svdag_pool.upload_chunk(pos, &dag_data, lod_level, SUPER_CHUNK_VOXELS);
     }
     true
+}
+
+/// Heightmap tile bands: (tile_align_chunks, grid_posts, spacing_blocks, coarse_spacing, min_dist, max_dist).
+const HEIGHTMAP_BANDS: &[(i32, usize, f64, f64, i32, i32)] = &[
+    (32, 129, 4.0, 16.0, LOD2_DISTANCE, LOD3_DISTANCE + 32),
+    (64, 65, 16.0, 64.0, LOD3_DISTANCE, LOD4_DISTANCE),
+];
+const MAX_HEIGHTMAP_IN_FLIGHT: usize = 16;
+const HEIGHTMAP_SUBMISSIONS_PER_FRAME: usize = 8;
+
+fn schedule_heightmap_generation(wr: &mut WorldResources, player_cx: i32, player_cz: i32) {
+    if wr.heightmap_in_flight.len() >= MAX_HEIGHTMAP_IN_FLIGHT {
+        return;
+    }
+    let mut total_submitted = 0usize;
+    for (band_idx, &(align, grid_posts, spacing, coarse_spacing, min_dist, max_dist)) in HEIGHTMAP_BANDS.iter().enumerate() {
+        let half = max_dist / align + 1;
+        let pcx = player_cx.div_euclid(align) * align;
+        let pcz = player_cz.div_euclid(align) * align;
+
+        for ring in 0..=half {
+            if total_submitted >= HEIGHTMAP_SUBMISSIONS_PER_FRAME {
+                return;
+            }
+            for dz in -ring..=ring {
+                for dx in -ring..=ring {
+                    if dx.abs() != ring && dz.abs() != ring {
+                        continue;
+                    }
+                    let gx = pcx + dx * align;
+                    let gz = pcz + dz * align;
+                    let dist = (gx - player_cx).abs().max((gz - player_cz).abs());
+                    if dist < min_dist || dist > max_dist {
+                        continue;
+                    }
+                    let pos = [gx, gz];
+                    if wr.heightmap_pool.has_tile(&pos) || wr.heightmap_in_flight.contains(&pos) {
+                        continue;
+                    }
+                    let tile_size_blocks = align as f64 * CHUNK_SIZE as f64;
+                    wr.heightmap_generator.request(HeightmapRequest {
+                        pos,
+                        lod: band_idx as u8,
+                        tile_size_blocks,
+                        grid_posts,
+                        spacing,
+                        coarse_spacing,
+                        seed: wr.seed,
+                    });
+                    wr.heightmap_in_flight.insert(pos);
+                    total_submitted += 1;
+                    if total_submitted >= HEIGHTMAP_SUBMISSIONS_PER_FRAME {
+                        return;
+                    }
+                }
+            }
+        }
+    }
 }
 
 impl VulkanApplication {

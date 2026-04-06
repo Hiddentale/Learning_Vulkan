@@ -74,7 +74,6 @@ impl Frustum {
         }
     }
 
-    #[cfg(test)]
     /// Returns true if an axis-aligned bounding box is at least partially inside the frustum.
     /// Uses the "p-vertex" test: for each plane, find the box corner most aligned with
     /// the plane normal. If that corner is outside, the entire box is outside.
