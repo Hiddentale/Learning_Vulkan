@@ -113,8 +113,10 @@ bool ray_aabb(vec3 ro, vec3 inv_rd, vec3 aabb_min, vec3 aabb_max, out float t_ne
     return t_near <= t_far && t_far > 0.0;
 }
 
-// --- DDA ray march through one chunk ---
-// voxel_size = world-space size of one voxel (1.0 for LOD-0, 2.0 for LOD-1, etc.)
+// --- DDA ray march with inline tree early-exit and empty octant caching ---
+// Flat DDA stepping. Each voxel does an inline tree descent that bails at the
+// first empty ancestor. To avoid re-descending for adjacent voxels in the same
+// empty octant, caches the bounds of the last known empty region.
 bool trace_chunk(vec3 ro, vec3 rd, vec3 aabb_min, vec3 aabb_max, float t_enter, float t_exit,
                  uint dag_base, uint chunk_size, out float t_hit, out vec3 hit_normal, out uint hit_material) {
     float voxel_size = (aabb_max.x - aabb_min.x) / float(chunk_size);
@@ -132,7 +134,6 @@ bool trace_chunk(vec3 ro, vec3 rd, vec3 aabb_min, vec3 aabb_max, float t_enter, 
         else                   t_max_val[i] = 1e30;
     }
 
-    // Track entry face normal from AABB intersection axis.
     vec3 t0 = (aabb_min - ro) / rd;
     vec3 t1 = (aabb_max - ro) / rd;
     vec3 tmin_axes = min(t0, t1);
@@ -144,36 +145,74 @@ bool trace_chunk(vec3 ro, vec3 rd, vec3 aabb_min, vec3 aabb_max, float t_enter, 
     else
         entry_normal = vec3(0.0, 0.0, -float(step_dir.z));
 
+    // Cache: bounds of last known empty octant (avoids re-descending tree)
+    ivec3 empty_min = ivec3(-1);
+    ivec3 empty_max = ivec3(-1);
+
     for (int i = 0; i < 192; i++) {
         if (voxel.x < 0 || voxel.x > max_coord || voxel.y < 0 || voxel.y > max_coord || voxel.z < 0 || voxel.z > max_coord)
             return false;
 
-        uint mat = svdag_lookup(dag_base, uint(voxel.x), uint(voxel.y), uint(voxel.z), chunk_size);
-        if (mat != 0u) {
-            t_hit = t_enter;
-            hit_normal = entry_normal;
-            hit_material = mat;
-            return true;
+        // Check empty octant cache first
+        if (voxel.x >= empty_min.x && voxel.x < empty_max.x &&
+            voxel.y >= empty_min.y && voxel.y < empty_max.y &&
+            voxel.z >= empty_min.z && voxel.z < empty_max.z) {
+            // Still inside cached empty region — skip tree descent
+        } else {
+            // Inline tree descent — bails at first empty ancestor
+            uint x = uint(voxel.x), y = uint(voxel.y), z = uint(voxel.z);
+            uint offset = dag_base + read_u32(dag_base);
+            uint size = chunk_size;
+            bool empty = false;
+
+            while (size > 4u) {
+                uint child_mask = read_byte(offset);
+                uint half_size = size >> 1u;
+                uint octant = (x >= half_size ? 1u : 0u) | (y >= half_size ? 2u : 0u) | (z >= half_size ? 4u : 0u);
+                if ((child_mask & (1u << octant)) == 0u) {
+                    // Cache this empty octant's bounds
+                    int aligned_x = int((uint(voxel.x) / half_size) * half_size);
+                    int aligned_y = int((uint(voxel.y) / half_size) * half_size);
+                    int aligned_z = int((uint(voxel.z) / half_size) * half_size);
+                    empty_min = ivec3(aligned_x, aligned_y, aligned_z);
+                    empty_max = empty_min + ivec3(int(half_size));
+                    empty = true;
+                    break;
+                }
+                uint bits_below = child_mask & ((1u << octant) - 1u);
+                uint child_rank = bitCount(bits_below);
+                offset = dag_base + read_u32(offset + 1u + child_rank * 4u);
+                x = x % half_size; y = y % half_size; z = z % half_size;
+                size = half_size;
+            }
+
+            if (!empty) {
+                uint idx = x + z * 4u + y * 16u;
+                uint mat = read_byte(offset + idx);
+                if (mat != 0u) {
+                    t_hit = t_enter;
+                    hit_normal = entry_normal;
+                    hit_material = mat;
+                    return true;
+                }
+            }
         }
 
+        // DDA step
         if (t_max_val.x < t_max_val.y) {
             if (t_max_val.x < t_max_val.z) {
-                t_enter = t_max_val.x;
-                entry_normal = vec3(-float(step_dir.x), 0.0, 0.0);
+                t_enter = t_max_val.x; entry_normal = vec3(-float(step_dir.x), 0.0, 0.0);
                 voxel.x += step_dir.x; t_max_val.x += t_delta.x;
             } else {
-                t_enter = t_max_val.z;
-                entry_normal = vec3(0.0, 0.0, -float(step_dir.z));
+                t_enter = t_max_val.z; entry_normal = vec3(0.0, 0.0, -float(step_dir.z));
                 voxel.z += step_dir.z; t_max_val.z += t_delta.z;
             }
         } else {
             if (t_max_val.y < t_max_val.z) {
-                t_enter = t_max_val.y;
-                entry_normal = vec3(0.0, -float(step_dir.y), 0.0);
+                t_enter = t_max_val.y; entry_normal = vec3(0.0, -float(step_dir.y), 0.0);
                 voxel.y += step_dir.y; t_max_val.y += t_delta.y;
             } else {
-                t_enter = t_max_val.z;
-                entry_normal = vec3(0.0, 0.0, -float(step_dir.z));
+                t_enter = t_max_val.z; entry_normal = vec3(0.0, 0.0, -float(step_dir.z));
                 voxel.z += step_dir.z; t_max_val.z += t_delta.z;
             }
         }

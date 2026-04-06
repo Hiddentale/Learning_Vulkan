@@ -36,6 +36,8 @@ pub struct SvdagPool {
     geometry_ptr: *mut u8,
     geometry_next: u32,
     geometry_free: Vec<(u32, u32)>,
+    /// Freed geometry slots deferred for N frames so the GPU finishes reading them.
+    geometry_pending_free: Vec<(u32, u32, u32)>, // (offset, size, frames_remaining)
 
     // Chunk info SSBO
     pub chunk_info_buffer: vk::Buffer,
@@ -67,6 +69,7 @@ impl SvdagPool {
             geometry_ptr,
             geometry_next: 0,
             geometry_free: Vec::new(),
+            geometry_pending_free: Vec::new(),
             chunk_info_buffer,
             chunk_info_memory,
             chunk_info_ptr,
@@ -112,7 +115,8 @@ impl SvdagPool {
             None => return,
         };
         if let Some(handle) = self.chunk_handles.remove(pos) {
-            self.geometry_free.push((handle.dag_offset, handle.dag_size));
+            // Defer reuse for 3 frames so the GPU finishes reading the old data
+            self.geometry_pending_free.push((handle.dag_offset, handle.dag_size, 3));
         }
         let last_index = self.chunk_count - 1;
         if info_index != last_index {
@@ -123,6 +127,20 @@ impl SvdagPool {
             }
         }
         self.chunk_count -= 1;
+    }
+
+    /// Call once per frame. Promotes deferred geometry frees after enough frames
+    /// have passed for the GPU to finish reading the old data.
+    pub fn tick(&mut self) {
+        self.geometry_pending_free.retain_mut(|(offset, size, frames)| {
+            if *frames == 0 {
+                self.geometry_free.push((*offset, *size));
+                false
+            } else {
+                *frames -= 1;
+                true
+            }
+        });
     }
 
     pub fn chunk_count(&self) -> u32 {

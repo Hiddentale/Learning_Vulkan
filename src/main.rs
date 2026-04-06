@@ -61,6 +61,7 @@ fn main() -> Result<()> {
     let mut input = InputState::new();
     let mut player = Player::new();
     let mut last_frame = Instant::now();
+    let mut fps_counter = FpsCounter::new();
     let mut game_state = GameState::TitleScreen;
     let mut cursor_pos: [f32; 2] = [0.0; 2];
     let mut menu_click = false;
@@ -215,6 +216,8 @@ fn main() -> Result<()> {
                 let delta_time = (now - last_frame).as_secs_f32();
                 last_frame = now;
 
+                fps_counter.tick(delta_time);
+
                 match &mut game_state {
                     GameState::Playing => {
                         let old_position = camera.position;
@@ -283,7 +286,11 @@ fn main() -> Result<()> {
                 let eyes = vr_eyes.unwrap_or_else(|| EyeMatrices::from_camera(&camera, application.swapchain_extent()));
 
                 let result = match &game_state {
-                    GameState::Playing => unsafe { application.render_frame(&user_window, &camera, &eyes) },
+                    GameState::Playing => {
+                        application.ui.begin_frame();
+                        application.ui.draw_text(&fps_counter.display(), 4.0, 4.0, 16.0, [1.0, 1.0, 1.0, 0.8]);
+                        unsafe { application.render_frame(&user_window, &camera, &eyes) }
+                    }
                     _ => {
                         let extent = application.swapchain_extent();
                         let sw = extent.width as f32;
@@ -528,4 +535,34 @@ fn probe_vr() -> Option<VrContext> {
 
 fn initialize_error_handler() {
     pretty_env_logger::init();
+}
+
+struct FpsCounter {
+    frames: u32,
+    elapsed: f32,
+    display_fps: u32,
+}
+
+impl FpsCounter {
+    fn new() -> Self {
+        Self {
+            frames: 0,
+            elapsed: 0.0,
+            display_fps: 0,
+        }
+    }
+
+    fn tick(&mut self, dt: f32) {
+        self.frames += 1;
+        self.elapsed += dt;
+        if self.elapsed >= 0.5 {
+            self.display_fps = (self.frames as f32 / self.elapsed) as u32;
+            self.frames = 0;
+            self.elapsed = 0.0;
+        }
+    }
+
+    fn display(&self) -> String {
+        format!("{} fps", self.display_fps)
+    }
 }

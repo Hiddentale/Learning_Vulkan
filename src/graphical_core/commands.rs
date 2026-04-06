@@ -230,6 +230,7 @@ pub unsafe fn record_mesh_shader_command_buffer(
     cull_push: &CullPushConstants,
     pyramid_needs_init: bool,
     svdag: Option<(&SvdagPipeline, &CullPush, &TileAssignPush, &RaymarchPush)>,
+    ui: &crate::graphical_core::ui_pipeline::UiPipeline,
 ) -> anyhow::Result<()> {
     let cmd = data.command_buffers[image_index];
     device.reset_command_buffer(cmd, vk::CommandBufferResetFlags::empty())?;
@@ -294,6 +295,12 @@ pub unsafe fn record_mesh_shader_command_buffer(
             record_svdag_passes(device, cmd, data, image_index, sp, cull_pc, tile_pc, march_pc);
         }
     }
+
+    // UI overlay — drawn last so it's on top of everything (mesh + SVDAG composite)
+    let screen = [data.swapchain_extent.width as f32, data.swapchain_extent.height as f32];
+    begin_render_pass_no_clear(device, cmd, data, image_index);
+    ui.record(device, cmd, screen);
+    device.cmd_end_render_pass(cmd);
 
     device.end_command_buffer(cmd)?;
     Ok(())

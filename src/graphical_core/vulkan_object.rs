@@ -494,6 +494,7 @@ impl VulkanApplication {
             &cull_push,
             self.depth_pyramid_needs_init,
             svdag_args.as_ref().map(|(sp, c, t, m)| (*sp, c, t, m)),
+            &self.ui,
         )?;
         self.depth_pyramid_needs_init = false;
         self.submit_command_buffer(image_index)?;
@@ -546,6 +547,8 @@ impl VulkanApplication {
         let player_cz = (camera.position.z / CHUNK_SIZE as f32).floor() as i32;
 
         let delta = wr.world.update(player_cx, player_cy, player_cz);
+
+        wr.svdag_pool.tick();
 
         // Process completed SVDAG compressions — drop results that don't fit (no eviction thrashing)
         for result in wr.svdag_compressor.receive() {
