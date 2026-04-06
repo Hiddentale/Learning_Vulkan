@@ -53,6 +53,20 @@ impl MeshShaderPipeline {
         })
     }
 
+    /// Re-write the depth pyramid descriptor after swapchain recreation.
+    pub unsafe fn update_depth_pyramid(&self, device: &Device, data: &VulkanApplicationData) {
+        let depth_info = [*vk::DescriptorImageInfo::builder()
+            .image_view(data.depth_pyramid_full_view)
+            .sampler(data.depth_pyramid_sampler)
+            .image_layout(vk::ImageLayout::GENERAL)];
+        let write = [*vk::WriteDescriptorSet::builder()
+            .dst_set(self.descriptor_set)
+            .dst_binding(7)
+            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .image_info(&depth_info)];
+        device.update_descriptor_sets(&write, &[] as &[vk::CopyDescriptorSet]);
+    }
+
     pub unsafe fn destroy(&self, device: &Device) {
         device.destroy_pipeline(self.pipeline, None);
         device.destroy_pipeline_layout(self.pipeline_layout, None);

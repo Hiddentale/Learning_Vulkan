@@ -5,7 +5,7 @@ use winit::event::MouseButton;
 use winit::keyboard::KeyCode;
 
 const MOVE_SPEED: f32 = 3.0;
-const SPRINT_MULTIPLIER: f32 = 10.0;
+const SPRINT_MULTIPLIER: f32 = 100.0;
 const MOUSE_SENSITIVITY: f32 = 0.003;
 const MAX_PITCH: f32 = 89.0_f32 * (std::f32::consts::PI / 180.0);
 

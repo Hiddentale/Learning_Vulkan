@@ -1,0 +1,337 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) uniform CameraUBO {
+    mat4 view_projection[2];
+    mat4 inverse_view_projection[2];
+    vec3 light_direction;
+    float ambient_strength;
+} camera;
+
+layout(set = 0, binding = 1) readonly buffer SvdagGeometry {
+    uint geometry_data[];
+};
+
+struct SvdagChunkInfo {
+    vec3 aabb_min;
+    uint dag_offset;
+    vec3 aabb_max;
+    uint dag_size;
+};
+
+layout(set = 0, binding = 2) readonly buffer SvdagChunkInfoSSBO {
+    SvdagChunkInfo chunks[];
+};
+
+const uint MAX_CHUNKS_PER_TILE = 64;
+const uint TILE_STRIDE = MAX_CHUNKS_PER_TILE + 1;
+const uint TILE_SIZE = 8;
+
+layout(set = 0, binding = 3) readonly buffer TileChunks {
+    uint tile_data[];
+};
+
+// Output: color (rgba8) and depth (r32f)
+layout(set = 0, binding = 4, rgba8) writeonly uniform image2D color_output;
+layout(set = 0, binding = 5, r32f) writeonly uniform image2D depth_output;
+
+layout(set = 0, binding = 6) uniform sampler2DArray texArray;
+
+struct MaterialEntry {
+    vec3 color;
+    float roughness;
+    vec3 emissive;
+    float _padding;
+};
+
+layout(set = 0, binding = 7) uniform MaterialPaletteUBO {
+    MaterialEntry entries[256];
+} palette;
+
+layout(push_constant) uniform PushConstants {
+    vec3 camera_pos;
+    uint _padding;
+    uvec2 screen_size;
+    uvec2 tile_count;
+};
+
+// --- Read a byte from the geometry SSBO ---
+uint read_byte(uint byte_offset) {
+    uint word = geometry_data[byte_offset >> 2];
+    uint shift = (byte_offset & 3u) * 8u;
+    return (word >> shift) & 0xFFu;
+}
+
+uint read_u32(uint byte_offset) {
+    return read_byte(byte_offset)
+         | (read_byte(byte_offset + 1u) << 8u)
+         | (read_byte(byte_offset + 2u) << 16u)
+         | (read_byte(byte_offset + 3u) << 24u);
+}
+
+uint octant_index(uvec3 pos, uint half_size) {
+    uint xi = pos.x >= half_size ? 1u : 0u;
+    uint yi = pos.y >= half_size ? 1u : 0u;
+    uint zi = pos.z >= half_size ? 1u : 0u;
+    return xi | (yi << 1u) | (zi << 2u);
+}
+
+// --- SVDAG lookup: returns material ID (0 = air) ---
+uint svdag_lookup(uint dag_base, uint x, uint y, uint z, uint root_size) {
+    uint offset = dag_base + read_u32(dag_base);
+    uint size = root_size;
+
+    while (size > 4u) {
+        uint child_mask = read_byte(offset);
+        uint half_size = size >> 1u;
+        uint octant = octant_index(uvec3(x, y, z), half_size);
+
+        if ((child_mask & (1u << octant)) == 0u) return 0u;
+
+        uint bits_below = child_mask & ((1u << octant) - 1u);
+        uint child_rank = bitCount(bits_below);
+        offset = dag_base + read_u32(offset + 1u + child_rank * 4u);
+        x = x % half_size;
+        y = y % half_size;
+        z = z % half_size;
+        size = half_size;
+    }
+
+    uint idx = x + z * 4u + y * 16u;
+    return read_byte(offset + idx);
+}
+
+// --- Ray-AABB intersection ---
+bool ray_aabb(vec3 ro, vec3 inv_rd, vec3 aabb_min, vec3 aabb_max, out float t_near, out float t_far) {
+    vec3 t0 = (aabb_min - ro) * inv_rd;
+    vec3 t1 = (aabb_max - ro) * inv_rd;
+    vec3 tmin = min(t0, t1);
+    vec3 tmax = max(t0, t1);
+    t_near = max(max(tmin.x, tmin.y), tmin.z);
+    t_far = min(min(tmax.x, tmax.y), tmax.z);
+    return t_near <= t_far && t_far > 0.0;
+}
+
+// --- DDA ray march with inline tree early-exit and empty octant caching ---
+// Flat DDA stepping. Each voxel does an inline tree descent that bails at the
+// first empty ancestor. To avoid re-descending for adjacent voxels in the same
+// empty octant, caches the bounds of the last known empty region.
+bool trace_chunk(vec3 ro, vec3 rd, vec3 aabb_min, vec3 aabb_max, float t_enter, float t_exit,
+                 uint dag_base, uint chunk_size, out float t_hit, out vec3 hit_normal, out uint hit_material) {
+    float voxel_size = (aabb_max.x - aabb_min.x) / float(chunk_size);
+    vec3 pos = ro + rd * (t_enter + 0.001 * voxel_size);
+    vec3 local = (pos - aabb_min) / voxel_size;
+    int max_coord = int(chunk_size) - 1;
+    ivec3 voxel = clamp(ivec3(floor(local)), ivec3(0), ivec3(max_coord));
+
+    ivec3 step_dir = ivec3(sign(rd));
+    vec3 t_delta = abs(voxel_size / rd);
+    vec3 t_max_val;
+    for (int i = 0; i < 3; i++) {
+        if (rd[i] > 0.0)      t_max_val[i] = t_enter + (float(voxel[i] + 1) - local[i]) * voxel_size / rd[i];
+        else if (rd[i] < 0.0) t_max_val[i] = t_enter + (float(voxel[i]) - local[i]) * voxel_size / rd[i];
+        else                   t_max_val[i] = 1e30;
+    }
+
+    vec3 t0 = (aabb_min - ro) / rd;
+    vec3 t1 = (aabb_max - ro) / rd;
+    vec3 tmin_axes = min(t0, t1);
+    vec3 entry_normal;
+    if (tmin_axes.x > tmin_axes.y && tmin_axes.x > tmin_axes.z)
+        entry_normal = vec3(-float(step_dir.x), 0.0, 0.0);
+    else if (tmin_axes.y > tmin_axes.z)
+        entry_normal = vec3(0.0, -float(step_dir.y), 0.0);
+    else
+        entry_normal = vec3(0.0, 0.0, -float(step_dir.z));
+
+    // Cache: bounds of last known empty octant (avoids re-descending tree)
+    ivec3 empty_min = ivec3(-1);
+    ivec3 empty_max = ivec3(-1);
+
+    for (int i = 0; i < 192; i++) {
+        if (voxel.x < 0 || voxel.x > max_coord || voxel.y < 0 || voxel.y > max_coord || voxel.z < 0 || voxel.z > max_coord)
+            return false;
+
+        // Check empty octant cache first
+        if (voxel.x >= empty_min.x && voxel.x < empty_max.x &&
+            voxel.y >= empty_min.y && voxel.y < empty_max.y &&
+            voxel.z >= empty_min.z && voxel.z < empty_max.z) {
+            // Still inside cached empty region — skip tree descent
+        } else {
+            // Inline tree descent — bails at first empty ancestor
+            uint x = uint(voxel.x), y = uint(voxel.y), z = uint(voxel.z);
+            uint offset = dag_base + read_u32(dag_base);
+            uint size = chunk_size;
+            bool empty = false;
+
+            while (size > 4u) {
+                uint child_mask = read_byte(offset);
+                uint half_size = size >> 1u;
+                uint octant = (x >= half_size ? 1u : 0u) | (y >= half_size ? 2u : 0u) | (z >= half_size ? 4u : 0u);
+                if ((child_mask & (1u << octant)) == 0u) {
+                    // Cache this empty octant's bounds
+                    int aligned_x = int((uint(voxel.x) / half_size) * half_size);
+                    int aligned_y = int((uint(voxel.y) / half_size) * half_size);
+                    int aligned_z = int((uint(voxel.z) / half_size) * half_size);
+                    empty_min = ivec3(aligned_x, aligned_y, aligned_z);
+                    empty_max = empty_min + ivec3(int(half_size));
+                    empty = true;
+                    break;
+                }
+                uint bits_below = child_mask & ((1u << octant) - 1u);
+                uint child_rank = bitCount(bits_below);
+                offset = dag_base + read_u32(offset + 1u + child_rank * 4u);
+                x = x % half_size; y = y % half_size; z = z % half_size;
+                size = half_size;
+            }
+
+            if (!empty) {
+                uint idx = x + z * 4u + y * 16u;
+                uint mat = read_byte(offset + idx);
+                if (mat != 0u) {
+                    t_hit = t_enter;
+                    hit_normal = entry_normal;
+                    hit_material = mat;
+                    return true;
+                }
+            }
+        }
+
+        // DDA step
+        if (t_max_val.x < t_max_val.y) {
+            if (t_max_val.x < t_max_val.z) {
+                t_enter = t_max_val.x; entry_normal = vec3(-float(step_dir.x), 0.0, 0.0);
+                voxel.x += step_dir.x; t_max_val.x += t_delta.x;
+            } else {
+                t_enter = t_max_val.z; entry_normal = vec3(0.0, 0.0, -float(step_dir.z));
+                voxel.z += step_dir.z; t_max_val.z += t_delta.z;
+            }
+        } else {
+            if (t_max_val.y < t_max_val.z) {
+                t_enter = t_max_val.y; entry_normal = vec3(0.0, -float(step_dir.y), 0.0);
+                voxel.y += step_dir.y; t_max_val.y += t_delta.y;
+            } else {
+                t_enter = t_max_val.z; entry_normal = vec3(0.0, 0.0, -float(step_dir.z));
+                voxel.z += step_dir.z; t_max_val.z += t_delta.z;
+            }
+        }
+
+        if (min(t_max_val.x, min(t_max_val.y, t_max_val.z)) > t_exit)
+            return false;
+    }
+    return false;
+}
+
+// --- Texture sampling (mirrors shader.frag) ---
+
+float hash1(vec2 cell) {
+    return fract(sin(dot(cell, vec2(127.1, 311.7))) * 43758.5453);
+}
+
+vec3 stochastic_sample(uint layer, vec2 faceUV, vec2 worldCell, float atlasOffsetU) {
+    float r = hash1(worldCell);
+    bool flipX = r > 0.5;
+    bool flipY = atlasOffsetU > 0.25 && fract(r * 3.7) > 0.5;
+    vec2 uv = vec2(flipX ? 1.0 - faceUV.x : faceUV.x,
+                   flipY ? 1.0 - faceUV.y : faceUV.y);
+    uv.x = uv.x * 0.5 + atlasOffsetU;
+    return texture(texArray, vec3(uv, float(layer))).rgb;
+}
+
+/// Compute base color for a material at a world-space hit point with a given face normal.
+vec3 material_color(uint mat_id, vec3 world_pos, vec3 normal) {
+    MaterialEntry mat = palette.entries[mat_id];
+
+    // Check if this material has a texture
+    vec3 texCenter = texture(texArray, vec3(0.25, 0.5, float(mat_id))).rgb;
+    bool hasTexture = texCenter.r < 0.99 || texCenter.g < 0.99 || texCenter.b < 0.99;
+
+    if (!hasTexture) return mat.color;
+
+    // Compute face UV and cell from world position + normal (same as shader.frag)
+    bool isTop = normal.y > 0.5;
+    float atlasOffset = isTop ? 0.5 : 0.0;
+    vec2 faceUV;
+    vec2 cell;
+    if (isTop) {
+        faceUV = fract(world_pos.xz);
+        cell = floor(world_pos.xz);
+    } else if (abs(normal.x) > 0.5) {
+        faceUV = fract(world_pos.zy);
+        cell = floor(world_pos.zy);
+    } else {
+        faceUV = fract(world_pos.xy);
+        cell = floor(world_pos.xy);
+    }
+    return stochastic_sample(mat_id, faceUV, cell, atlasOffset);
+}
+
+void main() {
+    uvec2 pixel = gl_GlobalInvocationID.xy;
+    if (pixel.x >= screen_size.x || pixel.y >= screen_size.y) return;
+
+    // Which tile does this pixel belong to?
+    uvec2 tile_id = pixel / TILE_SIZE;
+    uint tile_index = tile_id.x + tile_id.y * tile_count.x;
+    uint base = tile_index * TILE_STRIDE;
+    uint tile_chunk_count = tile_data[base];
+
+    if (tile_chunk_count == 0u) return; // No SVDAG chunks affect this tile
+
+    // Reconstruct world-space ray
+    uint view_index = 0;
+    vec2 uv = (vec2(pixel) + 0.5) / vec2(screen_size);
+    vec2 ndc = uv * 2.0 - 1.0;
+    vec4 world_near = camera.inverse_view_projection[view_index] * vec4(ndc, 0.0, 1.0);
+    vec4 world_far = camera.inverse_view_projection[view_index] * vec4(ndc, 1.0, 1.0);
+    world_near /= world_near.w;
+    world_far /= world_far.w;
+
+    vec3 ro = world_near.xyz;
+    vec3 rd = normalize(world_far.xyz - world_near.xyz);
+    vec3 inv_rd = 1.0 / rd;
+
+    float best_t = 1e30;
+    vec3 best_normal = vec3(0.0);
+    uint best_material = 0u;
+    // Only iterate over this tile's chunks (typically 1-5, max 32)
+    for (uint i = 0; i < tile_chunk_count; i++) {
+        uint chunk_idx = tile_data[base + 1u + i];
+        SvdagChunkInfo chunk = chunks[chunk_idx];
+
+        float t_near, t_far;
+        if (!ray_aabb(ro, inv_rd, chunk.aabb_min, chunk.aabb_max, t_near, t_far)) continue;
+        if (t_near > best_t) continue;
+
+        float t_hit;
+        vec3 hit_normal;
+        uint hit_mat;
+        if (trace_chunk(ro, rd, chunk.aabb_min, chunk.aabb_max, max(t_near, 0.0), t_far,
+                        chunk.dag_offset, chunk.dag_size, t_hit, hit_normal, hit_mat)) {
+            if (t_hit < best_t) {
+                best_t = t_hit;
+                best_normal = hit_normal;
+                best_material = hit_mat;
+            }
+        }
+    }
+
+    if (best_t >= 1e29) return; // No hit
+
+    // Compute depth
+    vec3 hit_world = ro + rd * best_t;
+    vec4 hit_clip = camera.view_projection[0] * vec4(hit_world, 1.0);
+    float depth = hit_clip.z / hit_clip.w;
+
+    // Lighting — matches shader.frag formula
+    vec3 base_color = material_color(best_material, hit_world, best_normal);
+    vec3 N = best_normal;
+    vec3 L = normalize(-camera.light_direction);
+    float diffuse = max(dot(N, L), 0.0);
+    MaterialEntry mat = palette.entries[best_material];
+    vec3 color = (camera.ambient_strength + diffuse) * base_color + mat.emissive;
+
+    imageStore(color_output, ivec2(pixel), vec4(color, 1.0));
+    imageStore(depth_output, ivec2(pixel), vec4(depth));
+}

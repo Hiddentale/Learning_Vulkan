@@ -15,6 +15,13 @@ image = "0.25.6"
 noise = "0.9"
 openxr = "0.21"
 crossbeam-channel = "0.5"
+lz4_flex = "0.11"
+memmap2 = "0.9"
+
+# Optimize dependencies in dev builds (noise, lz4, etc.) while keeping
+# our code unoptimized for fast compilation and debug assertions.
+[profile.dev.package."*"]
+opt-level = 2
 
 [dev-dependencies]
 memoffset = "0.9"

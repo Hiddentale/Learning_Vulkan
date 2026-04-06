@@ -5,7 +5,7 @@ use vulkan_rust::{vk, Device, Instance};
 
 const FOV_DEGREES: f32 = 90.0;
 const NEAR_PLANE: f32 = 0.1;
-const FAR_PLANE: f32 = 500.0;
+const FAR_PLANE: f32 = 10000.0;
 const WORLD_UP: Vec3 = Vec3::Y;
 const MAX_PITCH: f32 = 89.0_f32 * (std::f32::consts::PI / 180.0);
 

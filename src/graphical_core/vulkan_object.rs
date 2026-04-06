@@ -6,21 +6,32 @@ use crate::graphical_core::{
     descriptors,
     frustum::Frustum,
     gpu::choose_gpu,
+    heightmap_pipeline::HeightmapPipeline,
+    heightmap_pool::HeightmapPool,
     instance::{create_instance, create_logical_device},
     mesh_pipeline::MeshShaderPipeline,
     palette_buffer::{create_palette_buffer, destroy_palette_buffer},
     pipeline::create_sky_pipeline,
     render_pass::create_render_pass,
+    svdag_pipeline::{CullPush, RaymarchPush, SvdagPipeline, TileAssignPush},
+    svdag_pool::SvdagPool,
     swapchain::{create_swapchain, create_swapchain_image_views},
     texture_mapping::{create_texture_image, destroy_textures},
+    ui_pipeline::UiPipeline,
     voxel_pool::VoxelPool,
     MAX_FRAMES_IN_FLIGHT,
 };
-use crate::voxel::{chunk::CHUNK_SIZE, world::World};
+use crate::storage::region::RegionStore;
+use crate::voxel::chunk::{Chunk, CHUNK_SIZE};
+use crate::voxel::erosion::ErosionMap;
+use crate::voxel::heightmap_generator::{HeightmapGenerator, HeightmapRequest};
+use crate::voxel::svdag_compressor::SvdagCompressor;
+use crate::voxel::world::World;
 use crate::vr::{VrContext, VrSession, VrSwapchain};
 use crate::VALIDATION_ENABLED;
 use anyhow::anyhow;
 use log::info;
+use std::sync::Arc;
 use vk::Handle;
 use vulkan_rust::{vk, Device, Entry, Instance, LibloadingLoader};
 use winit::window::Window;
@@ -71,11 +82,49 @@ pub struct VulkanApplicationData {
     pub sky_pipeline_layout: vk::PipelineLayout,
 }
 
-use crate::voxel::world::{MAX_CHUNK_Y, MIN_CHUNK_Y};
+/// Mesh shader renders chunks within this distance. Full detail, editable, textured.
+const MESH_DISTANCE: i32 = 8;
+/// Mesh shader renders chunks within this distance.
+const LOD0_DISTANCE: i32 = 24; // 384m
+const LOD1_DISTANCE: i32 = 48; // 768m
+const LOD2_DISTANCE: i32 = 96; // 1536m
+const LOD3_DISTANCE: i32 = 192; // 3072m
+const LOD4_DISTANCE: i32 = 384; // 6144m (>5km)
+/// World generates terrain out to this distance (raw chunks for LOD-0 super-chunk building).
+const WORLD_DISTANCE: i32 = LOD0_DISTANCE + 8 + 4;
+/// Maximum SVDAG render distance across all LOD levels.
+const SVDAG_DISTANCE: i32 = LOD4_DISTANCE;
+const MAX_MESH_CHUNKS: usize = ((2 * MESH_DISTANCE + 1) * (2 * MESH_DISTANCE + 1) * (2 * MESH_DISTANCE + 1)) as usize;
+const MAX_SVDAG_CHUNKS: u32 = 32768;
+const SUPER_CHUNK_VOXELS: u32 = 64;
 
-const RENDER_DISTANCE: i32 = 24;
-const CHUNK_LAYERS: usize = (MAX_CHUNK_Y - MIN_CHUNK_Y + 1) as usize;
-const MAX_LOADED_CHUNKS: usize = ((2 * RENDER_DISTANCE + 1) * (2 * RENDER_DISTANCE + 1)) as usize * CHUNK_LAYERS;
+/// World-specific resources created when entering a world, destroyed when returning to menu.
+pub struct WorldResources {
+    pub world: World,
+    voxel_pool: VoxelPool,
+    mesh_shader_pipeline: MeshShaderPipeline,
+    svdag_pool: SvdagPool,
+    svdag_pipeline: SvdagPipeline,
+    svdag_compressor: SvdagCompressor,
+    svdag_pending: std::collections::HashSet<[i32; 3]>,
+    svdag_in_flight: std::collections::HashSet<[i32; 3]>,
+    /// Per-LOD disk caches. Index 0 = LOD-0, 1 = LOD-1, 2 = LOD-2.
+    svdag_caches: Vec<RegionStore>,
+    last_player_chunk: [i32; 3],
+    seed: u32,
+    /// In-flight LOD generation requests.
+    lod_in_flight: std::collections::HashSet<[i32; 3]>,
+    /// Chunks that generated as empty (all air). Never retry these.
+    lod_empty: std::collections::HashSet<[i32; 3]>,
+    /// Consecutive frames where LOD scheduling had no work.
+    lod_idle_frames: u32,
+    heightmap_pool: HeightmapPool,
+    heightmap_pipeline: HeightmapPipeline,
+    heightmap_generator: HeightmapGenerator,
+    heightmap_in_flight: std::collections::HashSet<[i32; 2]>,
+    #[allow(dead_code)] // retained for future access (shadow rays, re-erosion)
+    erosion_map: Option<Arc<ErosionMap>>,
+}
 
 pub struct VulkanApplication {
     _vulkan_entry_point: Entry,
@@ -84,31 +133,46 @@ pub struct VulkanApplication {
     device: Device,
     frame: usize,
     pub(crate) resized: bool,
-    world: World,
     depth_pyramid_pipeline: DepthPyramidResources,
     depth_pyramid_needs_init: bool,
-    last_player_chunk: [i32; 2],
     _vr_session: Option<VrSession>,
     _vr_swapchain: Option<VrSwapchain>,
-    voxel_pool: VoxelPool,
-    mesh_shader_pipeline: MeshShaderPipeline,
+    /// None when in the menu, Some when a world is loaded.
+    wr: Option<WorldResources>,
+    pub ui: UiPipeline,
 }
 
 impl VulkanApplication {
-    pub fn world(&self) -> &World {
-        &self.world
+    /// Returns the world if one is loaded.
+    pub fn world(&self) -> Option<&World> {
+        self.wr.as_ref().map(|wr| &wr.world)
     }
 
-    /// Sets a block in the world and re-uploads the affected chunk to the GPU.
+    /// Returns true if a world is currently loaded.
+    pub fn has_world(&self) -> bool {
+        self.wr.is_some()
+    }
+
+    /// True if LOD generation has settled (nothing to submit, nothing in flight).
+    pub fn lod_settled(&self) -> bool {
+        self.wr.as_ref().is_none_or(|wr| wr.lod_idle_frames >= 3)
+    }
+
+    /// Sets a block in the world and re-uploads to the mesh shader pool.
+    /// Only near-field chunks (in VoxelPool) are editable.
     pub unsafe fn set_block(&mut self, wx: i32, wy: i32, wz: i32, block: crate::voxel::block::BlockType) {
-        if !self.world.set_block(wx, wy, wz, block) {
+        let wr = match self.wr.as_mut() {
+            Some(wr) => wr,
+            None => return,
+        };
+        if !wr.world.set_block(wx, wy, wz, block) {
             return;
         }
         let chunk_pos = World::block_to_chunk(wx, wy, wz);
         let [cx, cy, cz] = chunk_pos;
-        if let Some(chunk) = self.world.get_chunk(cx, cy, cz) {
-            self.voxel_pool.reupload_chunk(chunk_pos, chunk, &self.world);
-            self.voxel_pool.invalidate_neighbor_boundaries(chunk_pos, &self.world);
+        if let Some(chunk) = wr.world.get_chunk(cx, cy, cz) {
+            wr.voxel_pool.reupload_chunk(chunk_pos, chunk, &wr.world);
+            wr.voxel_pool.invalidate_neighbor_boundaries(chunk_pos, &wr.world);
         }
     }
 
@@ -137,19 +201,24 @@ impl VulkanApplication {
         let (Some(session), Some(swapchain)) = (&mut self._vr_session, &mut self._vr_swapchain) else {
             return Ok(None);
         };
+        let wr = match &self.wr {
+            Some(wr) => wr,
+            None => return Ok(None),
+        };
         crate::vr::frame::render_vr_frame(
             &self.device,
             &self.vulkan_application_data,
             session,
             swapchain,
-            &self.mesh_shader_pipeline,
-            &self.voxel_pool,
+            &wr.mesh_shader_pipeline,
+            &wr.voxel_pool,
         )
     }
 }
 
 impl VulkanApplication {
-    /// Creates a fully initialized Vulkan renderer for the given window.
+    /// Creates the core Vulkan renderer without loading a world.
+    /// Call `enter_world()` to load a world before rendering game frames.
     ///
     /// # Safety
     /// Calls unsafe Vulkan APIs. The caller must call [`destroy_vulkan_application`]
@@ -167,19 +236,8 @@ impl VulkanApplication {
         create_resources(&device, &instance, &mut data)?;
         allocate_command_buffers(&device, &mut data)?;
         create_sync_objects(&device, &mut data)?;
-
-        let mut world = World::new(RENDER_DISTANCE);
-        world.update(0, 0);
-
         let depth_pyramid_pipeline = crate::graphical_core::compute_cull::create_depth_pyramid_pipeline(&device, &data)?;
-
-        let mut voxel_pool = VoxelPool::new(MAX_LOADED_CHUNKS as u32, &device, &instance, &mut data)?;
-        for [cx, cy, cz] in world.chunk_positions() {
-            if let Some(chunk) = world.get_chunk(cx, cy, cz) {
-                voxel_pool.upload_chunk([cx, cy, cz], chunk, &world);
-            }
-        }
-        let mesh_shader_pipeline = MeshShaderPipeline::create(&device, &data, &voxel_pool)?;
+        let ui = UiPipeline::create(&device, &instance, &mut data)?;
 
         Ok(Self {
             _vulkan_entry_point: entry,
@@ -188,15 +246,90 @@ impl VulkanApplication {
             device,
             frame: 0,
             resized: false,
-            world,
             depth_pyramid_pipeline,
             depth_pyramid_needs_init: true,
-            last_player_chunk: [0, 0],
             _vr_session: vr_session,
             _vr_swapchain: vr_swapchain,
+            wr: None,
+            ui,
+        })
+    }
+
+    /// Load a world and create all GPU resources for rendering it.
+    ///
+    /// # Safety
+    /// Calls unsafe Vulkan APIs.
+    pub unsafe fn enter_world(&mut self, world_dir: &std::path::Path, seed: u32, erosion_map: Option<Arc<ErosionMap>>) -> anyhow::Result<()> {
+        let mut world = World::new(WORLD_DISTANCE, seed, erosion_map.clone());
+        world.update(0, 5, 0); // Initial camera Y ≈ 90 blocks → chunk 5
+
+        let mut voxel_pool = VoxelPool::new(
+            MAX_MESH_CHUNKS as u32,
+            &self.device,
+            &self.vulkan_instance,
+            &mut self.vulkan_application_data,
+        )?;
+        for pos in world.chunk_positions() {
+            let [cx, cy, cz] = pos;
+            if crate::voxel::world::chunk_distance(cx, cy, cz, 0, 5, 0) <= MESH_DISTANCE {
+                if let Some(chunk) = world.get_chunk(cx, cy, cz) {
+                    voxel_pool.upload_chunk(pos, chunk, &world);
+                }
+            }
+        }
+        let mesh_shader_pipeline = MeshShaderPipeline::create(&self.device, &self.vulkan_application_data, &voxel_pool)?;
+
+        let svdag_pool = SvdagPool::new(MAX_SVDAG_CHUNKS, &self.device, &self.vulkan_instance, &mut self.vulkan_application_data)?;
+        let svdag_pipeline = SvdagPipeline::create(&self.device, &self.vulkan_instance, &mut self.vulkan_application_data, &svdag_pool)?;
+        let svdag_compressor = SvdagCompressor::new(erosion_map.clone());
+        let mut svdag_caches = Vec::new();
+        for lod in 0..=LOD_BANDS.len() as u32 {
+            svdag_caches.push(RegionStore::new(&crate::storage::world_meta::svdag_lod_dir(world_dir, lod))?);
+        }
+
+        let heightmap_pool = HeightmapPool::new(&self.device, &self.vulkan_instance, &mut self.vulkan_application_data)?;
+        let heightmap_pipeline = HeightmapPipeline::create(&self.device, &self.vulkan_application_data)?;
+        let heightmap_generator = HeightmapGenerator::new(erosion_map.clone());
+
+        self.wr = Some(WorldResources {
+            world,
             voxel_pool,
             mesh_shader_pipeline,
-        })
+            svdag_pool,
+            svdag_pipeline,
+            svdag_compressor,
+            svdag_pending: std::collections::HashSet::new(),
+            svdag_in_flight: std::collections::HashSet::new(),
+            svdag_caches,
+            last_player_chunk: [0, 0, 0],
+            lod_in_flight: std::collections::HashSet::new(),
+            lod_empty: std::collections::HashSet::new(),
+            lod_idle_frames: 0,
+            seed,
+            heightmap_pool,
+            heightmap_pipeline,
+            heightmap_generator,
+            heightmap_in_flight: std::collections::HashSet::new(),
+            erosion_map,
+        });
+        self.depth_pyramid_needs_init = true;
+        Ok(())
+    }
+
+    /// Unload the current world and return to menu state.
+    ///
+    /// # Safety
+    /// Calls unsafe Vulkan APIs.
+    pub unsafe fn exit_world(&mut self) {
+        self.device.device_wait_idle().unwrap();
+        if let Some(mut wr) = self.wr.take() {
+            wr.heightmap_pipeline.destroy(&self.device);
+            wr.heightmap_pool.destroy(&self.device);
+            wr.svdag_pipeline.destroy(&self.device);
+            wr.svdag_pool.destroy(&self.device);
+            wr.mesh_shader_pipeline.destroy(&self.device);
+            wr.voxel_pool.destroy(&self.device);
+        }
     }
 }
 
@@ -278,9 +411,7 @@ unsafe fn create_resources(device: &Device, instance: &Instance, data: &mut Vulk
     create_command_pool(instance, device, data)?;
     create_uniform_buffer(device, instance, data)?;
     create_palette_buffer(device, instance, data)?;
-
     let (texture_image, texture_memory, texture_image_view, texture_sampler) = create_texture_image(device, instance, data)?;
-
     descriptors::create_pool(device, data)?;
     let descriptor_sets = descriptors::allocate_set(device, data.descriptor_pool, data.descriptor_set_layout)?;
     let descriptor_set = descriptor_sets
@@ -311,14 +442,16 @@ impl VulkanApplication {
     /// # Safety
     /// Calls unsafe Vulkan queue and synchronization APIs.
     pub unsafe fn render_frame(&mut self, window: &Window, camera: &Camera, eyes: &EyeMatrices) -> anyhow::Result<()> {
-        self.update_chunks(camera)?;
+        let wr = self.wr.as_mut().expect("render_frame called without a loaded world");
+        Self::update_chunks_inner(wr, camera)?;
 
         let image_index = match self.acquire_next_image(window)? {
             Some(index) => index,
-            None => return Ok(()), // swapchain was recreated, skip this frame
+            None => return Ok(()),
         };
         update_uniform_buffer(&self.vulkan_application_data, eyes)?;
 
+        let wr = self.wr.as_ref().unwrap();
         let frustum = if eyes.is_stereo() {
             Frustum::combined_stereo(&eyes.view_projection[0], &eyes.view_projection[1])
         } else {
@@ -334,7 +467,7 @@ impl VulkanApplication {
                 frustum.plane(5),
             ],
             camera_pos: camera.position.to_array(),
-            chunk_count: self.voxel_pool.chunk_count(),
+            chunk_count: wr.voxel_pool.chunk_count(),
             screen_size: [
                 self.vulkan_application_data.swapchain_extent.width as f32,
                 self.vulkan_application_data.swapchain_extent.height as f32,
@@ -342,14 +475,60 @@ impl VulkanApplication {
             phase: 1,
             draw_offset: crate::voxel::block::BlockType::opaque_mask(),
         };
+        let svdag_chunk_count = wr.svdag_pool.chunk_count();
+        let extent = self.vulkan_application_data.swapchain_extent;
+        let svdag_args = if svdag_chunk_count > 0 {
+            let svdag_cull = CullPush {
+                planes: [
+                    frustum.plane(0),
+                    frustum.plane(1),
+                    frustum.plane(2),
+                    frustum.plane(3),
+                    frustum.plane(4),
+                    frustum.plane(5),
+                ],
+                total_chunks: svdag_chunk_count,
+                _padding: [0; 3],
+            };
+            let svdag_tile = TileAssignPush {
+                view_projection: eyes.primary_vp().to_cols_array_2d(),
+                screen_size: [extent.width, extent.height],
+                tile_count: wr.svdag_pipeline.tile_count,
+                camera_pos: camera.position.to_array(),
+                _padding: 0,
+            };
+            let svdag_march = RaymarchPush {
+                camera_pos: camera.position.to_array(),
+                _padding: 0,
+                screen_size: [extent.width, extent.height],
+                tile_count: wr.svdag_pipeline.tile_count,
+            };
+            Some((&wr.svdag_pipeline, svdag_cull, svdag_tile, svdag_march))
+        } else {
+            None
+        };
+        let hm_bands: Vec<(i32, i32)> = HEIGHTMAP_BANDS.iter().map(|b| (b.4, b.5)).collect();
+        let heightmap_visible = wr.heightmap_pool.visible_tiles(
+            &frustum,
+            (camera.position.x / CHUNK_SIZE as f32).floor() as i32,
+            (camera.position.z / CHUNK_SIZE as f32).floor() as i32,
+            &hm_bands,
+        );
+        let heightmap_push = crate::graphical_core::heightmap_pipeline::HeightmapPush {
+            camera_pos: camera.position.to_array(),
+            morph_factor: 0.0,
+        };
         record_mesh_shader_command_buffer(
             &self.device,
             &self.vulkan_application_data,
             image_index,
-            &self.mesh_shader_pipeline,
+            &wr.mesh_shader_pipeline,
             &self.depth_pyramid_pipeline,
             &cull_push,
             self.depth_pyramid_needs_init,
+            svdag_args.as_ref().map(|(sp, c, t, m)| (*sp, c, t, m)),
+            &self.ui,
+            Some((&wr.heightmap_pipeline, &wr.heightmap_pool, &heightmap_visible, &heightmap_push)),
         )?;
         self.depth_pyramid_needs_init = false;
         self.submit_command_buffer(image_index)?;
@@ -358,43 +537,398 @@ impl VulkanApplication {
         Ok(())
     }
 
-    /// Loads/unloads chunks incrementally each frame (budgeted generation).
-    unsafe fn update_chunks(&mut self, camera: &Camera) -> anyhow::Result<()> {
-        let player_cx = (camera.position.x / CHUNK_SIZE as f32).floor() as i32;
-        let player_cz = (camera.position.z / CHUNK_SIZE as f32).floor() as i32;
+    /// Render a menu frame (sky background + UI overlay).
+    pub unsafe fn render_menu_frame(&mut self, window: &Window, eyes: &EyeMatrices) -> anyhow::Result<()> {
+        let image_index = match self.acquire_next_image(window)? {
+            Some(index) => index,
+            None => return Ok(()),
+        };
+        update_uniform_buffer(&self.vulkan_application_data, eyes)?;
 
-        // Always run update — even if player hasn't moved, there may be pending chunks
-        let delta = self.world.update(player_cx, player_cz);
-        if delta.loaded.is_empty() && delta.unloaded.is_empty() {
-            self.last_player_chunk = [player_cx, player_cz];
-            return Ok(());
-        }
-        self.last_player_chunk = [player_cx, player_cz];
+        let cmd = self.vulkan_application_data.command_buffers[image_index];
+        self.device.reset_command_buffer(cmd, vk::CommandBufferResetFlags::empty())?;
+        self.device.begin_command_buffer(cmd, &vk::CommandBufferBeginInfo::builder())?;
 
-        self.update_chunks_mesh_shader(&delta)?;
+        crate::graphical_core::commands::begin_render_pass(&self.device, cmd, &self.vulkan_application_data, image_index);
+        crate::graphical_core::commands::draw_sky(&self.device, cmd, &self.vulkan_application_data);
+        let screen = [
+            self.vulkan_application_data.swapchain_extent.width as f32,
+            self.vulkan_application_data.swapchain_extent.height as f32,
+        ];
+        self.ui.record(&self.device, cmd, screen);
+        self.device.cmd_end_render_pass(cmd);
+        self.device.end_command_buffer(cmd)?;
 
+        self.submit_command_buffer(image_index)?;
+        self.present_frame(image_index, window)?;
+        self.frame = (self.frame + 1) % MAX_FRAMES_IN_FLIGHT;
         Ok(())
     }
 
-    /// Incremental slot writes, no GPU stall.
-    unsafe fn update_chunks_mesh_shader(&mut self, delta: &crate::voxel::world::WorldDelta) -> anyhow::Result<()> {
-        let voxel_pool = &mut self.voxel_pool;
-
-        for pos in &delta.unloaded {
-            voxel_pool.invalidate_neighbor_boundaries(*pos, &self.world);
-            voxel_pool.remove_chunk(pos);
+    /// Pump chunk loading and SVDAG compression without rendering.
+    /// Call during pre-generation to route chunks to the correct pools.
+    pub unsafe fn update_world(&mut self, camera: &Camera) -> anyhow::Result<()> {
+        if let Some(wr) = self.wr.as_mut() {
+            Self::update_chunks_inner(wr, camera)?;
         }
-        for &[cx, cy, cz] in &delta.loaded {
-            let pos = [cx, cy, cz];
-            if let Some(chunk) = self.world.get_chunk(cx, cy, cz) {
-                voxel_pool.upload_chunk(pos, chunk, &self.world);
-                voxel_pool.invalidate_neighbor_boundaries(pos, &self.world);
+        Ok(())
+    }
+
+    /// Loads/unloads chunks. Routes to mesh pool, SVDAG pool, and LOD merging.
+    unsafe fn update_chunks_inner(wr: &mut WorldResources, camera: &Camera) -> anyhow::Result<()> {
+        let player_cx = (camera.position.x / CHUNK_SIZE as f32).floor() as i32;
+        let player_cy = (camera.position.y / CHUNK_SIZE as f32).floor() as i32;
+        let player_cz = (camera.position.z / CHUNK_SIZE as f32).floor() as i32;
+
+        let delta = wr.world.update(player_cx, player_cy, player_cz);
+
+        wr.svdag_pool.tick();
+
+        // Process completed SVDAG compressions — drop results that don't fit (no eviction thrashing)
+        for result in wr.svdag_compressor.receive() {
+            wr.svdag_in_flight.remove(&result.pos);
+            wr.lod_in_flight.remove(&result.pos);
+            if result.dag_data.len() <= 68 {
+                wr.lod_empty.insert(result.pos);
+                continue;
+            }
+            if wr.svdag_pool.chunk_count() >= MAX_SVDAG_CHUNKS - 1 || wr.svdag_pool.is_near_budget() {
+                continue;
+            }
+            wr.svdag_pool
+                .upload_chunk(result.pos, &result.dag_data, result.lod_level, SUPER_CHUNK_VOXELS);
+            let compressed = lz4_flex::compress_prepend_size(&result.dag_data);
+            let cache_idx = result.lod_level.saturating_sub(2) as usize;
+            if cache_idx < wr.svdag_caches.len() {
+                let _ = wr.svdag_caches[cache_idx].write(result.pos, &compressed);
             }
         }
 
+        // Handle unloaded chunks — remove from whichever pool they're in
+        for pos in &delta.unloaded {
+            wr.voxel_pool.invalidate_neighbor_boundaries(*pos, &wr.world);
+            wr.voxel_pool.remove_chunk(pos);
+            wr.svdag_pool.remove_chunk(pos);
+            wr.svdag_pending.remove(pos);
+        }
+
+        // Evict mesh chunks that drifted beyond MESH_DISTANCE (player moved)
+        for pos in wr.voxel_pool.chunk_positions() {
+            let dist = crate::voxel::world::chunk_distance(pos[0], pos[1], pos[2], player_cx, player_cy, player_cz);
+            if dist > MESH_DISTANCE {
+                wr.voxel_pool.invalidate_neighbor_boundaries(pos, &wr.world);
+                wr.voxel_pool.remove_chunk(&pos);
+                if dist <= SVDAG_DISTANCE && wr.world.get_chunk(pos[0], pos[1], pos[2]).is_some() {
+                    wr.svdag_pending.insert(pos);
+                }
+            }
+        }
+
+        // Ensure all chunks within MESH_DISTANCE are in VoxelPool (promote from SVDAG on approach)
+        for cz in (player_cz - MESH_DISTANCE)..=(player_cz + MESH_DISTANCE) {
+            for cx in (player_cx - MESH_DISTANCE)..=(player_cx + MESH_DISTANCE) {
+                for cy in (player_cy - MESH_DISTANCE)..=(player_cy + MESH_DISTANCE) {
+                    let pos = [cx, cy, cz];
+                    if wr.voxel_pool.has_chunk(&pos) {
+                        continue;
+                    }
+                    if let Some(chunk) = wr.world.get_chunk(cx, cy, cz) {
+                        wr.voxel_pool.upload_chunk(pos, chunk, &wr.world);
+                        wr.voxel_pool.invalidate_neighbor_boundaries(pos, &wr.world);
+                        wr.svdag_pool.remove_chunk(&pos);
+                        wr.svdag_pending.remove(&pos);
+                    }
+                }
+            }
+        }
+
+        // Route newly loaded far chunks to SVDAG pending (within SVDAG_DISTANCE)
+        for pos in &delta.loaded {
+            let [cx, cy, cz] = *pos;
+            let dist = crate::voxel::world::chunk_distance(cx, cy, cz, player_cx, player_cy, player_cz);
+            if dist > MESH_DISTANCE && dist <= SVDAG_DISTANCE {
+                wr.svdag_pending.insert(*pos);
+            }
+        }
+
+        const COMPRESSIONS_PER_FRAME: usize = 64;
+        if !wr.svdag_pending.is_empty() {
+            let mut candidates: Vec<[i32; 3]> = wr.svdag_pending.iter().copied().collect();
+            candidates.sort_by_key(|pos| {
+                let dx = pos[0] - player_cx;
+                let dy = pos[1] - player_cy;
+                let dz = pos[2] - player_cz;
+                dx * dx + dy * dy + dz * dz
+            });
+            let mut groups: Vec<[i32; 3]> = candidates.iter().map(|&[cx, cy, cz]| [cx & !3, cy & !3, cz & !3]).collect();
+            groups.sort_unstable();
+            groups.dedup();
+            groups.sort_by_key(|pos| {
+                let dx = pos[0] - player_cx;
+                let dy = pos[1] - player_cy;
+                let dz = pos[2] - player_cz;
+                dx * dx + dy * dy + dz * dz
+            });
+
+            let mut cache_loaded = Vec::new();
+            for &group_pos in &groups {
+                if wr.svdag_pool.has_chunk(&group_pos) || wr.svdag_in_flight.contains(&group_pos) || wr.lod_empty.contains(&group_pos) {
+                    cache_loaded.push(group_pos);
+                    continue;
+                }
+                if let Some(compressed) = wr.svdag_caches[0].read(group_pos) {
+                    if let Ok(dag_data) = lz4_flex::decompress_size_prepended(compressed) {
+                        if dag_data.len() > 68 && wr.svdag_pool.chunk_count() < MAX_SVDAG_CHUNKS - 1 && !wr.svdag_pool.is_near_budget() {
+                            wr.svdag_pool.upload_chunk(group_pos, &dag_data, 2, SUPER_CHUNK_VOXELS);
+                        }
+                        cache_loaded.push(group_pos);
+                    }
+                }
+            }
+            for gp in &cache_loaded {
+                for dy in 0..4i32 {
+                    for dz in 0..4i32 {
+                        for dx in 0..4i32 {
+                            wr.svdag_pending.remove(&[gp[0] + dx, gp[1] + dy, gp[2] + dz]);
+                        }
+                    }
+                }
+            }
+
+            let mut submitted = 0;
+            for &group_pos in &groups {
+                if submitted >= COMPRESSIONS_PER_FRAME {
+                    break;
+                }
+                let [gx, gy, gz] = group_pos;
+                if cache_loaded.contains(&group_pos) || wr.svdag_in_flight.contains(&group_pos) || wr.svdag_pool.has_chunk(&group_pos) {
+                    continue;
+                }
+                let mut chunks: Vec<Option<Chunk>> = Vec::with_capacity(64);
+                let mut all_present = true;
+                for dy in 0..4i32 {
+                    for dz in 0..4i32 {
+                        for dx in 0..4i32 {
+                            let c = wr.world.get_chunk(gx + dx, gy + dy, gz + dz);
+                            if c.is_none() {
+                                all_present = false;
+                            }
+                            chunks.push(c.cloned());
+                        }
+                    }
+                }
+                if !all_present {
+                    continue;
+                }
+                let boxed: Box<[Option<Chunk>; 64]> = match chunks.into_boxed_slice().try_into() {
+                    Ok(b) => b,
+                    Err(_) => unreachable!("collected exactly 64 entries"),
+                };
+                wr.svdag_compressor.request_super_chunk(group_pos, boxed);
+                wr.svdag_in_flight.insert(group_pos);
+                for dy in 0..4i32 {
+                    for dz in 0..4i32 {
+                        for dx in 0..4i32 {
+                            wr.svdag_pending.remove(&[gx + dx, gy + dy, gz + dz]);
+                        }
+                    }
+                }
+                submitted += 1;
+            }
+        }
+
+        // --- LOD super-chunk generation beyond LOD-0 range ---
+        let lod_submitted = schedule_lod_generation(wr, player_cx, player_cy, player_cz);
+        if lod_submitted || !wr.lod_in_flight.is_empty() {
+            wr.lod_idle_frames = 0;
+        } else {
+            wr.lod_idle_frames = wr.lod_idle_frames.saturating_add(1);
+        }
+
+        // --- Heightmap tile generation (replaces LOD-3 and LOD-4) ---
+        wr.heightmap_pool.tick();
+        for mesh in wr.heightmap_generator.receive() {
+            wr.heightmap_in_flight.remove(&mesh.pos);
+            wr.heightmap_pool.upload_tile(&mesh, player_cx, player_cz);
+        }
+        // Evict tiles beyond the outermost heightmap band
+        let hm_max_dist = HEIGHTMAP_BANDS.last().map(|b| b.5).unwrap_or(0) + 64;
+        wr.heightmap_pool.evict_out_of_range(player_cx, player_cz, hm_max_dist);
+        schedule_heightmap_generation(wr, player_cx, player_cz);
+
+        wr.last_player_chunk = [player_cx, player_cy, player_cz];
         Ok(())
     }
+}
 
+/// LOD level definitions: (chunk alignment, voxel size in blocks, lod_level for pool, distance band).
+const LOD_BANDS: &[(i32, u32, u32, i32, i32)] = &[
+    // (align, voxel_size, lod_level, min_dist, max_dist)
+    // Each band extends +align beyond its nominal boundary so the inner LOD's chunks
+    // overlap into the outer band. This prevents gaps where shallow-angle rays miss
+    // terrain in the outer LOD's boundary chunks.
+    // LOD-1 extends inward to MESH_DISTANCE as a fallback while LOD-0 super-chunks
+    // assemble (LOD-0 requires all 64 child chunks; LOD-1 generates directly from
+    // noise). Once LOD-0 completes, its higher-resolution chunks win in the ray march.
+    // Each band extends inward to the previous band's nominal start as a fallback
+    // while finer LODs assemble. Coarser LODs generate from noise (no child dependency)
+    // so they're available immediately. Finer LODs replace them once ready.
+    (8, 2, 3, MESH_DISTANCE, LOD1_DISTANCE + 8), // LOD-1: covers LOD-0 area (8-24) as fallback
+    (16, 4, 4, LOD0_DISTANCE, LOD2_DISTANCE + 16), // LOD-2: covers LOD-1 area (24-48) as fallback
+                                                 // LOD-3 and LOD-4 replaced by rasterized heightmap tiles (HEIGHTMAP_BANDS)
+];
+const MAX_LOD_IN_FLIGHT: usize = 32;
+const LOD_SUBMISSIONS_PER_FRAME: usize = 32;
+
+/// Schedule direct LOD terrain generation for positions beyond LOD-0 range.
+/// Returns true if any LOD work was submitted this frame.
+unsafe fn schedule_lod_generation(wr: &mut WorldResources, player_cx: i32, player_cy: i32, player_cz: i32) -> bool {
+    if wr.lod_in_flight.len() >= MAX_LOD_IN_FLIGHT {
+        return true;
+    }
+    let mut total_submitted = 0usize;
+    for &(align, voxel_size, lod_level, min_dist, max_dist) in LOD_BANDS {
+        let half = max_dist / align + 1;
+        let pcx = player_cx.div_euclid(align) * align;
+        let pcy = player_cy.div_euclid(align) * align;
+        let pcz = player_cz.div_euclid(align) * align;
+        let mut submitted = 0;
+
+        for ring in 0..=half {
+            if submitted >= LOD_SUBMISSIONS_PER_FRAME {
+                break;
+            }
+            for dz in -ring..=ring {
+                for dy in -ring..=ring {
+                    for dx in -ring..=ring {
+                        // Only process the shell border of this ring
+                        if dx.abs() != ring && dy.abs() != ring && dz.abs() != ring {
+                            continue;
+                        }
+                        let gx = pcx + dx * align;
+                        let gy = pcy + dy * align;
+                        let gz = pcz + dz * align;
+                        if !in_lod_band(gx, gy, gz, player_cx, player_cy, player_cz, min_dist, max_dist) {
+                            continue;
+                        }
+                        // Skip LOD chunks whose AABB overlaps the mesh shader cube.
+                        // The mesh is authoritative in its area; LOD fallbacks are
+                        // only needed beyond it.
+                        let mesh_lo = [player_cx - MESH_DISTANCE, player_cy - MESH_DISTANCE, player_cz - MESH_DISTANCE];
+                        let mesh_hi = [player_cx + MESH_DISTANCE, player_cy + MESH_DISTANCE, player_cz + MESH_DISTANCE];
+                        let overlaps_mesh = gx <= mesh_hi[0]
+                            && gx + align > mesh_lo[0]
+                            && gy <= mesh_hi[1]
+                            && gy + align > mesh_lo[1]
+                            && gz <= mesh_hi[2]
+                            && gz + align > mesh_lo[2];
+                        if overlaps_mesh {
+                            continue;
+                        }
+                        let pos = [gx, gy, gz];
+                        if wr.svdag_pool.has_chunk(&pos) || wr.lod_in_flight.contains(&pos) || wr.lod_empty.contains(&pos) {
+                            continue;
+                        }
+                        if try_load_cached_lod(wr, pos, lod_level) {
+                            continue;
+                        }
+                        if submitted >= LOD_SUBMISSIONS_PER_FRAME {
+                            break;
+                        }
+                        let origin = [gx * CHUNK_SIZE as i32, gy * CHUNK_SIZE as i32, gz * CHUNK_SIZE as i32];
+                        wr.svdag_compressor.request_lod_generate(pos, origin, voxel_size, lod_level, wr.seed);
+                        wr.lod_in_flight.insert(pos);
+                        submitted += 1;
+                    }
+                }
+            }
+        }
+        total_submitted += submitted;
+    }
+    total_submitted > 0
+}
+
+fn in_lod_band(gx: i32, gy: i32, gz: i32, px: i32, py: i32, pz: i32, min_dist: i32, max_dist: i32) -> bool {
+    let dist = crate::voxel::world::chunk_distance(gx, gy, gz, px, py, pz);
+    dist >= min_dist && dist <= max_dist
+}
+
+unsafe fn try_load_cached_lod(wr: &mut WorldResources, pos: [i32; 3], lod_level: u32) -> bool {
+    let cache_idx = lod_level.saturating_sub(2) as usize;
+    if cache_idx >= wr.svdag_caches.len() {
+        return false;
+    }
+    let Some(compressed) = wr.svdag_caches[cache_idx].read(pos) else {
+        return false;
+    };
+    let Ok(dag_data) = lz4_flex::decompress_size_prepended(compressed) else {
+        return false;
+    };
+    if dag_data.len() > 68 && wr.svdag_pool.chunk_count() < MAX_SVDAG_CHUNKS - 1 && !wr.svdag_pool.is_near_budget() {
+        wr.svdag_pool.upload_chunk(pos, &dag_data, lod_level, SUPER_CHUNK_VOXELS);
+    }
+    true
+}
+
+/// Heightmap tile bands: (tile_align_chunks, grid_posts, spacing_blocks, coarse_spacing, min_dist, max_dist).
+const HEIGHTMAP_BANDS: &[(i32, usize, f64, f64, i32, i32)] = &[
+    (32, 129, 4.0, 16.0, LOD2_DISTANCE, LOD3_DISTANCE + 32),
+    (64, 65, 16.0, 64.0, LOD3_DISTANCE, LOD4_DISTANCE),
+];
+const MAX_HEIGHTMAP_IN_FLIGHT: usize = 16;
+const HEIGHTMAP_SUBMISSIONS_PER_FRAME: usize = 8;
+
+fn schedule_heightmap_generation(wr: &mut WorldResources, player_cx: i32, player_cz: i32) {
+    if wr.heightmap_in_flight.len() >= MAX_HEIGHTMAP_IN_FLIGHT {
+        return;
+    }
+    let mut total_submitted = 0usize;
+    for (band_idx, &(align, grid_posts, spacing, coarse_spacing, min_dist, max_dist)) in HEIGHTMAP_BANDS.iter().enumerate() {
+        let half = max_dist / align + 1;
+        let pcx = player_cx.div_euclid(align) * align;
+        let pcz = player_cz.div_euclid(align) * align;
+
+        for ring in 0..=half {
+            if total_submitted >= HEIGHTMAP_SUBMISSIONS_PER_FRAME {
+                return;
+            }
+            for dz in -ring..=ring {
+                for dx in -ring..=ring {
+                    if dx.abs() != ring && dz.abs() != ring {
+                        continue;
+                    }
+                    let gx = pcx + dx * align;
+                    let gz = pcz + dz * align;
+                    let dist = (gx - player_cx).abs().max((gz - player_cz).abs());
+                    if dist < min_dist || dist > max_dist {
+                        continue;
+                    }
+                    let pos = [gx, gz];
+                    if wr.heightmap_pool.has_tile(&pos) || wr.heightmap_in_flight.contains(&pos) {
+                        continue;
+                    }
+                    let tile_size_blocks = align as f64 * CHUNK_SIZE as f64;
+                    wr.heightmap_generator.request(HeightmapRequest {
+                        pos,
+                        lod: band_idx as u8,
+                        tile_size_blocks,
+                        grid_posts,
+                        spacing,
+                        coarse_spacing,
+                        seed: wr.seed,
+                    });
+                    wr.heightmap_in_flight.insert(pos);
+                    total_submitted += 1;
+                    if total_submitted >= HEIGHTMAP_SUBMISSIONS_PER_FRAME {
+                        return;
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl VulkanApplication {
     /// Waits for the current frame's fence, then acquires the next swapchain image.
     /// Returns `None` if the swapchain was out of date and had to be recreated.
     unsafe fn acquire_next_image(&mut self, window: &Window) -> anyhow::Result<Option<usize>> {
@@ -483,6 +1017,11 @@ impl VulkanApplication {
         self.vulkan_application_data
             .images_in_flight
             .resize(self.vulkan_application_data.swapchain_images.len(), vk::Fence::null());
+        // Re-bind depth pyramid descriptors for world pipelines (handles were invalidated)
+        if let Some(wr) = &self.wr {
+            wr.mesh_shader_pipeline.update_depth_pyramid(&self.device, &self.vulkan_application_data);
+            wr.svdag_pipeline.update_depth_pyramid(&self.device, &self.vulkan_application_data);
+        }
         Ok(())
     }
 
@@ -526,11 +1065,16 @@ impl VulkanApplication {
 
     unsafe fn destroy_resources(&mut self) {
         use crate::graphical_core::compute_cull;
+        self.ui.destroy(&self.device);
         if let Some(vr_sc) = self._vr_swapchain.take() {
             vr_sc.destroy(&self.device);
         }
-        self.mesh_shader_pipeline.destroy(&self.device);
-        self.voxel_pool.destroy(&self.device);
+        if let Some(mut wr) = self.wr.take() {
+            wr.svdag_pipeline.destroy(&self.device);
+            wr.svdag_pool.destroy(&self.device);
+            wr.mesh_shader_pipeline.destroy(&self.device);
+            wr.voxel_pool.destroy(&self.device);
+        }
         compute_cull::destroy_depth_pyramid_pipeline(&self.device, &self.depth_pyramid_pipeline);
         destroy_textures(&self.device, &mut self.vulkan_application_data);
         destroy_palette_buffer(&self.device, &mut self.vulkan_application_data);

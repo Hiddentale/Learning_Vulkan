@@ -197,6 +197,10 @@ impl VoxelPool {
         self.chunk_slots.contains_key(pos)
     }
 
+    pub fn chunk_positions(&self) -> Vec<[i32; 3]> {
+        self.chunk_slots.keys().copied().collect()
+    }
+
     pub unsafe fn destroy(&mut self, device: &Device) {
         device.unmap_memory(self.voxel_memory);
         device.destroy_buffer(self.voxel_buffer, None);
