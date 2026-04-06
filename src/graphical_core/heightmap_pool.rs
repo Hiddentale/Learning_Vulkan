@@ -22,6 +22,8 @@ pub struct TileDrawInfo {
     pub index_offset: u32,
     pub index_count: u32,
     pub lod: u8,
+    pub pos: [i32; 2],
+    pub morph_factor: f32,
 }
 
 /// Manages GPU vertex/index buffers for heightmap tile meshes.
@@ -89,6 +91,8 @@ impl HeightmapPool {
             index_offset: index_offset as u32,
             index_count: mesh.indices.len() as u32,
             lod: mesh.lod,
+            pos: mesh.pos,
+            morph_factor: 0.0,
         });
         self.tiles.insert(mesh.pos, slot);
     }
@@ -122,15 +126,31 @@ impl HeightmapPool {
     }
 
     /// Returns draw info for all visible tiles that pass frustum culling.
-    pub fn visible_tiles(&self, frustum: &crate::graphical_core::frustum::Frustum) -> Vec<TileDrawInfo> {
+    /// Computes per-tile morph_factor based on distance to band boundary.
+    pub fn visible_tiles(
+        &self,
+        frustum: &crate::graphical_core::frustum::Frustum,
+        player_cx: i32,
+        player_cz: i32,
+        bands: &[(i32, i32)], // (min_dist, max_dist) per band index
+    ) -> Vec<TileDrawInfo> {
         let mut visible = Vec::new();
         for (&_pos, &slot) in &self.tiles {
             if let Some(info) = &self.tile_info[slot as usize] {
                 let min = Vec3::new(info.aabb_min[0], info.aabb_min[1], info.aabb_min[2]);
                 let max = Vec3::new(info.aabb_max[0], info.aabb_max[1], info.aabb_max[2]);
-                if frustum.intersects_aabb(min, max) {
-                    visible.push(*info);
+                if !frustum.intersects_aabb(min, max) {
+                    continue;
                 }
+                let mut tile = *info;
+                // Compute morph_factor: 0 at inner edge, 1 at outer edge of band
+                let dist = (tile.pos[0] - player_cx).abs().max((tile.pos[1] - player_cz).abs());
+                if let Some(&(band_min, band_max)) = bands.get(tile.lod as usize) {
+                    let range = (band_max - band_min).max(1) as f32;
+                    let t = (dist - band_min) as f32 / range;
+                    tile.morph_factor = t.clamp(0.0, 1.0);
+                }
+                visible.push(tile);
             }
         }
         visible
@@ -141,6 +161,19 @@ impl HeightmapPool {
         let mut positions: Vec<[i32; 2]> = self.tiles.keys().copied().collect();
         positions.sort_by_key(|pos| std::cmp::Reverse((pos[0] - player_cx).abs().max((pos[1] - player_cz).abs())));
         for pos in positions.into_iter().take(count) {
+            self.remove_tile(&pos);
+        }
+    }
+
+    /// Remove all tiles beyond max_dist from the player (chunk coords).
+    pub unsafe fn evict_out_of_range(&mut self, player_cx: i32, player_cz: i32, max_dist: i32) {
+        let to_remove: Vec<[i32; 2]> = self
+            .tiles
+            .keys()
+            .filter(|pos| (pos[0] - player_cx).abs().max((pos[1] - player_cz).abs()) > max_dist)
+            .copied()
+            .collect();
+        for pos in to_remove {
             self.remove_tile(&pos);
         }
     }

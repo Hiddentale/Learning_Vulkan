@@ -502,10 +502,16 @@ impl VulkanApplication {
         } else {
             None
         };
-        let heightmap_visible = wr.heightmap_pool.visible_tiles(&frustum);
+        let hm_bands: Vec<(i32, i32)> = HEIGHTMAP_BANDS.iter().map(|b| (b.4, b.5)).collect();
+        let heightmap_visible = wr.heightmap_pool.visible_tiles(
+            &frustum,
+            (camera.position.x / CHUNK_SIZE as f32).floor() as i32,
+            (camera.position.z / CHUNK_SIZE as f32).floor() as i32,
+            &hm_bands,
+        );
         let heightmap_push = crate::graphical_core::heightmap_pipeline::HeightmapPush {
             camera_pos: camera.position.to_array(),
-            morph_factor: 0.0, // TODO: compute from distance to band boundary
+            morph_factor: 0.0,
         };
         record_mesh_shader_command_buffer(
             &self.device,
@@ -740,6 +746,9 @@ impl VulkanApplication {
             wr.heightmap_in_flight.remove(&mesh.pos);
             wr.heightmap_pool.upload_tile(&mesh);
         }
+        // Evict tiles beyond the outermost heightmap band
+        let hm_max_dist = HEIGHTMAP_BANDS.last().map(|b| b.5).unwrap_or(0) + 64;
+        wr.heightmap_pool.evict_out_of_range(player_cx, player_cz, hm_max_dist);
         schedule_heightmap_generation(wr, player_cx, player_cz);
 
         wr.last_player_chunk = [player_cx, player_cy, player_cz];

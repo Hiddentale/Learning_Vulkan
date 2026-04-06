@@ -334,13 +334,16 @@ unsafe fn record_heightmap_draws(
         &[],
     );
 
-    let push_bytes: &[u8] = std::slice::from_raw_parts(push as *const HeightmapPush as *const u8, std::mem::size_of::<HeightmapPush>());
-    device.cmd_push_constants(cmd, pipeline.pipeline_layout, vk::ShaderStageFlags::VERTEX, 0, push_bytes);
-
     device.cmd_bind_vertex_buffers(cmd, 0, &[pool.vertex_buffer], &[0]);
     device.cmd_bind_index_buffer(cmd, pool.index_buffer, 0, vk::IndexType::UINT16);
 
     for tile in visible_tiles {
+        let tile_push = HeightmapPush {
+            camera_pos: push.camera_pos,
+            morph_factor: tile.morph_factor,
+        };
+        let bytes: &[u8] = std::slice::from_raw_parts(&tile_push as *const HeightmapPush as *const u8, std::mem::size_of::<HeightmapPush>());
+        device.cmd_push_constants(cmd, pipeline.pipeline_layout, vk::ShaderStageFlags::VERTEX, 0, bytes);
         device.cmd_draw_indexed(cmd, tile.index_count, 1, tile.index_offset, tile.vertex_offset as i32, 0);
     }
 }
