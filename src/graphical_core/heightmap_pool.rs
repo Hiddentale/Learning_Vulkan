@@ -73,7 +73,10 @@ impl HeightmapPool {
         })
     }
 
-    pub unsafe fn upload_tile(&mut self, mesh: &HeightmapTileMesh) {
+    pub unsafe fn upload_tile(&mut self, mesh: &HeightmapTileMesh, player_cx: i32, player_cz: i32) {
+        if self.free_slots.is_empty() && self.next_slot >= MAX_TILES {
+            self.evict_farthest(16, player_cx, player_cz);
+        }
         let slot = self.alloc_slot();
         let vertex_offset = slot as usize * MAX_VERTICES_PER_TILE;
         let index_offset = slot as usize * MAX_INDICES_PER_TILE;

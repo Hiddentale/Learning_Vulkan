@@ -23,6 +23,7 @@ use crate::graphical_core::{
 };
 use crate::storage::region::RegionStore;
 use crate::voxel::chunk::{Chunk, CHUNK_SIZE};
+use crate::voxel::erosion::ErosionMap;
 use crate::voxel::heightmap_generator::{HeightmapGenerator, HeightmapRequest};
 use crate::voxel::svdag_compressor::SvdagCompressor;
 use crate::voxel::world::World;
@@ -30,6 +31,7 @@ use crate::vr::{VrContext, VrSession, VrSwapchain};
 use crate::VALIDATION_ENABLED;
 use anyhow::anyhow;
 use log::info;
+use std::sync::Arc;
 use vk::Handle;
 use vulkan_rust::{vk, Device, Entry, Instance, LibloadingLoader};
 use winit::window::Window;
@@ -120,6 +122,8 @@ pub struct WorldResources {
     heightmap_pipeline: HeightmapPipeline,
     heightmap_generator: HeightmapGenerator,
     heightmap_in_flight: std::collections::HashSet<[i32; 2]>,
+    #[allow(dead_code)] // retained for future access (shadow rays, re-erosion)
+    erosion_map: Option<Arc<ErosionMap>>,
 }
 
 pub struct VulkanApplication {
@@ -255,8 +259,8 @@ impl VulkanApplication {
     ///
     /// # Safety
     /// Calls unsafe Vulkan APIs.
-    pub unsafe fn enter_world(&mut self, world_dir: &std::path::Path, seed: u32) -> anyhow::Result<()> {
-        let mut world = World::new(WORLD_DISTANCE, seed);
+    pub unsafe fn enter_world(&mut self, world_dir: &std::path::Path, seed: u32, erosion_map: Option<Arc<ErosionMap>>) -> anyhow::Result<()> {
+        let mut world = World::new(WORLD_DISTANCE, seed, erosion_map.clone());
         world.update(0, 5, 0); // Initial camera Y ≈ 90 blocks → chunk 5
 
         let mut voxel_pool = VoxelPool::new(
@@ -277,7 +281,7 @@ impl VulkanApplication {
 
         let svdag_pool = SvdagPool::new(MAX_SVDAG_CHUNKS, &self.device, &self.vulkan_instance, &mut self.vulkan_application_data)?;
         let svdag_pipeline = SvdagPipeline::create(&self.device, &self.vulkan_instance, &mut self.vulkan_application_data, &svdag_pool)?;
-        let svdag_compressor = SvdagCompressor::new();
+        let svdag_compressor = SvdagCompressor::new(erosion_map.clone());
         let mut svdag_caches = Vec::new();
         for lod in 0..=LOD_BANDS.len() as u32 {
             svdag_caches.push(RegionStore::new(&crate::storage::world_meta::svdag_lod_dir(world_dir, lod))?);
@@ -285,7 +289,7 @@ impl VulkanApplication {
 
         let heightmap_pool = HeightmapPool::new(&self.device, &self.vulkan_instance, &mut self.vulkan_application_data)?;
         let heightmap_pipeline = HeightmapPipeline::create(&self.device, &self.vulkan_application_data)?;
-        let heightmap_generator = HeightmapGenerator::new();
+        let heightmap_generator = HeightmapGenerator::new(erosion_map.clone());
 
         self.wr = Some(WorldResources {
             world,
@@ -306,6 +310,7 @@ impl VulkanApplication {
             heightmap_pipeline,
             heightmap_generator,
             heightmap_in_flight: std::collections::HashSet::new(),
+            erosion_map,
         });
         self.depth_pyramid_needs_init = true;
         Ok(())
@@ -744,7 +749,7 @@ impl VulkanApplication {
         wr.heightmap_pool.tick();
         for mesh in wr.heightmap_generator.receive() {
             wr.heightmap_in_flight.remove(&mesh.pos);
-            wr.heightmap_pool.upload_tile(&mesh);
+            wr.heightmap_pool.upload_tile(&mesh, player_cx, player_cz);
         }
         // Evict tiles beyond the outermost heightmap band
         let hm_max_dist = HEIGHTMAP_BANDS.last().map(|b| b.5).unwrap_or(0) + 64;

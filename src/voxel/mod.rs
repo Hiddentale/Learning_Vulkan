@@ -2,6 +2,8 @@ pub mod biome;
 pub mod block;
 pub mod chunk;
 pub mod chunk_generator;
+pub mod erosion;
+pub mod erosion_worker;
 pub mod heightmap_generator;
 pub mod material;
 pub mod metric;

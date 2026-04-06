@@ -1,5 +1,8 @@
 use crate::storage::world_meta::WorldMeta;
+use crate::voxel::erosion::ErosionMap;
+use crate::voxel::erosion_worker::ErosionWorker;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 pub enum GameState {
     TitleScreen,
@@ -15,6 +18,8 @@ pub enum GameState {
         seed: u32,
         loaded: usize,
         total: usize,
+        erosion_worker: Option<ErosionWorker>,
+        erosion_map: Option<Arc<ErosionMap>>,
     },
     /// Enter an existing world without pre-generation.
     EnteringWorld {

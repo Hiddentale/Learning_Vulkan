@@ -1,7 +1,9 @@
 #![allow(dead_code)] // Wired up incrementally
 use super::block::BlockType;
+use super::erosion::ErosionMap;
 use super::terrain::{self, WorldNoises, SEA_LEVEL};
 use crossbeam_channel::{Receiver, Sender};
+use std::sync::Arc;
 use std::thread;
 
 const WORKER_COUNT: usize = 2;
@@ -45,7 +47,7 @@ pub struct HeightmapGenerator {
 }
 
 impl HeightmapGenerator {
-    pub fn new() -> Self {
+    pub fn new(erosion_map: Option<Arc<ErosionMap>>) -> Self {
         let (request_tx, request_rx) = crossbeam_channel::unbounded::<HeightmapRequest>();
         let (result_tx, result_rx) = crossbeam_channel::unbounded::<HeightmapTileMesh>();
 
@@ -53,9 +55,10 @@ impl HeightmapGenerator {
         for _ in 0..WORKER_COUNT {
             let rx = request_rx.clone();
             let tx = result_tx.clone();
+            let emap = erosion_map.clone();
             workers.push(thread::spawn(move || {
                 while let Ok(req) = rx.recv() {
-                    let mesh = generate_tile_mesh(&req);
+                    let mesh = generate_tile_mesh(&req, emap.as_deref());
                     if tx.send(mesh).is_err() {
                         break;
                     }
@@ -84,7 +87,7 @@ impl HeightmapGenerator {
     }
 }
 
-fn generate_tile_mesh(req: &HeightmapRequest) -> HeightmapTileMesh {
+fn generate_tile_mesh(req: &HeightmapRequest, erosion_map: Option<&ErosionMap>) -> HeightmapTileMesh {
     let noises = WorldNoises::new(req.seed);
     let n = req.grid_posts;
     let chunk_size = 16.0_f64;
@@ -101,7 +104,7 @@ fn generate_tile_mesh(req: &HeightmapRequest) -> HeightmapTileMesh {
         for gx in 0..n {
             let wx = origin_x + gx as f64 * req.spacing;
             let wz = origin_z + gz as f64 * req.spacing;
-            let (height, surface) = terrain::sample_surface(&noises, wx, wz);
+            let (height, surface) = terrain::sample_surface(&noises, wx, wz, erosion_map);
 
             let y = if height < SEA_LEVEL { SEA_LEVEL as f32 } else { height as f32 };
             let mat = if height < SEA_LEVEL { BlockType::Water } else { surface };
@@ -127,10 +130,10 @@ fn generate_tile_mesh(req: &HeightmapRequest) -> HeightmapTileMesh {
             let frac_z = (wz - snapped_z) / req.coarse_spacing;
 
             // Bilinear interpolation of coarser heights
-            let (h00, _) = terrain::sample_surface(&noises, snapped_x, snapped_z);
-            let (h10, _) = terrain::sample_surface(&noises, snapped_x + req.coarse_spacing, snapped_z);
-            let (h01, _) = terrain::sample_surface(&noises, snapped_x, snapped_z + req.coarse_spacing);
-            let (h11, _) = terrain::sample_surface(&noises, snapped_x + req.coarse_spacing, snapped_z + req.coarse_spacing);
+            let (h00, _) = terrain::sample_surface(&noises, snapped_x, snapped_z, erosion_map);
+            let (h10, _) = terrain::sample_surface(&noises, snapped_x + req.coarse_spacing, snapped_z, erosion_map);
+            let (h01, _) = terrain::sample_surface(&noises, snapped_x, snapped_z + req.coarse_spacing, erosion_map);
+            let (h11, _) = terrain::sample_surface(&noises, snapped_x + req.coarse_spacing, snapped_z + req.coarse_spacing, erosion_map);
 
             let coarse_y = (h00 as f64 * (1.0 - frac_x) * (1.0 - frac_z)
                 + h10 as f64 * frac_x * (1.0 - frac_z)

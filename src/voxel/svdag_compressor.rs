@@ -1,9 +1,11 @@
 #![allow(dead_code)] // Wired up in Phase 3
 
 use super::chunk::Chunk;
+use super::erosion::ErosionMap;
 use super::svdag::{svdag_compress, svdag_from_chunk, svdag_from_super_chunk, svdag_lod_merge, svdag_lod_merge_super, SuperChunkGrid};
 use super::terrain;
 use crossbeam_channel::{Receiver, Sender};
+use std::sync::Arc;
 use std::thread;
 
 const WORKER_COUNT: usize = 4;
@@ -53,7 +55,7 @@ pub struct SvdagCompressor {
 }
 
 impl SvdagCompressor {
-    pub fn new() -> Self {
+    pub fn new(erosion_map: Option<Arc<ErosionMap>>) -> Self {
         let (request_tx, request_rx) = crossbeam_channel::unbounded::<CompressionRequest>();
         let (result_tx, result_rx) = crossbeam_channel::unbounded::<CompressionResult>();
 
@@ -61,6 +63,7 @@ impl SvdagCompressor {
         for _ in 0..WORKER_COUNT {
             let rx = request_rx.clone();
             let tx = result_tx.clone();
+            let emap = erosion_map.clone();
             workers.push(thread::spawn(move || {
                 while let Ok(req) = rx.recv() {
                     let result = match req {
@@ -129,7 +132,7 @@ impl SvdagCompressor {
                             lod_level,
                             seed,
                         } => {
-                            let grid = terrain::generate_lod_super_chunk(origin, voxel_size, seed);
+                            let grid = terrain::generate_lod_super_chunk(origin, voxel_size, seed, emap.as_deref());
                             let dag_data = svdag_compress(&grid, 64);
                             CompressionResult {
                                 pos,

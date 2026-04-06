@@ -7,7 +7,7 @@ use noise::{Fbm, MultiFractal, NoiseFn, Perlin, RidgedMulti};
 pub(crate) const SEA_LEVEL: usize = 64;
 const DIRT_DEPTH: usize = 4;
 const MIN_HEIGHT: usize = 4;
-const MAX_HEIGHT: usize = 200;
+const MAX_HEIGHT: usize = 700;
 const CAVE_THRESHOLD: f64 = 0.55;
 const CHUNK_LAYERS: usize = (TERRAIN_MAX_CY - TERRAIN_MIN_CY + 1) as usize;
 
@@ -21,7 +21,7 @@ const CAVE_SCALE: f64 = 0.05;
 const TEMPERATURE_SCALE: f64 = 0.001;
 const HUMIDITY_SCALE: f64 = 0.001;
 const WARP_SCALE: f64 = 0.003;
-const WARP_STRENGTH: f64 = 80.0;
+pub(crate) const WARP_STRENGTH: f64 = 80.0;
 const OVERHANG_SCALE: f64 = 0.04;
 const OVERHANG_STRENGTH: f64 = 8.0;
 const OVERHANG_BAND: usize = 20;
@@ -32,16 +32,16 @@ const DETAIL_AMPLITUDE: f64 = 8.0;
 const WEIRDNESS_AMPLITUDE: f64 = 15.0;
 
 pub(crate) struct WorldNoises {
-    continentalness: Fbm<Perlin>,
-    erosion: Fbm<Perlin>,
-    weirdness: Fbm<Perlin>,
+    pub(crate) continentalness: Fbm<Perlin>,
+    pub(crate) erosion_noise: Fbm<Perlin>,
+    pub(crate) weirdness: Fbm<Perlin>,
     detail: Fbm<Perlin>,
     mountain: RidgedMulti<Perlin>,
     cave: Perlin,
     temperature: Fbm<Perlin>,
     humidity: Fbm<Perlin>,
-    warp_x: Fbm<Perlin>,
-    warp_z: Fbm<Perlin>,
+    pub(crate) warp_x: Fbm<Perlin>,
+    pub(crate) warp_z: Fbm<Perlin>,
     overhang: Perlin,
 }
 
@@ -53,7 +53,7 @@ impl WorldNoises {
                 .set_octaves(5)
                 .set_persistence(0.5)
                 .set_lacunarity(2.0),
-            erosion: Fbm::<Perlin>::new(seed + 9)
+            erosion_noise: Fbm::<Perlin>::new(seed + 9)
                 .set_frequency(EROSION_SCALE)
                 .set_octaves(4)
                 .set_persistence(0.5)
@@ -108,16 +108,23 @@ struct TerrainParams {
 }
 
 /// Sample all terrain parameters at world coordinates, applying domain warping.
-fn sample_params(noises: &WorldNoises, wx: f64, wz: f64) -> TerrainParams {
+fn sample_params(noises: &WorldNoises, wx: f64, wz: f64, erosion_map: Option<&super::erosion::ErosionMap>) -> TerrainParams {
     let warped_x = wx + noises.warp_x.get([wx, wz]) * WARP_STRENGTH;
     let warped_z = wz + noises.warp_z.get([wx, wz]) * WARP_STRENGTH;
 
     let continentalness = noises.continentalness.get([warped_x, warped_z]);
-    let erosion = noises.erosion.get([warped_x, warped_z]);
+    let erosion = noises.erosion_noise.get([warped_x, warped_z]);
     let weirdness = noises.weirdness.get([warped_x, warped_z]);
     let temperature = noises.temperature.get([warped_x, warped_z]);
     let humidity = noises.humidity.get([warped_x, warped_z]);
-    let height = compute_height(noises, warped_x, warped_z, continentalness, erosion, weirdness);
+    let mut height = compute_height_from_params(noises, warped_x, warped_z, continentalness, erosion, weirdness);
+
+    // Apply hydraulic erosion delta
+    if let Some(emap) = erosion_map {
+        let delta = emap.sample(wx, wz);
+        height = (height as f64 + delta).clamp(MIN_HEIGHT as f64, MAX_HEIGHT as f64) as usize;
+    }
+
     let biome = biome::determine_biome(continentalness, temperature, humidity, erosion, weirdness, height, SEA_LEVEL);
 
     TerrainParams {
@@ -156,7 +163,7 @@ fn lerp(a: f64, b: f64, t: f64) -> f64 {
     a + (b - a) * t.clamp(0.0, 1.0)
 }
 
-fn compute_height(noises: &WorldNoises, wx: f64, wz: f64, continentalness: f64, erosion: f64, weirdness: f64) -> usize {
+pub(crate) fn compute_height_from_params(noises: &WorldNoises, wx: f64, wz: f64, continentalness: f64, erosion: f64, weirdness: f64) -> usize {
     let base = continental_curve(continentalness);
 
     // Erosion controls terrain roughness: high erosion = full mountains, low = flat
@@ -171,14 +178,14 @@ fn compute_height(noises: &WorldNoises, wx: f64, wz: f64, continentalness: f64, 
 
 /// Sample the surface block type at world coordinates, applying domain warping.
 /// Returns (height, surface_block_type). Used by heightmap generator.
-pub(crate) fn sample_surface(noises: &WorldNoises, wx: f64, wz: f64) -> (usize, BlockType) {
-    let params = sample_params(noises, wx, wz);
+pub(crate) fn sample_surface(noises: &WorldNoises, wx: f64, wz: f64, erosion_map: Option<&super::erosion::ErosionMap>) -> (usize, BlockType) {
+    let params = sample_params(noises, wx, wz, erosion_map);
     let surface = biome::surface_block(params.biome);
     (params.height, surface)
 }
 
 /// Generates a full column of chunks at the given (chunk_x, chunk_z) coordinates.
-pub fn generate_column(chunk_x: i32, chunk_z: i32, seed: u32) -> Vec<Chunk> {
+pub fn generate_column(chunk_x: i32, chunk_z: i32, seed: u32, erosion_map: Option<&super::erosion::ErosionMap>) -> Vec<Chunk> {
     let noises = WorldNoises::new(seed);
     let mut chunks: Vec<Chunk> = (0..CHUNK_LAYERS).map(|_| Chunk::new(BlockType::Air)).collect();
 
@@ -186,7 +193,7 @@ pub fn generate_column(chunk_x: i32, chunk_z: i32, seed: u32) -> Vec<Chunk> {
         for x in 0..CHUNK_SIZE {
             let wx = chunk_x as f64 * CHUNK_SIZE as f64 + x as f64;
             let wz = chunk_z as f64 * CHUNK_SIZE as f64 + z as f64;
-            let params = sample_params(&noises, wx, wz);
+            let params = sample_params(&noises, wx, wz, erosion_map);
 
             fill_surface(&mut chunks, x, z, wx, wz, params.height, params.biome, &noises);
             carve_caves(&mut chunks, x, z, wx, wz, params.height, &noises);
@@ -254,7 +261,7 @@ fn set_block(chunks: &mut [Chunk], x: usize, y: usize, z: usize, block: BlockTyp
 }
 
 /// Generate a 64³ LOD super-chunk by sampling terrain noise at `voxel_size` spacing.
-pub fn generate_lod_super_chunk(origin: [i32; 3], voxel_size: u32, seed: u32) -> LodVoxelGrid {
+pub fn generate_lod_super_chunk(origin: [i32; 3], voxel_size: u32, seed: u32, erosion_map: Option<&super::erosion::ErosionMap>) -> LodVoxelGrid {
     let noises = WorldNoises::new(seed);
     let vs = voxel_size as f64;
     let grid_size = CHUNK_SIZE * 4; // 64
@@ -264,7 +271,7 @@ pub fn generate_lod_super_chunk(origin: [i32; 3], voxel_size: u32, seed: u32) ->
         for gx in 0..grid_size {
             let wx = origin[0] as f64 + gx as f64 * vs;
             let wz = origin[2] as f64 + gz as f64 * vs;
-            let params = sample_params(&noises, wx, wz);
+            let params = sample_params(&noises, wx, wz, erosion_map);
             let surface = biome::surface_block(params.biome);
             let subsurface = biome::subsurface_block(params.biome);
 

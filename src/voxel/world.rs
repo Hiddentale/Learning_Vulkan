@@ -1,11 +1,13 @@
 use super::block::BlockType;
 use super::chunk::{Chunk, CHUNK_SIZE};
 use super::chunk_generator::ChunkGenerator;
+use super::erosion::ErosionMap;
 use super::metric::MetricField;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 pub const TERRAIN_MIN_CY: i32 = 0;
-pub const TERRAIN_MAX_CY: i32 = 15;
+pub const TERRAIN_MAX_CY: i32 = 47; // 768 blocks tall (48 × 16)
 
 pub struct World {
     chunks: HashMap<[i32; 3], Chunk>,
@@ -21,11 +23,11 @@ pub struct WorldDelta {
 }
 
 impl World {
-    pub fn new(render_distance: i32, seed: u32) -> Self {
+    pub fn new(render_distance: i32, seed: u32, erosion_map: Option<Arc<ErosionMap>>) -> Self {
         Self {
             chunks: HashMap::new(),
             render_distance,
-            generator: ChunkGenerator::new(seed),
+            generator: ChunkGenerator::new(seed, erosion_map),
             metric: MetricField::new(),
         }
     }
@@ -176,7 +178,7 @@ mod tests {
 
     #[test]
     fn chunks_load_within_render_distance() {
-        let mut world = World::new(4, 42);
+        let mut world = World::new(4, 42, None);
         drain_world(&mut world, 0, 0);
         let rd = 4;
         let expected = ((2 * rd + 1) * (2 * rd + 1)) as usize * TERRAIN_LAYERS;
@@ -185,7 +187,7 @@ mod tests {
 
     #[test]
     fn chunks_unload_on_move() {
-        let mut world = World::new(4, 42);
+        let mut world = World::new(4, 42, None);
         drain_world(&mut world, 0, 0);
         let delta = world.update(10, 5, 0);
         assert!(!delta.unloaded.is_empty());
