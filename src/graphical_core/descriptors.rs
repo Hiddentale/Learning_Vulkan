@@ -63,40 +63,43 @@ pub fn update_set(
     uniform_buffer: vk::Buffer,
     palette_buffer: vk::Buffer,
 ) {
-    let image_info = *vk::DescriptorImageInfo::builder()
+    // Bind arrays to locals so they outlive the WriteDescriptorSet structs.
+    // The builder stores raw pointers — dereferencing (*) copies the struct but
+    // not the pointed-to data. Temporaries would dangle in release mode.
+    let image_infos = [*vk::DescriptorImageInfo::builder()
         .image_view(image_view)
         .sampler(sampler)
-        .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+        .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
 
-    let sampler_write = *vk::WriteDescriptorSet::builder()
-        .dst_set(descriptor_set)
-        .dst_binding(0)
-        .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-        .image_info(&[image_info]);
-
-    let ubo_info = *vk::DescriptorBufferInfo::builder()
+    let ubo_infos = [*vk::DescriptorBufferInfo::builder()
         .buffer(uniform_buffer)
         .offset(0)
-        .range(std::mem::size_of::<crate::graphical_core::camera::UniformBufferObject>() as u64);
+        .range(std::mem::size_of::<crate::graphical_core::camera::UniformBufferObject>() as u64)];
 
-    let ubo_write = *vk::WriteDescriptorSet::builder()
-        .dst_set(descriptor_set)
-        .dst_binding(1)
-        .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-        .buffer_info(&[ubo_info]);
-
-    let palette_info = *vk::DescriptorBufferInfo::builder()
+    let palette_infos = [*vk::DescriptorBufferInfo::builder()
         .buffer(palette_buffer)
         .offset(0)
-        .range(std::mem::size_of::<crate::voxel::material::MaterialPalette>() as u64);
+        .range(std::mem::size_of::<crate::voxel::material::MaterialPalette>() as u64)];
 
-    let palette_write = *vk::WriteDescriptorSet::builder()
-        .dst_set(descriptor_set)
-        .dst_binding(2)
-        .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-        .buffer_info(&[palette_info]);
+    let writes = [
+        *vk::WriteDescriptorSet::builder()
+            .dst_set(descriptor_set)
+            .dst_binding(0)
+            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .image_info(&image_infos),
+        *vk::WriteDescriptorSet::builder()
+            .dst_set(descriptor_set)
+            .dst_binding(1)
+            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+            .buffer_info(&ubo_infos),
+        *vk::WriteDescriptorSet::builder()
+            .dst_set(descriptor_set)
+            .dst_binding(2)
+            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+            .buffer_info(&palette_infos),
+    ];
 
     unsafe {
-        device.update_descriptor_sets(&[sampler_write, ubo_write, palette_write], &[] as &[vk::CopyDescriptorSet]);
+        device.update_descriptor_sets(&writes, &[] as &[vk::CopyDescriptorSet]);
     }
 }

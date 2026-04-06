@@ -66,11 +66,6 @@ impl ChunkGenerator {
         results
     }
 
-    /// Cancels a pending request (best-effort — worker may already be generating it).
-    pub fn cancel(&mut self, cx: i32, cz: i32) {
-        self.pending.remove(&[cx, cz]);
-    }
-
     /// Returns true if a column is currently queued or being generated.
     pub fn is_pending(&self, cx: i32, cz: i32) -> bool {
         self.pending.contains(&[cx, cz])

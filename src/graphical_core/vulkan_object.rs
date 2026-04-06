@@ -77,8 +77,6 @@ pub struct VulkanApplicationData {
     pub sky_pipeline_layout: vk::PipelineLayout,
 }
 
-use crate::voxel::world::{MAX_CHUNK_Y, MIN_CHUNK_Y};
-
 /// Mesh shader renders chunks within this distance. Full detail, editable, textured.
 const MESH_DISTANCE: i32 = 8;
 /// Mesh shader renders chunks within this distance.
@@ -91,8 +89,7 @@ const LOD4_DISTANCE: i32 = 384; // 6144m (>5km)
 const WORLD_DISTANCE: i32 = LOD0_DISTANCE + 8 + 4;
 /// Maximum SVDAG render distance across all LOD levels.
 const SVDAG_DISTANCE: i32 = LOD4_DISTANCE;
-const CHUNK_LAYERS: usize = (MAX_CHUNK_Y - MIN_CHUNK_Y + 1) as usize;
-const MAX_MESH_CHUNKS: usize = ((2 * MESH_DISTANCE + 1) * (2 * MESH_DISTANCE + 1)) as usize * CHUNK_LAYERS;
+const MAX_MESH_CHUNKS: usize = ((2 * MESH_DISTANCE + 1) * (2 * MESH_DISTANCE + 1) * (2 * MESH_DISTANCE + 1)) as usize;
 const MAX_SVDAG_CHUNKS: u32 = 32768;
 const SUPER_CHUNK_VOXELS: u32 = 64;
 
@@ -108,7 +105,7 @@ pub struct WorldResources {
     svdag_in_flight: std::collections::HashSet<[i32; 3]>,
     /// Per-LOD disk caches. Index 0 = LOD-0, 1 = LOD-1, 2 = LOD-2.
     svdag_caches: Vec<RegionStore>,
-    last_player_chunk: [i32; 2],
+    last_player_chunk: [i32; 3],
     seed: u32,
     /// In-flight LOD generation requests.
     lod_in_flight: std::collections::HashSet<[i32; 3]>,
@@ -228,7 +225,6 @@ impl VulkanApplication {
         create_resources(&device, &instance, &mut data)?;
         allocate_command_buffers(&device, &mut data)?;
         create_sync_objects(&device, &mut data)?;
-
         let depth_pyramid_pipeline = crate::graphical_core::compute_cull::create_depth_pyramid_pipeline(&device, &data)?;
         let ui = UiPipeline::create(&device, &instance, &mut data)?;
 
@@ -254,7 +250,7 @@ impl VulkanApplication {
     /// Calls unsafe Vulkan APIs.
     pub unsafe fn enter_world(&mut self, world_dir: &std::path::Path, seed: u32) -> anyhow::Result<()> {
         let mut world = World::new(WORLD_DISTANCE, seed);
-        world.update(0, 0);
+        world.update(0, 5, 0); // Initial camera Y ≈ 90 blocks → chunk 5
 
         let mut voxel_pool = VoxelPool::new(
             MAX_MESH_CHUNKS as u32,
@@ -264,7 +260,7 @@ impl VulkanApplication {
         )?;
         for pos in world.chunk_positions() {
             let [cx, cy, cz] = pos;
-            if crate::voxel::world::chunk_distance(cx, cz, 0, 0) <= MESH_DISTANCE {
+            if crate::voxel::world::chunk_distance(cx, cy, cz, 0, 5, 0) <= MESH_DISTANCE {
                 if let Some(chunk) = world.get_chunk(cx, cy, cz) {
                     voxel_pool.upload_chunk(pos, chunk, &world);
                 }
@@ -290,7 +286,7 @@ impl VulkanApplication {
             svdag_pending: std::collections::HashSet::new(),
             svdag_in_flight: std::collections::HashSet::new(),
             svdag_caches,
-            last_player_chunk: [0, 0],
+            last_player_chunk: [0, 0, 0],
             lod_in_flight: std::collections::HashSet::new(),
             lod_empty: std::collections::HashSet::new(),
             lod_idle_frames: 0,
@@ -393,9 +389,7 @@ unsafe fn create_resources(device: &Device, instance: &Instance, data: &mut Vulk
     create_command_pool(instance, device, data)?;
     create_uniform_buffer(device, instance, data)?;
     create_palette_buffer(device, instance, data)?;
-
     let (texture_image, texture_memory, texture_image_view, texture_sampler) = create_texture_image(device, instance, data)?;
-
     descriptors::create_pool(device, data)?;
     let descriptor_sets = descriptors::allocate_set(device, data.descriptor_pool, data.descriptor_set_layout)?;
     let descriptor_set = descriptor_sets
@@ -548,9 +542,10 @@ impl VulkanApplication {
     /// Loads/unloads chunks. Routes to mesh pool, SVDAG pool, and LOD merging.
     unsafe fn update_chunks_inner(wr: &mut WorldResources, camera: &Camera) -> anyhow::Result<()> {
         let player_cx = (camera.position.x / CHUNK_SIZE as f32).floor() as i32;
+        let player_cy = (camera.position.y / CHUNK_SIZE as f32).floor() as i32;
         let player_cz = (camera.position.z / CHUNK_SIZE as f32).floor() as i32;
 
-        let delta = wr.world.update(player_cx, player_cz);
+        let delta = wr.world.update(player_cx, player_cy, player_cz);
 
         // Process completed SVDAG compressions — drop results that don't fit (no eviction thrashing)
         for result in wr.svdag_compressor.receive() {
@@ -582,7 +577,7 @@ impl VulkanApplication {
 
         // Evict mesh chunks that drifted beyond MESH_DISTANCE (player moved)
         for pos in wr.voxel_pool.chunk_positions() {
-            let dist = crate::voxel::world::chunk_distance(pos[0], pos[2], player_cx, player_cz);
+            let dist = crate::voxel::world::chunk_distance(pos[0], pos[1], pos[2], player_cx, player_cy, player_cz);
             if dist > MESH_DISTANCE {
                 wr.voxel_pool.invalidate_neighbor_boundaries(pos, &wr.world);
                 wr.voxel_pool.remove_chunk(&pos);
@@ -595,7 +590,7 @@ impl VulkanApplication {
         // Ensure all chunks within MESH_DISTANCE are in VoxelPool (promote from SVDAG on approach)
         for cz in (player_cz - MESH_DISTANCE)..=(player_cz + MESH_DISTANCE) {
             for cx in (player_cx - MESH_DISTANCE)..=(player_cx + MESH_DISTANCE) {
-                for cy in crate::voxel::world::MIN_CHUNK_Y..=crate::voxel::world::MAX_CHUNK_Y {
+                for cy in (player_cy - MESH_DISTANCE)..=(player_cy + MESH_DISTANCE) {
                     let pos = [cx, cy, cz];
                     if wr.voxel_pool.has_chunk(&pos) {
                         continue;
@@ -612,28 +607,30 @@ impl VulkanApplication {
 
         // Route newly loaded far chunks to SVDAG pending (within SVDAG_DISTANCE)
         for pos in &delta.loaded {
-            let [cx, _cy, cz] = *pos;
-            let dist = crate::voxel::world::chunk_distance(cx, cz, player_cx, player_cz);
+            let [cx, cy, cz] = *pos;
+            let dist = crate::voxel::world::chunk_distance(cx, cy, cz, player_cx, player_cy, player_cz);
             if dist > MESH_DISTANCE && dist <= SVDAG_DISTANCE {
                 wr.svdag_pending.insert(*pos);
             }
         }
 
-        const COMPRESSIONS_PER_FRAME: usize = 16;
+        const COMPRESSIONS_PER_FRAME: usize = 64;
         if !wr.svdag_pending.is_empty() {
             let mut candidates: Vec<[i32; 3]> = wr.svdag_pending.iter().copied().collect();
             candidates.sort_by_key(|pos| {
                 let dx = pos[0] - player_cx;
+                let dy = pos[1] - player_cy;
                 let dz = pos[2] - player_cz;
-                dx * dx + dz * dz
+                dx * dx + dy * dy + dz * dz
             });
             let mut groups: Vec<[i32; 3]> = candidates.iter().map(|&[cx, cy, cz]| [cx & !3, cy & !3, cz & !3]).collect();
             groups.sort_unstable();
             groups.dedup();
             groups.sort_by_key(|pos| {
                 let dx = pos[0] - player_cx;
+                let dy = pos[1] - player_cy;
                 let dz = pos[2] - player_cz;
-                dx * dx + dz * dz
+                dx * dx + dy * dy + dz * dz
             });
 
             let mut cache_loaded = Vec::new();
@@ -704,14 +701,14 @@ impl VulkanApplication {
         }
 
         // --- LOD super-chunk generation beyond LOD-0 range ---
-        let lod_submitted = schedule_lod_generation(wr, player_cx, player_cz);
+        let lod_submitted = schedule_lod_generation(wr, player_cx, player_cy, player_cz);
         if lod_submitted || !wr.lod_in_flight.is_empty() {
             wr.lod_idle_frames = 0;
         } else {
             wr.lod_idle_frames = wr.lod_idle_frames.saturating_add(1);
         }
 
-        wr.last_player_chunk = [player_cx, player_cz];
+        wr.last_player_chunk = [player_cx, player_cy, player_cz];
         Ok(())
     }
 }
@@ -722,17 +719,23 @@ const LOD_BANDS: &[(i32, u32, u32, i32, i32)] = &[
     // Each band extends +align beyond its nominal boundary so the inner LOD's chunks
     // overlap into the outer band. This prevents gaps where shallow-angle rays miss
     // terrain in the outer LOD's boundary chunks.
-    (8, 2, 3, LOD0_DISTANCE, LOD1_DISTANCE + 8),   // LOD-1: overlap into LOD-2
-    (16, 4, 4, LOD1_DISTANCE, LOD2_DISTANCE + 16), // LOD-2: overlap into LOD-3
-    (32, 8, 5, LOD2_DISTANCE, LOD3_DISTANCE + 32), // LOD-3: overlap into LOD-4
-    (64, 16, 6, LOD3_DISTANCE, LOD4_DISTANCE),     // LOD-4: outermost, no overlap needed
+    // LOD-1 extends inward to MESH_DISTANCE as a fallback while LOD-0 super-chunks
+    // assemble (LOD-0 requires all 64 child chunks; LOD-1 generates directly from
+    // noise). Once LOD-0 completes, its higher-resolution chunks win in the ray march.
+    // Each band extends inward to the previous band's nominal start as a fallback
+    // while finer LODs assemble. Coarser LODs generate from noise (no child dependency)
+    // so they're available immediately. Finer LODs replace them once ready.
+    (8, 2, 3, MESH_DISTANCE, LOD1_DISTANCE + 8),   // LOD-1: covers LOD-0 area (8-24) as fallback
+    (16, 4, 4, LOD0_DISTANCE, LOD2_DISTANCE + 16), // LOD-2: covers LOD-1 area (24-48) as fallback
+    (32, 8, 5, LOD1_DISTANCE, LOD3_DISTANCE + 32), // LOD-3: covers LOD-2 area (48-96) as fallback
+    (64, 16, 6, LOD2_DISTANCE, LOD4_DISTANCE),     // LOD-4: covers LOD-3 area (96-192) as fallback
 ];
 const MAX_LOD_IN_FLIGHT: usize = 32;
-const LOD_SUBMISSIONS_PER_FRAME: usize = 8;
+const LOD_SUBMISSIONS_PER_FRAME: usize = 32;
 
 /// Schedule direct LOD terrain generation for positions beyond LOD-0 range.
 /// Returns true if any LOD work was submitted this frame.
-unsafe fn schedule_lod_generation(wr: &mut WorldResources, player_cx: i32, player_cz: i32) -> bool {
+unsafe fn schedule_lod_generation(wr: &mut WorldResources, player_cx: i32, player_cy: i32, player_cz: i32) -> bool {
     if wr.lod_in_flight.len() >= MAX_LOD_IN_FLIGHT {
         return true;
     }
@@ -740,27 +743,41 @@ unsafe fn schedule_lod_generation(wr: &mut WorldResources, player_cx: i32, playe
     for &(align, voxel_size, lod_level, min_dist, max_dist) in LOD_BANDS {
         let half = max_dist / align + 1;
         let pcx = player_cx.div_euclid(align) * align;
+        let pcy = player_cy.div_euclid(align) * align;
         let pcz = player_cz.div_euclid(align) * align;
         let mut submitted = 0;
-        let max_terrain_chunk_y = 13;
-        let y_layers = ((max_terrain_chunk_y - MIN_CHUNK_Y + 1) / align).max(1);
 
         for ring in 0..=half {
             if submitted >= LOD_SUBMISSIONS_PER_FRAME {
                 break;
             }
             for dz in -ring..=ring {
-                for dx in -ring..=ring {
-                    if dx.abs() != ring && dz.abs() != ring {
-                        continue;
-                    }
-                    let gx = pcx + dx * align;
-                    let gz = pcz + dz * align;
-                    if !in_lod_band(gx, gz, player_cx, player_cz, min_dist, max_dist) {
-                        continue;
-                    }
-                    for gy_idx in 0..y_layers {
-                        let gy = MIN_CHUNK_Y + gy_idx * align;
+                for dy in -ring..=ring {
+                    for dx in -ring..=ring {
+                        // Only process the shell border of this ring
+                        if dx.abs() != ring && dy.abs() != ring && dz.abs() != ring {
+                            continue;
+                        }
+                        let gx = pcx + dx * align;
+                        let gy = pcy + dy * align;
+                        let gz = pcz + dz * align;
+                        if !in_lod_band(gx, gy, gz, player_cx, player_cy, player_cz, min_dist, max_dist) {
+                            continue;
+                        }
+                        // Skip LOD chunks whose AABB overlaps the mesh shader cube.
+                        // The mesh is authoritative in its area; LOD fallbacks are
+                        // only needed beyond it.
+                        let mesh_lo = [player_cx - MESH_DISTANCE, player_cy - MESH_DISTANCE, player_cz - MESH_DISTANCE];
+                        let mesh_hi = [player_cx + MESH_DISTANCE, player_cy + MESH_DISTANCE, player_cz + MESH_DISTANCE];
+                        let overlaps_mesh = gx <= mesh_hi[0]
+                            && gx + align > mesh_lo[0]
+                            && gy <= mesh_hi[1]
+                            && gy + align > mesh_lo[1]
+                            && gz <= mesh_hi[2]
+                            && gz + align > mesh_lo[2];
+                        if overlaps_mesh {
+                            continue;
+                        }
                         let pos = [gx, gy, gz];
                         if wr.svdag_pool.has_chunk(&pos) || wr.lod_in_flight.contains(&pos) || wr.lod_empty.contains(&pos) {
                             continue;
@@ -784,8 +801,8 @@ unsafe fn schedule_lod_generation(wr: &mut WorldResources, player_cx: i32, playe
     total_submitted > 0
 }
 
-fn in_lod_band(gx: i32, gz: i32, px: i32, pz: i32, min_dist: i32, max_dist: i32) -> bool {
-    let dist = crate::voxel::world::chunk_distance(gx, gz, px, pz);
+fn in_lod_band(gx: i32, gy: i32, gz: i32, px: i32, py: i32, pz: i32, min_dist: i32, max_dist: i32) -> bool {
+    let dist = crate::voxel::world::chunk_distance(gx, gy, gz, px, py, pz);
     dist >= min_dist && dist <= max_dist
 }
 

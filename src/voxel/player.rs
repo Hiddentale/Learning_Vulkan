@@ -39,16 +39,12 @@ impl Player {
             return;
         }
 
-        // Apply gravity to vertical velocity
         self.velocity.y -= GRAVITY * delta_time;
-
-        // Move vertically
         position.y += self.velocity.y * delta_time;
 
         // Check ground collision (feet position)
         let feet_y = position.y - PLAYER_HEIGHT;
         if is_colliding(position.x, feet_y, position.z, world) {
-            // Snap to top of block
             let block_top = feet_y.floor() + 1.0;
             position.y = block_top + PLAYER_HEIGHT;
             self.velocity.y = 0.0;

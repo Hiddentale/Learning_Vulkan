@@ -1,7 +1,7 @@
 use super::biome::{self, Biome};
 use super::block::BlockType;
 use super::chunk::{Chunk, CHUNK_SIZE};
-use super::world::{MAX_CHUNK_Y, MIN_CHUNK_Y};
+use super::world::{TERRAIN_MAX_CY, TERRAIN_MIN_CY};
 use noise::{Fbm, MultiFractal, NoiseFn, Perlin, RidgedMulti};
 
 const SEA_LEVEL: usize = 64;
@@ -9,7 +9,7 @@ const DIRT_DEPTH: usize = 4;
 const MIN_HEIGHT: usize = 4;
 const MAX_HEIGHT: usize = 200;
 const CAVE_THRESHOLD: f64 = 0.55;
-const CHUNK_LAYERS: usize = (MAX_CHUNK_Y - MIN_CHUNK_Y + 1) as usize;
+const CHUNK_LAYERS: usize = (TERRAIN_MAX_CY - TERRAIN_MIN_CY + 1) as usize;
 
 // Noise scales
 const CONTINENT_SCALE: f64 = 0.002;
@@ -206,8 +206,12 @@ pub fn generate_lod_super_chunk(origin: [i32; 3], voxel_size: u32, seed: u32) ->
 
             for gy in 0..grid_size {
                 let wy = origin[1] as f64 + gy as f64 * vs;
-                let y = wy as usize;
-                let block = sample_block(y, height, surface, subsurface, &noises, wx, wy, wz);
+                // Sample height at the TOP of the voxel. A coarse voxel is only solid
+                // if terrain reaches its top. This makes the LOD surface always at or
+                // below the true height. At LOD boundaries the step goes DOWN (exposing
+                // a top face, fully lit) instead of UP (exposing a side face, dark seam).
+                let y_top = (wy + vs - 1.0) as usize;
+                let block = sample_block(y_top, height, surface, subsurface, &noises, wx, wy + vs * 0.5, wz);
                 blocks[gx + gz * grid_size + gy * grid_size * grid_size] = block;
             }
         }

@@ -138,9 +138,9 @@ impl SvdagPool {
     }
 
     /// Evict the farthest chunks from the player to free space.
-    pub unsafe fn evict_farthest(&mut self, count: usize, player_cx: i32, player_cz: i32) {
+    pub unsafe fn evict_farthest(&mut self, count: usize, player_cx: i32, player_cy: i32, player_cz: i32) {
         let mut positions: Vec<[i32; 3]> = self.chunk_slots.keys().copied().collect();
-        positions.sort_by_key(|pos| std::cmp::Reverse((pos[0] - player_cx).abs().max((pos[2] - player_cz).abs())));
+        positions.sort_by_key(|pos| std::cmp::Reverse((pos[0] - player_cx).abs().max((pos[1] - player_cy).abs()).max((pos[2] - player_cz).abs())));
         for pos in positions.into_iter().take(count) {
             self.remove_chunk(&pos);
         }
