@@ -73,7 +73,9 @@ impl InputState {
     fn apply_mouse_look(&mut self, camera: &mut Camera) {
         let (dx, dy) = self.mouse_delta;
         self.mouse_delta = (0.0, 0.0);
-        camera.rotate_yaw(dx as f32 * MOUSE_SENSITIVITY);
+        // Mouse right → camera turns right. Rotation around +up by a
+        // negative angle moves `forward` toward `right`, so flip the sign.
+        camera.rotate_yaw(-dx as f32 * MOUSE_SENSITIVITY);
         camera.rotate_pitch(-dy as f32 * MOUSE_SENSITIVITY);
     }
 

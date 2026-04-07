@@ -37,37 +37,45 @@ impl Player {
 
     /// Apply radial gravity. The "down" vector is `-position.normalize()`
     /// (toward planet centre); the "feet" sample is the position offset
-    /// inward by PLAYER_HEIGHT along that direction.
+    /// inward by PLAYER_HEIGHT along that direction. `on_ground` is sticky
+    /// — gravity is suppressed while standing on a surface to avoid
+    /// per-frame bobbing.
     pub fn apply_physics(&mut self, position: &mut Vec3, delta_time: f32, world: &World) {
         if self.fly_mode {
             return;
         }
-        let up = position.normalize_or(Vec3::Y);
-        self.radial_velocity -= GRAVITY * delta_time;
-        *position += up * self.radial_velocity * delta_time;
-
-        // Ground check: sample one block below the feet along -up.
         let feet_solid = |p: Vec3| -> bool {
             let f = p - p.normalize_or(Vec3::Y) * PLAYER_HEIGHT;
             world.is_solid(f.x, f.y, f.z)
         };
+
+        if self.on_ground {
+            // Walked off the ledge? Sample a block below the feet.
+            let up = position.normalize_or(Vec3::Y);
+            let probe = *position - up * (PLAYER_HEIGHT + 0.2);
+            if !world.is_solid(probe.x, probe.y, probe.z) {
+                self.on_ground = false;
+            } else {
+                // Standing — no integration this frame.
+                return;
+            }
+        }
+
+        let up = position.normalize_or(Vec3::Y);
+        self.radial_velocity -= GRAVITY * delta_time;
+        *position += up * self.radial_velocity * delta_time;
+
         if feet_solid(*position) {
-            // Lift radially in 0.1-block steps until clear, max ~3 blocks.
-            let mut lifted = false;
+            // Lift radially in 0.1-block steps until clear (max ~3 blocks).
             for _ in 0..32 {
                 let new_up = position.normalize_or(Vec3::Y);
                 *position += new_up * 0.1;
-                lifted = true;
                 if !feet_solid(*position) {
                     break;
                 }
             }
-            if lifted {
-                self.radial_velocity = 0.0;
-                self.on_ground = true;
-            }
-        } else {
-            self.on_ground = false;
+            self.radial_velocity = 0.0;
+            self.on_ground = true;
         }
     }
 
