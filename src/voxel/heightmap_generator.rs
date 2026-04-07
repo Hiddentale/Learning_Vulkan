@@ -104,7 +104,8 @@ fn generate_tile_mesh(req: &HeightmapRequest, erosion_map: Option<&ErosionMap>) 
         for gx in 0..n {
             let wx = origin_x + gx as f64 * req.spacing;
             let wz = origin_z + gz as f64 * req.spacing;
-            let (height, surface) = terrain::sample_surface(&noises, wx, wz, erosion_map);
+            // Phase C: heightmap path is disabled in scheduler. Hardcode +Y face.
+            let (height, surface) = terrain::sample_surface(&noises, super::sphere::Face::PosY, wx, wz, erosion_map);
 
             let y = if height < SEA_LEVEL { SEA_LEVEL as f32 } else { height as f32 };
             let mat = if height < SEA_LEVEL { BlockType::Water } else { surface };
@@ -130,10 +131,11 @@ fn generate_tile_mesh(req: &HeightmapRequest, erosion_map: Option<&ErosionMap>) 
             let frac_z = (wz - snapped_z) / req.coarse_spacing;
 
             // Bilinear interpolation of coarser heights
-            let (h00, _) = terrain::sample_surface(&noises, snapped_x, snapped_z, erosion_map);
-            let (h10, _) = terrain::sample_surface(&noises, snapped_x + req.coarse_spacing, snapped_z, erosion_map);
-            let (h01, _) = terrain::sample_surface(&noises, snapped_x, snapped_z + req.coarse_spacing, erosion_map);
-            let (h11, _) = terrain::sample_surface(&noises, snapped_x + req.coarse_spacing, snapped_z + req.coarse_spacing, erosion_map);
+            let f = super::sphere::Face::PosY;
+            let (h00, _) = terrain::sample_surface(&noises, f, snapped_x, snapped_z, erosion_map);
+            let (h10, _) = terrain::sample_surface(&noises, f, snapped_x + req.coarse_spacing, snapped_z, erosion_map);
+            let (h01, _) = terrain::sample_surface(&noises, f, snapped_x, snapped_z + req.coarse_spacing, erosion_map);
+            let (h11, _) = terrain::sample_surface(&noises, f, snapped_x + req.coarse_spacing, snapped_z + req.coarse_spacing, erosion_map);
 
             let coarse_y = (h00 as f64 * (1.0 - frac_x) * (1.0 - frac_z)
                 + h10 as f64 * frac_x * (1.0 - frac_z)

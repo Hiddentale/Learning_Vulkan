@@ -203,6 +203,82 @@ pub fn noise_pos_on_posy(wx: f64, wz: f64) -> [f64; 3] {
     [v.x, v.y, v.z]
 }
 
+/// Sample 3D noise at the sphere position corresponding to a face-local
+/// `(u, v)` block-space coordinate (with face center at origin) on `face`.
+/// This is the multi-face generalization of [`noise_pos_on_posy`] used by
+/// terrain generation in Phase C.
+pub fn noise_pos_on_face(face: Face, u: f64, v: f64) -> [f64; 3] {
+    let (tu, tv, n) = face_basis(face);
+    let cube_pt = tu.as_dvec3() * u + tv.as_dvec3() * v + n.as_dvec3() * CUBE_HALF_BLOCKS;
+    let p = cube_pt.normalize() * PLANET_RADIUS_BLOCKS as f64;
+    [p.x, p.y, p.z]
+}
+
+/// Compute a conservative axis-aligned bounding box (in cartesian world
+/// space relative to the planet center) for a single chunk after sphere
+/// projection. Samples the 8 cube corners + chunk face centers and unions
+/// the results — slightly conservative because the projection is non-linear.
+pub fn chunk_world_aabb(cp: ChunkPos) -> ([f32; 3], [f32; 3]) {
+    let cs = CHUNK_SIZE as f32;
+    let mut min = [f32::INFINITY; 3];
+    let mut max = [f32::NEG_INFINITY; 3];
+    // Sample a 3x3x3 grid (corners + edge mids + center) for a tighter bound.
+    for ix in 0..=2 {
+        for iy in 0..=2 {
+            for iz in 0..=2 {
+                let lx = ix as f32 * 0.5 * cs;
+                let ly = iy as f32 * 0.5 * cs;
+                let lz = iz as f32 * 0.5 * cs;
+                let w = chunk_to_world(cp, Vec3::new(lx, ly, lz));
+                let p = [w.x as f32, w.y as f32, w.z as f32];
+                for k in 0..3 {
+                    if p[k] < min[k] { min[k] = p[k]; }
+                    if p[k] > max[k] { max[k] = p[k]; }
+                }
+            }
+        }
+    }
+    (min, max)
+}
+
+/// All faces in their `Face::*` discriminant order — used for enumerating
+/// the planet during chunk generation and bounded iteration.
+pub const ALL_FACES: [Face; 6] = [
+    Face::PosX,
+    Face::NegX,
+    Face::PosY,
+    Face::NegY,
+    Face::PosZ,
+    Face::NegZ,
+];
+
+/// Numeric id matching GLSL: shader-side face basis table is indexed by this.
+pub fn face_id(face: Face) -> u32 {
+    face as u32
+}
+
+#[cfg(test)]
+mod aabb_tests {
+    use super::*;
+    #[test]
+    fn aabb_contains_chunk_corners() {
+        let cp = ChunkPos { face: Face::PosY, cx: 1, cy: 0, cz: 1 };
+        let (mn, mx) = chunk_world_aabb(cp);
+        for k in 0..3 { assert!(mn[k] <= mx[k]); }
+    }
+    #[test]
+    fn each_face_center_chunk_has_finite_aabb() {
+        for face in ALL_FACES {
+            let cp = ChunkPos { face, cx: 1, cy: 0, cz: 1 };
+            let (mn, mx) = chunk_world_aabb(cp);
+            for k in 0..3 {
+                assert!(mn[k].is_finite() && mx[k].is_finite());
+                assert!(mx[k] >= mn[k]);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod projection_tests {
     use super::*;

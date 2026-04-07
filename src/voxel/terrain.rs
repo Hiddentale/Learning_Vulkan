@@ -1,9 +1,13 @@
 use super::biome::{self, Biome};
 use super::block::BlockType;
 use super::chunk::{Chunk, CHUNK_SIZE};
-use super::sphere;
+use super::sphere::{self, Face};
 use super::world::{TERRAIN_MAX_CY, TERRAIN_MIN_CY};
 use noise::{Fbm, MultiFractal, NoiseFn, Perlin, RidgedMulti};
+
+/// Half side length of the cube face in blocks. Face-local cube coords are
+/// `(u, v) ∈ [-FACE_HALF, FACE_HALF]` with the face center at the origin.
+const FACE_HALF: f64 = (sphere::FACE_SIDE_CHUNKS * CHUNK_SIZE as i32 / 2) as f64;
 
 pub(crate) const SEA_LEVEL: usize = 64;
 const DIRT_DEPTH: usize = 4;
@@ -108,29 +112,29 @@ struct TerrainParams {
     biome: Biome,
 }
 
-/// Sample all terrain parameters at world coordinates, applying domain warping.
-/// Phase B2a: 2D `(wx, wz)` is reinterpreted as a position on the +Y cube
-/// face and projected onto the planet sphere; all noise is then sampled in
-/// 3D at that sphere point. This makes terrain seamless across face edges
-/// for free (3D noise has no seams) but means the world is finite — anything
-/// generated outside the face range gets pulled toward the same sphere
-/// surface point as its on-face counterpart.
-fn sample_params(noises: &WorldNoises, wx: f64, wz: f64, erosion_map: Option<&super::erosion::ErosionMap>) -> TerrainParams {
-    let warp_p = sphere::noise_pos_on_posy(wx, wz);
-    let warped_x = wx + noises.warp_x.get(warp_p) * WARP_STRENGTH;
-    let warped_z = wz + noises.warp_z.get(warp_p) * WARP_STRENGTH;
-    let p = sphere::noise_pos_on_posy(warped_x, warped_z);
+/// Sample all terrain parameters at face-local cube coordinates, applying
+/// domain warping. The (u, v) tangent coordinates are projected onto the
+/// planet sphere via [`sphere::noise_pos_on_face`] and 3D noise is sampled
+/// at the resulting sphere point — this gives seamless terrain across face
+/// edges for free (3D noise has no seams).
+fn sample_params(noises: &WorldNoises, face: Face, u: f64, v: f64, erosion_map: Option<&super::erosion::ErosionMap>) -> TerrainParams {
+    let warp_p = sphere::noise_pos_on_face(face, u, v);
+    let warped_u = u + noises.warp_x.get(warp_p) * WARP_STRENGTH;
+    let warped_v = v + noises.warp_z.get(warp_p) * WARP_STRENGTH;
+    let p = sphere::noise_pos_on_face(face, warped_u, warped_v);
 
     let continentalness = noises.continentalness.get(p);
     let erosion = noises.erosion_noise.get(p);
     let weirdness = noises.weirdness.get(p);
     let temperature = noises.temperature.get(p);
     let humidity = noises.humidity.get(p);
-    let mut height = compute_height_from_params(noises, warped_x, warped_z, continentalness, erosion, weirdness);
+    let mut height = compute_height_from_params(noises, face, warped_u, warped_v, continentalness, erosion, weirdness);
 
-    // Apply hydraulic erosion delta
+    // Apply hydraulic erosion delta — Phase C: erosion map is still flat,
+    // so feed it the face-local cube coordinates. Will be revisited when
+    // erosion is rebuilt for the sphere surface.
     if let Some(emap) = erosion_map {
-        let delta = emap.sample(wx, wz);
+        let delta = emap.sample(u, v);
         height = (height as f64 + delta).clamp(MIN_HEIGHT as f64, MAX_HEIGHT as f64) as usize;
     }
 
@@ -172,9 +176,9 @@ fn lerp(a: f64, b: f64, t: f64) -> f64 {
     a + (b - a) * t.clamp(0.0, 1.0)
 }
 
-pub(crate) fn compute_height_from_params(noises: &WorldNoises, wx: f64, wz: f64, continentalness: f64, erosion: f64, weirdness: f64) -> usize {
+pub(crate) fn compute_height_from_params(noises: &WorldNoises, face: Face, u: f64, v: f64, continentalness: f64, erosion: f64, weirdness: f64) -> usize {
     let base = continental_curve(continentalness);
-    let p = sphere::noise_pos_on_posy(wx, wz);
+    let p = sphere::noise_pos_on_face(face, u, v);
 
     // Erosion controls terrain roughness: high erosion = full mountains, low = flat
     let erosion_factor = (0.3 + erosion * 0.7).clamp(0.3, 1.0);
@@ -186,27 +190,27 @@ pub(crate) fn compute_height_from_params(noises: &WorldNoises, wx: f64, wz: f64,
     height.clamp(MIN_HEIGHT as f64, MAX_HEIGHT as f64) as usize
 }
 
-/// Sample the surface block type at world coordinates, applying domain warping.
-/// Returns (height, surface_block_type). Used by heightmap generator.
-pub(crate) fn sample_surface(noises: &WorldNoises, wx: f64, wz: f64, erosion_map: Option<&super::erosion::ErosionMap>) -> (usize, BlockType) {
-    let params = sample_params(noises, wx, wz, erosion_map);
+/// Sample the surface block type at face-local coordinates.
+pub(crate) fn sample_surface(noises: &WorldNoises, face: Face, u: f64, v: f64, erosion_map: Option<&super::erosion::ErosionMap>) -> (usize, BlockType) {
+    let params = sample_params(noises, face, u, v, erosion_map);
     let surface = biome::surface_block(params.biome);
     (params.height, surface)
 }
 
-/// Generates a full column of chunks at the given (chunk_x, chunk_z) coordinates.
-pub fn generate_column(chunk_x: i32, chunk_z: i32, seed: u32, erosion_map: Option<&super::erosion::ErosionMap>) -> Vec<Chunk> {
+/// Generates a full column of chunks at the given face-local chunk coordinates.
+pub fn generate_column(face: Face, chunk_x: i32, chunk_z: i32, seed: u32, erosion_map: Option<&super::erosion::ErosionMap>) -> Vec<Chunk> {
     let noises = WorldNoises::new(seed);
     let mut chunks: Vec<Chunk> = (0..CHUNK_LAYERS).map(|_| Chunk::new(BlockType::Air)).collect();
 
     for z in 0..CHUNK_SIZE {
         for x in 0..CHUNK_SIZE {
-            let wx = chunk_x as f64 * CHUNK_SIZE as f64 + x as f64;
-            let wz = chunk_z as f64 * CHUNK_SIZE as f64 + z as f64;
-            let params = sample_params(&noises, wx, wz, erosion_map);
+            // Face-local cube coordinates with the face center at origin.
+            let u = chunk_x as f64 * CHUNK_SIZE as f64 + x as f64 - FACE_HALF;
+            let v = chunk_z as f64 * CHUNK_SIZE as f64 + z as f64 - FACE_HALF;
+            let params = sample_params(&noises, face, u, v, erosion_map);
 
-            fill_surface(&mut chunks, x, z, wx, wz, params.height, params.biome, &noises);
-            carve_caves(&mut chunks, x, z, wx, wz, params.height, &noises);
+            fill_surface(&mut chunks, x, z, u, v, params.height, params.biome, &noises);
+            carve_caves(&mut chunks, x, z, u, v, params.height, &noises);
             fill_water(&mut chunks, x, z, params.height);
         }
     }
@@ -281,7 +285,8 @@ pub fn generate_lod_super_chunk(origin: [i32; 3], voxel_size: u32, seed: u32, er
         for gx in 0..grid_size {
             let wx = origin[0] as f64 + gx as f64 * vs;
             let wz = origin[2] as f64 + gz as f64 * vs;
-            let params = sample_params(&noises, wx, wz, erosion_map);
+            // Phase C: LOD super-chunk path is disabled. Hardcode +Y face.
+            let params = sample_params(&noises, Face::PosY, wx, wz, erosion_map);
             let surface = biome::surface_block(params.biome);
             let subsurface = biome::subsurface_block(params.biome);
 

@@ -137,8 +137,10 @@ fn main() -> Result<()> {
                                         Ok(dir) => {
                                             let side = 2 * WORLD_DISTANCE + 1;
                                             // Phase B2c: clamp pregen total to the actual face column count.
-                                            let face_cols = (voxel::sphere::FACE_SIDE_CHUNKS * voxel::sphere::FACE_SIDE_CHUNKS) as usize;
-                                            let total = ((side * side) as usize).min(face_cols);
+                                            // Phase C: 6 faces × FACE_SIDE_CHUNKS² columns each.
+                                            let face_cols = (6 * voxel::sphere::FACE_SIDE_CHUNKS * voxel::sphere::FACE_SIDE_CHUNKS) as usize;
+                                            let total = face_cols;
+                                            let _ = side;
                                             let erosion_path = dir.join("erosion_map.bin");
                                             let ew = voxel::erosion_worker::ErosionWorker::start(seed, erosion_path);
                                             game_state = GameState::PreGenerating {
@@ -410,8 +412,9 @@ fn draw_menu(ui: &mut UiPipeline, state: &mut GameState, sw: f32, sh: f32, curso
                     match storage::world_meta::create_world(name, seed) {
                         Ok(dir) => {
                             let side = 2 * WORLD_DISTANCE + 1;
-                            let face_cols = (voxel::sphere::FACE_SIDE_CHUNKS * voxel::sphere::FACE_SIDE_CHUNKS) as usize;
-                            let total = ((side * side) as usize).min(face_cols);
+                            let face_cols = (6 * voxel::sphere::FACE_SIDE_CHUNKS * voxel::sphere::FACE_SIDE_CHUNKS) as usize;
+                            let total = face_cols;
+                            let _ = side;
                             let erosion_path = dir.join("erosion_map.bin");
                             let ew = voxel::erosion_worker::ErosionWorker::start(seed, erosion_path);
                             *state = GameState::PreGenerating {
@@ -514,8 +517,8 @@ fn tick_pregen(state: &mut GameState, application: &mut VulkanApplication, windo
     }
     let col_count = if let Some(world) = application.world() {
         let mut seen = std::collections::HashSet::new();
-        for [cx, _cy, cz] in world.chunk_positions() {
-            seen.insert((cx, cz));
+        for cp in world.chunk_positions() {
+            seen.insert((cp.face, cp.cx, cp.cz));
         }
         seen.len()
     } else {

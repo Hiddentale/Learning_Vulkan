@@ -8,6 +8,8 @@ struct MeshChunkInfo {
     uint voxel_slot;
     vec3 aabb_max;
     uint boundary_slot;
+    ivec3 chunk_pos;
+    uint face_id;
 };
 
 layout(std430, set = 0, binding = 5) readonly buffer ChunkInfoBuffer {

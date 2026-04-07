@@ -2,6 +2,7 @@
 use crate::graphical_core::buffers::allocate_buffer;
 use crate::graphical_core::vulkan_object::VulkanApplicationData;
 use crate::voxel::chunk::{Chunk, CHUNK_SIZE};
+use crate::voxel::sphere::{self, ChunkPos};
 use crate::voxel::world::World;
 use std::collections::HashMap;
 use vulkan_rust::{vk, Device, Instance};
@@ -12,6 +13,8 @@ const BOUNDARY_FACE_BYTES: usize = CHUNK_SIZE * CHUNK_SIZE; // 256
 const BOUNDARY_CHUNK_BYTES: usize = BOUNDARY_FACES * BOUNDARY_FACE_BYTES; // 1536
 
 /// GPU-side chunk info for the task shader. Must match GLSL layout (std430).
+/// Phase C: carries face id + face-local chunk grid position so the mesh
+/// shader can project per-vertex to the planet sphere.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default)]
 pub struct GpuMeshChunkInfo {
@@ -19,6 +22,8 @@ pub struct GpuMeshChunkInfo {
     pub voxel_slot: u32,
     pub aabb_max: [f32; 3],
     pub boundary_slot: u32,
+    pub chunk_pos: [i32; 3], // face-local (cx, cy, cz)
+    pub face_id: u32,
 }
 
 /// Manages GPU SSBOs for raw voxel data, boundary slices, and chunk info.
@@ -48,7 +53,7 @@ pub struct VoxelPool {
     free_slots: Vec<u32>,
     next_slot: u32,
     max_slots: u32,
-    chunk_slots: HashMap<[i32; 3], u32>,
+    chunk_slots: HashMap<ChunkPos, u32>,
 
     // Chunk info is packed contiguously for GPU dispatch
     chunk_info_count: u32,
@@ -103,7 +108,7 @@ impl VoxelPool {
     }
 
     /// Uploads a chunk's voxel data and boundary slices to GPU.
-    pub unsafe fn upload_chunk(&mut self, pos: [i32; 3], chunk: &Chunk, world: &World) {
+    pub unsafe fn upload_chunk(&mut self, pos: ChunkPos, chunk: &Chunk, world: &World) {
         let slot = self.allocate_slot(pos);
 
         // Write voxel data
@@ -113,14 +118,15 @@ impl VoxelPool {
         // Write boundary slices
         self.write_boundary(slot, pos, world);
 
-        // Write chunk info
-        let [cx, cy, cz] = pos;
-        let cs = CHUNK_SIZE as f32;
+        // Write chunk info — AABB is the projected (curved) chunk envelope.
+        let (aabb_min, aabb_max) = sphere::chunk_world_aabb(pos);
         let info = GpuMeshChunkInfo {
-            aabb_min: [cx as f32 * cs, cy as f32 * cs, cz as f32 * cs],
+            aabb_min,
             voxel_slot: slot,
-            aabb_max: [(cx + 1) as f32 * cs, (cy + 1) as f32 * cs, (cz + 1) as f32 * cs],
+            aabb_max,
             boundary_slot: slot,
+            chunk_pos: [pos.cx, pos.cy, pos.cz],
+            face_id: sphere::face_id(pos.face),
         };
         let info_index = self.chunk_info_count;
         std::ptr::write(self.chunk_info_ptr.add(info_index as usize), info);
@@ -131,7 +137,7 @@ impl VoxelPool {
 
     /// Re-uploads voxel data for a chunk that is already in the pool.
     /// Used after in-place block edits. Does not allocate a new slot.
-    pub unsafe fn reupload_chunk(&mut self, pos: [i32; 3], chunk: &Chunk, world: &World) {
+    pub unsafe fn reupload_chunk(&mut self, pos: ChunkPos, chunk: &Chunk, world: &World) {
         let slot = match self.chunk_slots.get(&pos) {
             Some(&s) => s,
             None => return,
@@ -142,7 +148,7 @@ impl VoxelPool {
     }
 
     /// Removes a chunk from the pool, returning its slot for reuse.
-    pub unsafe fn remove_chunk(&mut self, pos: &[i32; 3]) {
+    pub unsafe fn remove_chunk(&mut self, pos: &ChunkPos) {
         let slot = match self.chunk_slots.remove(pos) {
             Some(s) => s,
             None => return,
@@ -172,19 +178,21 @@ impl VoxelPool {
     }
 
     /// Updates boundary data for a chunk's neighbors (call when a chunk is loaded/unloaded).
-    pub unsafe fn invalidate_neighbor_boundaries(&mut self, pos: [i32; 3], world: &World) {
-        let [cx, cy, cz] = pos;
+    pub unsafe fn invalidate_neighbor_boundaries(&mut self, pos: ChunkPos, world: &World) {
+        let ChunkPos { face, cx, cy, cz } = pos;
+        // Phase C1: only same-face neighbors. Cross-face boundaries land
+        // in the C2 edge transition table.
         let neighbors = [
-            [cx + 1, cy, cz],
-            [cx - 1, cy, cz],
-            [cx, cy + 1, cz],
-            [cx, cy - 1, cz],
-            [cx, cy, cz + 1],
-            [cx, cy, cz - 1],
+            ChunkPos { face, cx: cx + 1, cy, cz },
+            ChunkPos { face, cx: cx - 1, cy, cz },
+            ChunkPos { face, cx, cy: cy + 1, cz },
+            ChunkPos { face, cx, cy: cy - 1, cz },
+            ChunkPos { face, cx, cy, cz: cz + 1 },
+            ChunkPos { face, cx, cy, cz: cz - 1 },
         ];
-        for neighbor_pos in &neighbors {
-            if let Some(&slot) = self.chunk_slots.get(neighbor_pos) {
-                self.write_boundary(slot, *neighbor_pos, world);
+        for neighbor_pos in neighbors {
+            if let Some(&slot) = self.chunk_slots.get(&neighbor_pos) {
+                self.write_boundary(slot, neighbor_pos, world);
             }
         }
     }
@@ -193,11 +201,11 @@ impl VoxelPool {
         self.chunk_info_count
     }
 
-    pub fn has_chunk(&self, pos: &[i32; 3]) -> bool {
+    pub fn has_chunk(&self, pos: &ChunkPos) -> bool {
         self.chunk_slots.contains_key(pos)
     }
 
-    pub fn chunk_positions(&self) -> Vec<[i32; 3]> {
+    pub fn chunk_positions(&self) -> Vec<ChunkPos> {
         self.chunk_slots.keys().copied().collect()
     }
 
@@ -219,7 +227,7 @@ impl VoxelPool {
         device.free_memory(self.visibility_memory, None);
     }
 
-    fn allocate_slot(&mut self, pos: [i32; 3]) -> u32 {
+    fn allocate_slot(&mut self, pos: ChunkPos) -> u32 {
         let slot = self.free_slots.pop().unwrap_or_else(|| {
             let s = self.next_slot;
             self.next_slot += 1;
@@ -230,8 +238,8 @@ impl VoxelPool {
         slot
     }
 
-    unsafe fn write_boundary(&self, slot: u32, pos: [i32; 3], world: &World) {
-        let [cx, cy, cz] = pos;
+    unsafe fn write_boundary(&self, slot: u32, pos: ChunkPos, world: &World) {
+        let ChunkPos { cx, cy, cz, .. } = pos;
         let base = slot as usize * BOUNDARY_CHUNK_BYTES;
 
         // Face 0: +X neighbor's x=0 slice

@@ -19,8 +19,8 @@ pub struct World {
 
 /// Result of a world update: which chunks were added/removed.
 pub struct WorldDelta {
-    pub loaded: Vec<[i32; 3]>,
-    pub unloaded: Vec<[i32; 3]>,
+    pub loaded: Vec<ChunkPos>,
+    pub unloaded: Vec<ChunkPos>,
 }
 
 impl World {
@@ -45,33 +45,24 @@ impl World {
         // Beyond that, use 3D distance to cull vertically.
         let keys: Vec<ChunkPos> = self.chunks.keys().copied().collect();
         for pos in keys {
-            let xz_dist = (pos.cx - player_cx).abs().max((pos.cz - player_cz).abs());
-            if xz_dist > self.render_distance {
-                self.chunks.remove(&pos);
-                unloaded.push(pos.coords());
-            }
+            // Phase C: never unload chunks based on flat XZ distance —
+            // every chunk on the planet is always loaded for the tiny
+            // world. Distance-based eviction returns in Phase E.
+            let _ = (pos, player_cx, player_cz);
+            let _ = &mut unloaded;
+            break;
         }
 
-        // Request generation for missing columns, closest first (spiral outward).
-        for ring in 0..=self.render_distance {
-            for cz in (player_cz - ring)..=(player_cz + ring) {
-                for cx in (player_cx - ring)..=(player_cx + ring) {
-                    if (cx - player_cx).abs() != ring && (cz - player_cz).abs() != ring {
-                        continue;
-                    }
-                    let xz_dist = (cx - player_cx).abs().max((cz - player_cz).abs());
-                    if xz_dist > self.render_distance {
-                        continue;
-                    }
-                    // Phase B2c: clamp to the +Y face range. Outside this
-                    // range the sphere projection is undefined and chunks
-                    // would render as wedges through space.
-                    if cx < 0 || cz < 0 || cx >= sphere::FACE_SIDE_CHUNKS || cz >= sphere::FACE_SIDE_CHUNKS {
-                        continue;
-                    }
-                    let has_any = (TERRAIN_MIN_CY..=TERRAIN_MAX_CY).any(|cy| self.chunks.contains_key(&ChunkPos::posy(cx, cy, cz)));
-                    if !has_any && !self.generator.is_pending(cx, cz) {
-                        self.generator.request(cx, cz);
+        // Phase C: enumerate all 6 faces × full face grid. The planet is
+        // small enough that every column is always resident.
+        let _ = player_cx;
+        let _ = player_cz;
+        for &face in &sphere::ALL_FACES {
+            for cz in 0..sphere::FACE_SIDE_CHUNKS {
+                for cx in 0..sphere::FACE_SIDE_CHUNKS {
+                    let has_any = (TERRAIN_MIN_CY..=TERRAIN_MAX_CY).any(|cy| self.chunks.contains_key(&ChunkPos { face, cx, cy, cz }));
+                    if !has_any && !self.generator.is_pending(face, cx, cz) {
+                        self.generator.request(face, cx, cz);
                     }
                 }
             }
@@ -81,8 +72,8 @@ impl World {
         for col in self.generator.receive() {
             for (i, chunk) in col.chunks.into_iter().enumerate() {
                 let cy = TERRAIN_MIN_CY + i as i32;
-                let key = ChunkPos::posy(col.cx, cy, col.cz);
-                loaded.push(key.coords());
+                let key = ChunkPos { face: col.face, cx: col.cx, cy, cz: col.cz };
+                loaded.push(key);
                 self.chunks.insert(key, chunk);
             }
         }
@@ -133,8 +124,12 @@ impl World {
         self.chunks.get(&ChunkPos::posy(cx, cy, cz))
     }
 
-    pub fn chunk_positions(&self) -> impl Iterator<Item = [i32; 3]> + '_ {
-        self.chunks.keys().map(|cp| cp.coords())
+    pub fn get_chunk_at(&self, cp: ChunkPos) -> Option<&Chunk> {
+        self.chunks.get(&cp)
+    }
+
+    pub fn chunk_positions(&self) -> impl Iterator<Item = ChunkPos> + '_ {
+        self.chunks.keys().copied()
     }
 
     #[cfg(test)]

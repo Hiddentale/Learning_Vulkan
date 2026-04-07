@@ -168,9 +168,11 @@ impl VulkanApplication {
         if !wr.world.set_block(wx, wy, wz, block) {
             return;
         }
-        let chunk_pos = World::block_to_chunk(wx, wy, wz);
-        let [cx, cy, cz] = chunk_pos;
-        if let Some(chunk) = wr.world.get_chunk(cx, cy, cz) {
+        // Phase C: block edits map to a +Y face chunk for now (raycast/edit
+        // path is rebuilt for sphere coordinates in a later phase).
+        let chunk_pos = crate::voxel::sphere::block_to_chunk(wx, wy, wz);
+        if let Some(chunk) = wr.world.get_chunk_at(chunk_pos) {
+            let chunk = unsafe { &*(chunk as *const _) };
             wr.voxel_pool.reupload_chunk(chunk_pos, chunk, &wr.world);
             wr.voxel_pool.invalidate_neighbor_boundaries(chunk_pos, &wr.world);
         }
@@ -269,12 +271,12 @@ impl VulkanApplication {
             &self.vulkan_instance,
             &mut self.vulkan_application_data,
         )?;
-        for pos in world.chunk_positions() {
-            let [cx, cy, cz] = pos;
-            if crate::voxel::world::chunk_distance(cx, cy, cz, 0, 5, 0) <= MESH_DISTANCE {
-                if let Some(chunk) = world.get_chunk(cx, cy, cz) {
-                    voxel_pool.upload_chunk(pos, chunk, &world);
-                }
+        // Phase C: tiny planet — every chunk is in mesh range. Upload all.
+        let positions: Vec<crate::voxel::sphere::ChunkPos> = world.chunk_positions().collect();
+        for pos in positions {
+            if let Some(chunk) = world.get_chunk_at(pos) {
+                let chunk_ptr = chunk as *const _;
+                voxel_pool.upload_chunk(pos, unsafe { &*chunk_ptr }, &world);
             }
         }
         let mesh_shader_pipeline = MeshShaderPipeline::create(&self.device, &self.vulkan_application_data, &voxel_pool)?;
@@ -604,50 +606,21 @@ impl VulkanApplication {
             }
         }
 
-        // Handle unloaded chunks — remove from whichever pool they're in
+        // Phase C: tiny planet — every chunk is mesh-resident. Upload any
+        // newly loaded chunk; never evict; no SVDAG far-field path.
+        let _ = (player_cx, player_cy, player_cz);
         for pos in &delta.unloaded {
             wr.voxel_pool.invalidate_neighbor_boundaries(*pos, &wr.world);
             wr.voxel_pool.remove_chunk(pos);
-            wr.svdag_pool.remove_chunk(pos);
-            wr.svdag_pending.remove(pos);
         }
-
-        // Evict mesh chunks that drifted beyond MESH_DISTANCE (player moved)
-        for pos in wr.voxel_pool.chunk_positions() {
-            let dist = crate::voxel::world::chunk_distance(pos[0], pos[1], pos[2], player_cx, player_cy, player_cz);
-            if dist > MESH_DISTANCE {
-                wr.voxel_pool.invalidate_neighbor_boundaries(pos, &wr.world);
-                wr.voxel_pool.remove_chunk(&pos);
-                if dist <= SVDAG_DISTANCE && wr.world.get_chunk(pos[0], pos[1], pos[2]).is_some() {
-                    wr.svdag_pending.insert(pos);
-                }
-            }
-        }
-
-        // Ensure all chunks within MESH_DISTANCE are in VoxelPool (promote from SVDAG on approach)
-        for cz in (player_cz - MESH_DISTANCE)..=(player_cz + MESH_DISTANCE) {
-            for cx in (player_cx - MESH_DISTANCE)..=(player_cx + MESH_DISTANCE) {
-                for cy in (player_cy - MESH_DISTANCE)..=(player_cy + MESH_DISTANCE) {
-                    let pos = [cx, cy, cz];
-                    if wr.voxel_pool.has_chunk(&pos) {
-                        continue;
-                    }
-                    if let Some(chunk) = wr.world.get_chunk(cx, cy, cz) {
-                        wr.voxel_pool.upload_chunk(pos, chunk, &wr.world);
-                        wr.voxel_pool.invalidate_neighbor_boundaries(pos, &wr.world);
-                        wr.svdag_pool.remove_chunk(&pos);
-                        wr.svdag_pending.remove(&pos);
-                    }
-                }
-            }
-        }
-
-        // Route newly loaded far chunks to SVDAG pending (within SVDAG_DISTANCE)
         for pos in &delta.loaded {
-            let [cx, cy, cz] = *pos;
-            let dist = crate::voxel::world::chunk_distance(cx, cy, cz, player_cx, player_cy, player_cz);
-            if dist > MESH_DISTANCE && dist <= SVDAG_DISTANCE {
-                wr.svdag_pending.insert(*pos);
+            if wr.voxel_pool.has_chunk(pos) {
+                continue;
+            }
+            if let Some(chunk) = wr.world.get_chunk_at(*pos) {
+                let chunk_ptr = chunk as *const _;
+                wr.voxel_pool.upload_chunk(*pos, &*chunk_ptr, &wr.world);
+                wr.voxel_pool.invalidate_neighbor_boundaries(*pos, &wr.world);
             }
         }
 

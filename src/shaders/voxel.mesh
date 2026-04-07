@@ -10,6 +10,8 @@ struct MeshChunkInfo {
     uint voxel_slot;
     vec3 aabb_max;
     uint boundary_slot;
+    ivec3 chunk_pos;
+    uint face_id;
 };
 
 layout(std430, set = 0, binding = 5) readonly buffer ChunkInfoBuffer {
@@ -77,11 +79,37 @@ const vec2 CORNER_UVS[4] = vec2[4](
     vec2(0, 1), vec2(1, 1), vec2(1, 0), vec2(0, 0)
 );
 
-// Phase B2b: cube-to-sphere projection for the +Y face only.
-// Constants must match src/voxel/sphere.rs (PLANET_RADIUS_BLOCKS,
-// CUBE_HALF_BLOCKS = FACE_SIDE_CHUNKS * CHUNK_SIZE / 2).
+// Phase C: cube-to-sphere projection for any face. Constants must match
+// src/voxel/sphere.rs (PLANET_RADIUS_BLOCKS, CUBE_HALF_BLOCKS).
 const float PLANET_RADIUS = 48.0;
 const float CUBE_HALF = 24.0;
+
+// Face basis table: (tangent_u, tangent_v, normal). Must mirror
+// sphere.rs::face_basis exactly. Indexed by face_id 0..5.
+const vec3 FACE_TU[6] = vec3[6](
+    vec3(0, 1, 0),  // PosX
+    vec3(0, 0, 1),  // NegX
+    vec3(0, 0, 1),  // PosY
+    vec3(1, 0, 0),  // NegY
+    vec3(1, 0, 0),  // PosZ
+    vec3(0, 1, 0)   // NegZ
+);
+const vec3 FACE_TV[6] = vec3[6](
+    vec3(0, 0, 1),  // PosX
+    vec3(0, 1, 0),  // NegX
+    vec3(1, 0, 0),  // PosY
+    vec3(0, 0, 1),  // NegY
+    vec3(0, 1, 0),  // PosZ
+    vec3(1, 0, 0)   // NegZ
+);
+const vec3 FACE_N[6] = vec3[6](
+    vec3( 1,  0,  0),  // PosX
+    vec3(-1,  0,  0),  // NegX
+    vec3( 0,  1,  0),  // PosY
+    vec3( 0, -1,  0),  // NegY
+    vec3( 0,  0,  1),  // PosZ
+    vec3( 0,  0, -1)   // NegZ
+);
 
 vec3 cube_to_sphere_unit(vec3 v) {
     float x = v.x, y = v.y, z = v.z;
@@ -92,13 +120,15 @@ vec3 cube_to_sphere_unit(vec3 v) {
     );
 }
 
-// Reinterpret a flat-grid world position as a +Y face point: x,z become the
-// face tangent coords (cube centre at world origin) and y is radial depth
-// above the cube top. Returns the sphere-projected position.
-vec3 project_posy(vec3 flat_pos) {
-    vec3 cube = vec3((flat_pos.x - CUBE_HALF) / CUBE_HALF, 1.0, (flat_pos.z - CUBE_HALF) / CUBE_HALF);
-    vec3 unit = cube_to_sphere_unit(cube);
-    return unit * (PLANET_RADIUS + flat_pos.y);
+// Project a face-local block position (lx, ly, lz) inside chunk `cp` on
+// `face` to world space via the inflated cube projection.
+vec3 project_chunk_local(uint face, ivec3 cp, vec3 local) {
+    float u = float(cp.x) * 16.0 + local.x - CUBE_HALF;
+    float v = float(cp.z) * 16.0 + local.z - CUBE_HALF;
+    float d = float(cp.y) * 16.0 + local.y;
+    vec3 cube_pt = FACE_TU[face] * u + FACE_TV[face] * v + FACE_N[face] * CUBE_HALF;
+    vec3 unit = cube_to_sphere_unit(cube_pt / CUBE_HALF);
+    return unit * (PLANET_RADIUS + d);
 }
 
 uint read_block(uint voxel_slot, uint x, uint y, uint z) {
@@ -154,7 +184,7 @@ uint compute_face_mask(uint voxel_slot, uint boundary_slot, uint block, uint gx,
     return mask;
 }
 
-void emit_face(uint slot, vec3 center, uint face, uint material_id) {
+void emit_face(uint slot, vec3 center, uint face, uint material_id, uint chunk_face, ivec3 chunk_pos) {
     vec3 n = FACE_NORMALS[face];
     vec3 t = FACE_TANGENTS[face];
     vec3 b = FACE_BITANGENTS[face];
@@ -166,14 +196,18 @@ void emit_face(uint slot, vec3 center, uint face, uint material_id) {
     for (uint c = 0u; c < 4u; c++) {
         float u_off = (c == 0u || c == 3u) ? -0.5 : 0.5;
         float v_off = (c < 2u) ? -0.5 : 0.5;
-        vec3 flat_pos = face_center + t * u_off + b * v_off;
-        vec3 world_pos = project_posy(flat_pos);
+        vec3 local_pos = face_center + t * u_off + b * v_off;
+        vec3 world_pos = project_chunk_local(chunk_face, chunk_pos, local_pos);
 
         gl_MeshVerticesEXT[vi + c].gl_Position =
             camera.view_projection[gl_ViewIndex] * vec4(world_pos, 1.0);
         fragWorldPos[vi + c] = world_pos;
         fragTexCoord[vi + c] = CORNER_UVS[c];
-        fragNormalWorld[vi + c] = n;
+        // Phase C: face normal in world space is the projected face normal.
+        // Use the radial direction as a simple approximation — correct for
+        // top faces, slightly off for side faces. Will be replaced with
+        // the projection's true Jacobian normal in a polish pass.
+        fragNormalWorld[vi + c] = normalize(world_pos);
         fragMaterialId[vi + c] = material_id;
     }
 
@@ -226,11 +260,13 @@ void main() {
 
     // === Pass 2: Write faces at allocated slots ===
     if (my_count > 0u && my_base < 63u) {
-        vec3 center = chunk.aabb_min + vec3(float(gx) + 0.5, float(gy) + 0.5, float(gz) + 0.5);
+        // `center` is now the block's local coordinate within its chunk;
+        // emit_face projects through the chunk's face id.
+        vec3 center = vec3(float(gx) + 0.5, float(gy) + 0.5, float(gz) + 0.5);
         uint write_slot = my_base;
         for (uint face = 0u; face < 6u; face++) {
             if ((face_mask & (1u << face)) != 0u && write_slot < 63u) {
-                emit_face(write_slot, center, face, block);
+                emit_face(write_slot, center, face, block, chunk.face_id, chunk.chunk_pos);
                 write_slot++;
             }
         }
