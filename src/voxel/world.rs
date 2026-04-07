@@ -82,34 +82,58 @@ impl World {
     }
 
     pub fn get_block(&self, wx: f32, wy: f32, wz: f32) -> BlockType {
-        let (cp, lx, ly, lz) = world_to_chunk(wx, wy, wz);
+        let world = glam::DVec3::new(wx as f64, wy as f64, wz as f64);
+        let Some((cp, lx, ly, lz)) = sphere::world_to_chunk_local(world) else {
+            return BlockType::Air;
+        };
+        if !valid_chunk(cp) {
+            return BlockType::Air;
+        }
+        let lxi = lx as usize;
+        let lyi = ly as usize;
+        let lzi = lz as usize;
         match self.chunks.get(&cp) {
-            Some(chunk) => chunk.get(lx, ly, lz),
+            Some(chunk) => chunk.get(lxi.min(CHUNK_SIZE - 1), lyi.min(CHUNK_SIZE - 1), lzi.min(CHUNK_SIZE - 1)),
             None => BlockType::Air,
         }
     }
 
-    /// Returns true if the block is solid, or if the chunk is not loaded but
-    /// within terrain range. Unloaded terrain chunks act as solid for physics —
-    /// the player must not fall through space that hasn't been generated yet.
-    /// Above the terrain range, unloaded means genuinely empty sky.
+    /// Returns true if the block at this world-space cartesian position is
+    /// solid. Below the planet surface (radial depth 0..TERRAIN_MAX_CY*16)
+    /// unloaded chunks are treated as solid so the player cannot fall
+    /// through ungenerated terrain.
     pub fn is_solid(&self, wx: f32, wy: f32, wz: f32) -> bool {
-        let (cp, lx, ly, lz) = world_to_chunk(wx, wy, wz);
+        let world = glam::DVec3::new(wx as f64, wy as f64, wz as f64);
+        let Some((cp, lx, ly, lz)) = sphere::world_to_chunk_local(world) else {
+            return false;
+        };
+        if !valid_chunk(cp) {
+            return false;
+        }
+        let lxi = (lx as usize).min(CHUNK_SIZE - 1);
+        let lyi = (ly as usize).min(CHUNK_SIZE - 1);
+        let lzi = (lz as usize).min(CHUNK_SIZE - 1);
         match self.chunks.get(&cp) {
-            Some(chunk) => chunk.get(lx, ly, lz).is_opaque(),
+            Some(chunk) => chunk.get(lxi, lyi, lzi).is_opaque(),
             None => (TERRAIN_MIN_CY..=TERRAIN_MAX_CY).contains(&cp.cy),
         }
     }
 
     pub fn set_block(&mut self, wx: i32, wy: i32, wz: i32, block: BlockType) -> bool {
-        let size = CHUNK_SIZE as i32;
-        let cp = sphere::block_to_chunk(wx, wy, wz);
-        let lx = wx.rem_euclid(size) as usize;
-        let ly = wy.rem_euclid(size) as usize;
-        let lz = wz.rem_euclid(size) as usize;
+        // Phase D: block edits go through the sphere inverse projection.
+        let world = glam::DVec3::new(wx as f64 + 0.5, wy as f64 + 0.5, wz as f64 + 0.5);
+        let Some((cp, lx, ly, lz)) = sphere::world_to_chunk_local(world) else {
+            return false;
+        };
+        if !valid_chunk(cp) {
+            return false;
+        }
+        let lxi = (lx as usize).min(CHUNK_SIZE - 1);
+        let lyi = (ly as usize).min(CHUNK_SIZE - 1);
+        let lzi = (lz as usize).min(CHUNK_SIZE - 1);
         match self.chunks.get_mut(&cp) {
             Some(chunk) => {
-                chunk.set(lx, ly, lz, block);
+                chunk.set(lxi, lyi, lzi, block);
                 true
             }
             None => false,
@@ -138,15 +162,9 @@ impl World {
     }
 }
 
-fn world_to_chunk(wx: f32, wy: f32, wz: f32) -> (ChunkPos, usize, usize, usize) {
-    let size = CHUNK_SIZE as f32;
-    let cx = wx.div_euclid(size) as i32;
-    let cy = wy.div_euclid(size) as i32;
-    let cz = wz.div_euclid(size) as i32;
-    let lx = wx.rem_euclid(size) as usize;
-    let ly = wy.rem_euclid(size) as usize;
-    let lz = wz.rem_euclid(size) as usize;
-    (ChunkPos::posy(cx, cy, cz), lx, ly, lz)
+fn valid_chunk(cp: ChunkPos) -> bool {
+    let n = sphere::FACE_SIDE_CHUNKS;
+    cp.cx >= 0 && cp.cx < n && cp.cz >= 0 && cp.cz < n && cp.cy >= TERRAIN_MIN_CY && cp.cy <= TERRAIN_MAX_CY
 }
 
 /// 3D Chebyshev distance from a chunk to the player position.

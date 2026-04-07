@@ -47,20 +47,25 @@ impl Player {
         *position += up * self.radial_velocity * delta_time;
 
         // Ground check: sample one block below the feet along -up.
-        let feet = *position - up * PLAYER_HEIGHT;
-        if world.is_solid(feet.x, feet.y, feet.z) {
-            // Push back to the surface: lift along +up until feet are clear.
-            for _ in 0..16 {
-                let p = *position + up * 0.05;
-                let f = p - up * PLAYER_HEIGHT;
-                if !world.is_solid(f.x, f.y, f.z) {
-                    *position = p;
+        let feet_solid = |p: Vec3| -> bool {
+            let f = p - p.normalize_or(Vec3::Y) * PLAYER_HEIGHT;
+            world.is_solid(f.x, f.y, f.z)
+        };
+        if feet_solid(*position) {
+            // Lift radially in 0.1-block steps until clear, max ~3 blocks.
+            let mut lifted = false;
+            for _ in 0..32 {
+                let new_up = position.normalize_or(Vec3::Y);
+                *position += new_up * 0.1;
+                lifted = true;
+                if !feet_solid(*position) {
                     break;
                 }
-                *position = p;
             }
-            self.radial_velocity = 0.0;
-            self.on_ground = true;
+            if lifted {
+                self.radial_velocity = 0.0;
+                self.on_ground = true;
+            }
         } else {
             self.on_ground = false;
         }

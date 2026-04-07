@@ -193,6 +193,52 @@ pub fn chunk_to_world(cp: ChunkPos, local: Vec3) -> DVec3 {
     face_local_to_world(cp.face, u, v, d)
 }
 
+/// Inverse of [`chunk_to_world`]: given a world-space cartesian point
+/// (relative to the planet center), determine which face owns it and return
+/// the chunk position plus the local block-space offset within that chunk.
+///
+/// Returns `None` for points exactly at the origin. The face/chunk may be
+/// out of [`FACE_SIDE_CHUNKS`] range for points well above the cube surface
+/// at the corners, but for any reasonable above-ground player position the
+/// result lies inside a valid chunk.
+pub fn world_to_chunk_local(world: DVec3) -> Option<(ChunkPos, f32, f32, f32)> {
+    let radius = world.length();
+    if radius < 1e-6 {
+        return None;
+    }
+    let unit_sphere = world / radius;
+    let unit_cube = sphere_to_cube_unit(unit_sphere);
+    // Pick the face owning this cube point.
+    let ax = unit_cube.x.abs();
+    let ay = unit_cube.y.abs();
+    let az = unit_cube.z.abs();
+    let face = if ax >= ay && ax >= az {
+        if unit_cube.x > 0.0 { Face::PosX } else { Face::NegX }
+    } else if ay >= az {
+        if unit_cube.y > 0.0 { Face::PosY } else { Face::NegY }
+    } else {
+        if unit_cube.z > 0.0 { Face::PosZ } else { Face::NegZ }
+    };
+    // Re-express the cube point in the face's tangent basis (in block units).
+    let (tu, tv, _) = face_basis(face);
+    let cube_pt_blocks = unit_cube * CUBE_HALF_BLOCKS;
+    let u = cube_pt_blocks.dot(tu.as_dvec3());
+    let v = cube_pt_blocks.dot(tv.as_dvec3());
+    let d = radius - PLANET_RADIUS_BLOCKS as f64;
+    // Convert tangent (u, v) and radial depth (d) into chunk + local indices.
+    let half = (FACE_SIDE_CHUNKS * CHUNK_SIZE as i32) as f64 * 0.5;
+    let face_u = u + half; // [0, FACE_SIDE_BLOCKS]
+    let face_v = v + half;
+    let cs = CHUNK_SIZE as f64;
+    let cx = face_u.div_euclid(cs) as i32;
+    let cy = d.div_euclid(cs) as i32;
+    let cz = face_v.div_euclid(cs) as i32;
+    let lx = (face_u.rem_euclid(cs)) as f32;
+    let ly = (d.rem_euclid(cs)) as f32;
+    let lz = (face_v.rem_euclid(cs)) as f32;
+    Some((ChunkPos { face, cx, cy, cz }, lx, ly, lz))
+}
+
 /// Convert a `(wx, wz)` block-space coordinate — interpreted as a position on
 /// the +Y face with the cube centre at the origin — to a 3D point on the
 /// planet sphere, for sampling 3D noise. Uses raw normalization (cheap, no

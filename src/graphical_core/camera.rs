@@ -8,10 +8,10 @@ const NEAR_PLANE: f32 = 0.1;
 const FAR_PLANE: f32 = 10000.0;
 pub const MAX_PITCH: f32 = 89.0_f32 * (std::f32::consts::PI / 180.0);
 
-// Phase D: spawn just above the +Y pole surface looking horizontally along
-// +X. The radial up at this position is (0, 1, 0), so the player can
-// immediately walk on the planet (toggle with F).
-const DEFAULT_POSITION: Vec3 = Vec3::new(0.0, 130.0, 0.0);
+// Phase D: spawn comfortably above the +Y pole surface (planet radius 48,
+// max terrain ~140-160 above origin) looking horizontally along +X. The
+// radial up at this position is (0, 1, 0).
+const DEFAULT_POSITION: Vec3 = Vec3::new(0.0, 200.0, 0.0);
 const DEFAULT_FORWARD: Vec3 = Vec3::new(1.0, 0.0, 0.0);
 
 /// Phase D: forward-as-state camera. The "up" direction is the radial
