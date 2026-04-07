@@ -205,34 +205,39 @@ pub fn chunk_to_world(cp: ChunkPos, local: Vec3) -> DVec3 {
 /// at the corners, but for any reasonable above-ground player position the
 /// result lies inside a valid chunk.
 pub fn world_to_chunk_local(world: DVec3) -> Option<(ChunkPos, f32, f32, f32)> {
+    world_to_chunk_local_hysteretic(world, None, 0.0)
+}
+
+/// Hysteretic version: prefers `current_face` when the dominant axis margin
+/// is below `epsilon`. Used by walk/fly to stop the owning face from
+/// flipping each frame on a seam.
+pub fn world_to_chunk_local_hysteretic(world: DVec3, current_face: Option<Face>, epsilon: f64) -> Option<(ChunkPos, f32, f32, f32)> {
     let radius = world.length();
     if radius < 1e-6 {
         return None;
     }
     let unit_sphere = world / radius;
     let unit_cube = sphere_to_cube_unit(unit_sphere);
-    // Pick the face owning this cube point.
-    let ax = unit_cube.x.abs();
-    let ay = unit_cube.y.abs();
-    let az = unit_cube.z.abs();
-    let face = if ax >= ay && ax >= az {
-        if unit_cube.x > 0.0 { Face::PosX } else { Face::NegX }
-    } else if ay >= az {
-        if unit_cube.y > 0.0 { Face::PosY } else { Face::NegY }
-    } else {
-        if unit_cube.z > 0.0 { Face::PosZ } else { Face::NegZ }
+    // Try the hysteretic pick first. If the resulting (u, v) on that face
+    // is outside the face's own range, the player has actually crossed the
+    // seam — fall back to the geometric dominant pick.
+    let mut face = match current_face {
+        Some(cur) => face_for_cube_point_hysteretic(unit_cube, cur, epsilon),
+        None => face_for_cube_point(unit_cube),
     };
-    // Re-express the cube point in the face's tangent basis (in block units).
-    let (tu, tv, _) = face_basis(face);
-    let cube_pt_blocks = unit_cube * CUBE_HALF_BLOCKS;
-    let u = cube_pt_blocks.dot(tu.as_dvec3());
-    let v = cube_pt_blocks.dot(tv.as_dvec3());
-    let d = radius - PLANET_RADIUS_BLOCKS as f64;
-    // Convert tangent (u, v) and radial depth (d) into chunk + local indices.
     let half = (FACE_SIDE_CHUNKS * CHUNK_SIZE as i32) as f64 * 0.5;
-    let face_u = u + half; // [0, FACE_SIDE_BLOCKS]
-    let face_v = v + half;
     let cs = CHUNK_SIZE as f64;
+    let cube_pt_blocks = unit_cube * CUBE_HALF_BLOCKS;
+    let (mut u, mut v) = project_uv(face, cube_pt_blocks);
+    if u.abs() > half || v.abs() > half {
+        face = face_for_cube_point(unit_cube);
+        let (u2, v2) = project_uv(face, cube_pt_blocks);
+        u = u2;
+        v = v2;
+    }
+    let d = radius - PLANET_RADIUS_BLOCKS as f64;
+    let face_u = u + half;
+    let face_v = v + half;
     let cx = face_u.div_euclid(cs) as i32;
     let cy = d.div_euclid(cs) as i32;
     let cz = face_v.div_euclid(cs) as i32;
@@ -240,6 +245,11 @@ pub fn world_to_chunk_local(world: DVec3) -> Option<(ChunkPos, f32, f32, f32)> {
     let ly = (d.rem_euclid(cs)) as f32;
     let lz = (face_v.rem_euclid(cs)) as f32;
     Some((ChunkPos { face, cx, cy, cz }, lx, ly, lz))
+}
+
+fn project_uv(face: Face, cube_pt_blocks: DVec3) -> (f64, f64) {
+    let (tu, tv, _) = face_basis(face);
+    (cube_pt_blocks.dot(tu.as_dvec3()), cube_pt_blocks.dot(tv.as_dvec3()))
 }
 
 /// Convert a `(wx, wz)` block-space coordinate — interpreted as a position on
@@ -388,6 +398,44 @@ pub fn face_for_cube_point(point: DVec3) -> Face {
         if point.y > 0.0 { Face::PosY } else { Face::NegY }
     } else {
         if point.z > 0.0 { Face::PosZ } else { Face::NegZ }
+    }
+}
+
+/// Hysteretic version of [`face_for_cube_point`]. Prefers `current` when the
+/// dominant axis margin over `current`'s normal axis is below `epsilon` —
+/// stops the face from flipping back and forth on every frame when the
+/// player walks exactly along a seam (where `ax`, `ay`, `az` are nearly
+/// equal and float noise picks a different winner each tick).
+pub fn face_for_cube_point_hysteretic(point: DVec3, current: Face, epsilon: f64) -> Face {
+    let candidate = face_for_cube_point(point);
+    if candidate == current {
+        return current;
+    }
+    let cur_axis_value = match current {
+        Face::PosX | Face::NegX => point.x.abs(),
+        Face::PosY | Face::NegY => point.y.abs(),
+        Face::PosZ | Face::NegZ => point.z.abs(),
+    };
+    let cand_axis_value = match candidate {
+        Face::PosX | Face::NegX => point.x.abs(),
+        Face::PosY | Face::NegY => point.y.abs(),
+        Face::PosZ | Face::NegZ => point.z.abs(),
+    };
+    // Only switch if the candidate axis is meaningfully larger AND the sign
+    // of the current face's axis hasn't changed (player is still on the
+    // outward side of the cube).
+    let same_sign_on_current = match current {
+        Face::PosX => point.x >= 0.0,
+        Face::NegX => point.x <= 0.0,
+        Face::PosY => point.y >= 0.0,
+        Face::NegY => point.y <= 0.0,
+        Face::PosZ => point.z >= 0.0,
+        Face::NegZ => point.z <= 0.0,
+    };
+    if same_sign_on_current && cand_axis_value < cur_axis_value + epsilon {
+        current
+    } else {
+        candidate
     }
 }
 

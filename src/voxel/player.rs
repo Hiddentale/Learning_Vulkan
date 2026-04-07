@@ -24,6 +24,11 @@ const PLAYER_HALF_WIDTH: f32 = 0.3;
 /// Eye sits this far in front of the body center along `forward`. Lets the
 /// camera approach a wall to within `PLAYER_HALF_WIDTH - CAMERA_FORWARD_OFFSET`.
 const CAMERA_FORWARD_OFFSET: f32 = 0.25;
+/// Cube-space margin (in blocks) by which a candidate face's dominant axis
+/// must exceed the current face's axis before we switch faces. Stops the
+/// face from flipping every frame when the player walks exactly along a
+/// seam where two cube components are nearly equal.
+const FACE_HYSTERESIS: f64 = 0.05;
 pub const MAX_PITCH: f32 = 89.0_f32 * (std::f32::consts::PI / 180.0);
 
 pub struct Player {
@@ -34,10 +39,14 @@ pub struct Player {
     pub lx: f32,
     pub ly: f32,
     pub lz: f32,
-    /// Camera forward direction in cartesian world space. Re-tangent-projected
-    /// against the local up after each move so it stays roughly tangent to
-    /// the curved surface.
+    /// Camera forward direction in cartesian world space. Stored alongside
+    /// `right` as a full orthonormal basis so the view never gimbal-locks
+    /// when forward is parallel to the local radial up.
     pub forward: Vec3,
+    /// Camera right direction. Maintained orthogonal to `forward` by
+    /// rotate_yaw / rotate_pitch and parallel-transported alongside
+    /// `forward` on every move.
+    pub right: Vec3,
     pub radial_velocity: f32,
     pub on_ground: bool,
     pub fly_mode: bool,
@@ -50,6 +59,8 @@ impl Player {
         // the +X tangent direction.
         let face = Face::PosY;
         let mid = sphere::FACE_SIDE_CHUNKS / 2;
+        let forward = Vec3::new(1.0, 0.0, 0.0);
+        let right = Vec3::new(0.0, 0.0, -1.0);
         Self {
             face,
             cx: mid,
@@ -58,7 +69,8 @@ impl Player {
             lx: 8.0,
             ly: 8.0,
             lz: 8.0,
-            forward: Vec3::new(1.0, 0.0, 0.0),
+            forward,
+            right,
             radial_velocity: 0.0,
             on_ground: false,
             fly_mode: true,
@@ -86,7 +98,36 @@ impl Player {
     }
 
     pub fn right(&self) -> Vec3 {
-        self.forward.cross(self.up()).normalize_or(Vec3::X)
+        self.right
+    }
+
+    /// Camera up: completes the (right, up, forward) right-handed basis.
+    /// Always well-defined since right and forward are kept orthogonal.
+    pub fn camera_up(&self) -> Vec3 {
+        self.right.cross(self.forward).normalize_or(Vec3::Y)
+    }
+
+    /// True if any integer block index in the player's capsule footprint
+    /// equals `(target_chunk, ix, iy, iz)`. Used to refuse a block placement
+    /// that would embed the player.
+    pub fn overlaps_block(&self, target_chunk: ChunkPos, ix: usize, iy: usize, iz: usize) -> bool {
+        let hw = PLAYER_HALF_WIDTH;
+        let lx_min = (self.lx - hw).floor() as i32;
+        let lx_max = (self.lx + hw).floor() as i32;
+        let lz_min = (self.lz - hw).floor() as i32;
+        let lz_max = (self.lz + hw).floor() as i32;
+        let ly_min = (self.ly - PLAYER_HEIGHT + 0.01).floor() as i32;
+        let ly_max = (self.ly - 0.01).floor() as i32;
+        for sx in lx_min..=lx_max {
+            for sy in ly_min..=ly_max {
+                for sz in lz_min..=lz_max {
+                    if same_block(self.face, self.cx, self.cy, self.cz, sx, sy, sz, target_chunk, ix, iy, iz) {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
     }
 
     pub fn jump(&mut self) {
@@ -99,25 +140,75 @@ impl Player {
     pub fn toggle_fly_mode(&mut self) {
         self.fly_mode = !self.fly_mode;
         self.radial_velocity = 0.0;
+        if !self.fly_mode {
+            // Returning to walk mode: discard any roll picked up while flying
+            // by re-snapping right to the planet-horizontal direction.
+            self.snap_walk_basis();
+        }
     }
 
+    /// Yaw input. In walk mode, rotates around the planet's radial up so
+    /// the horizon stays level. In fly mode, rotates around the camera's
+    /// own up axis for free 6DOF flying (lets you look down at the planet
+    /// and still rotate the view).
     pub fn rotate_yaw(&mut self, radians: f32) {
-        self.forward = rotate_around(self.forward, self.up(), radians).normalize_or(self.forward);
+        if self.fly_mode {
+            let axis = self.camera_up();
+            self.forward = rotate_around(self.forward, axis, radians).normalize_or(self.forward);
+            self.right = rotate_around(self.right, axis, radians).normalize_or(self.right);
+            self.reorthonormalize_basis();
+        } else {
+            let axis = self.up();
+            self.forward = rotate_around(self.forward, axis, radians).normalize_or(self.forward);
+            self.snap_walk_basis();
+        }
     }
 
+    /// Pitch input. Walk mode: rotates forward around the planet-horizontal
+    /// right axis, clamped against the radial up. Fly mode: rotates around
+    /// the stored camera right (which can be tilted from any 6DOF state),
+    /// also clamped against the radial up so you can't invert relative to
+    /// the planet.
     pub fn rotate_pitch(&mut self, radians: f32) {
         let up = self.up();
-        let right = self.right();
-        let new_forward = rotate_around(self.forward, right, radians).normalize_or(self.forward);
+        let pitch_axis = if self.fly_mode {
+            self.right
+        } else {
+            self.forward.cross(up).normalize_or(self.right)
+        };
+        let new_forward = rotate_around(self.forward, pitch_axis, radians).normalize_or(self.forward);
         let sin_pitch = new_forward.dot(up).clamp(-1.0, 1.0);
         let max_sin = MAX_PITCH.sin();
-        if sin_pitch.abs() <= max_sin {
-            self.forward = new_forward;
+        self.forward = if sin_pitch.abs() <= max_sin {
+            new_forward
         } else {
-            let horizontal = (new_forward - up * sin_pitch).normalize_or(self.right());
+            let horizontal = (new_forward - up * sin_pitch).normalize_or(pitch_axis);
             let cos_max = MAX_PITCH.cos();
-            self.forward = (horizontal * cos_max + up * sin_pitch.signum() * max_sin).normalize_or(self.forward);
+            (horizontal * cos_max + up * sin_pitch.signum() * max_sin).normalize_or(self.forward)
+        };
+        if self.fly_mode {
+            self.reorthonormalize_basis();
+        } else {
+            self.snap_walk_basis();
         }
+    }
+
+    /// Re-snap (forward, right) to a clean orthonormal pair, eliminating
+    /// drift introduced by repeated rotations. Used in fly mode where
+    /// `right` may legitimately tilt away from horizontal.
+    fn reorthonormalize_basis(&mut self) {
+        self.forward = self.forward.normalize_or(Vec3::X);
+        let proj = self.right - self.forward * self.forward.dot(self.right);
+        self.right = proj.normalize_or(Vec3::Z);
+    }
+
+    /// Re-snap the basis assuming planet-relative walk semantics: right is
+    /// always horizontal (perpendicular to the radial up), so the horizon
+    /// can never tilt no matter how the player moved or rotated.
+    fn snap_walk_basis(&mut self) {
+        let up = self.up();
+        self.forward = self.forward.normalize_or(Vec3::X);
+        self.right = self.forward.cross(up).normalize_or(Vec3::Z);
     }
 
     /// Walk a tangent-plane displacement (`tangent_world`) of length in
@@ -136,11 +227,8 @@ impl Player {
         let right_h = forward_h.cross(up).normalize_or(Vec3::ZERO);
         let forward_amt = tangent_world.dot(forward_h);
         let right_amt = tangent_world.dot(right_h);
-        let moved_f = self.try_world_step(forward_h * forward_amt, world);
-        let moved_r = self.try_world_step(right_h * right_amt, world);
-        if moved_f || moved_r {
-            self.reorthogonalize_forward();
-        }
+        self.try_world_step(forward_h * forward_amt, world);
+        self.try_world_step(right_h * right_amt, world);
     }
 
     /// Apply one world-space tangent step. Re-derives cube coords via the
@@ -150,10 +238,11 @@ impl Player {
         if world_displacement.length_squared() < 1e-12 {
             return false;
         }
-        let save = (self.face, self.cx, self.cy, self.cz, self.lx, self.ly, self.lz);
+        let save = (self.face, self.cx, self.cy, self.cz, self.lx, self.ly, self.lz, self.forward, self.right);
         let cur = sphere::chunk_to_world(self.chunk_pos(), Vec3::new(self.lx, self.ly, self.lz));
         let new_world = cur + world_displacement.as_dvec3();
-        let Some((cp, lx, ly, lz)) = sphere::world_to_chunk_local(new_world) else {
+        let unit_eps = FACE_HYSTERESIS / sphere::CUBE_HALF_BLOCKS;
+        let Some((cp, lx, ly, lz)) = sphere::world_to_chunk_local_hysteretic(new_world, Some(self.face), unit_eps) else {
             return false;
         };
         if cp.cy < 0 {
@@ -175,8 +264,19 @@ impl Player {
             self.lx = save.4;
             self.ly = save.5;
             self.lz = save.6;
+            self.forward = save.7;
+            self.right = save.8;
             false
         } else {
+            let up_old = cur.as_vec3().normalize_or(Vec3::Y);
+            let up_new = self.world_pos().normalize_or(Vec3::Y);
+            self.forward = parallel_transport(self.forward, up_old, up_new);
+            if self.fly_mode {
+                self.right = parallel_transport(self.right, up_old, up_new);
+                self.reorthonormalize_basis();
+            } else {
+                self.snap_walk_basis();
+            }
             true
         }
     }
@@ -188,7 +288,8 @@ impl Player {
     pub fn fly_move(&mut self, displacement_world: Vec3) {
         let cur = sphere::chunk_to_world(self.chunk_pos(), Vec3::new(self.lx, self.ly, self.lz));
         let new_world = cur + displacement_world.as_dvec3();
-        if let Some((cp, lx, ly, lz)) = sphere::world_to_chunk_local(new_world) {
+        let unit_eps = FACE_HYSTERESIS / sphere::CUBE_HALF_BLOCKS;
+        if let Some((cp, lx, ly, lz)) = sphere::world_to_chunk_local_hysteretic(new_world, Some(self.face), unit_eps) {
             let n = sphere::FACE_SIDE_CHUNKS;
             if cp.cy >= 0 {
                 self.face = cp.face;
@@ -198,10 +299,17 @@ impl Player {
                 self.lx = lx;
                 self.ly = ly;
                 self.lz = lz;
+                let up_old = cur.as_vec3().normalize_or(Vec3::Y);
+                let up_new = self.world_pos().normalize_or(Vec3::Y);
+                self.forward = parallel_transport(self.forward, up_old, up_new);
+                self.right = parallel_transport(self.right, up_old, up_new);
+                self.reorthonormalize_basis();
             }
         }
-        self.reorthogonalize_forward();
     }
+
+    /// Toggle between walk and fly modes. When entering walk mode, snap the
+    /// basis horizontal so any roll picked up in fly mode disappears.
 
     /// Apply radial gravity. Sticky `on_ground` is verified each frame by
     /// probing the block below the feet.
@@ -218,17 +326,11 @@ impl Player {
 
         self.radial_velocity -= GRAVITY * dt;
         let dd = self.radial_velocity * dt;
-        self.ly += dd;
-        self.carry();
-
-        // Push up out of any embedded geometry. Lift in 0.05 steps, max 3 blocks.
-        let mut lifted = 0;
-        while capsule_collides(self, world) && lifted < 60 {
-            self.ly += 0.05;
-            self.carry();
-            lifted += 1;
-        }
-        if lifted > 0 {
+        // Try the radial step with collision; if blocked, zero velocity and
+        // mark grounded. Avoid the previous "embed then lift up" approach,
+        // which could push the player INTO blocks above them.
+        let moved = self.try_axis(0.0, dd, 0.0, world);
+        if !moved {
             self.radial_velocity = 0.0;
             self.on_ground = true;
         }
@@ -323,7 +425,7 @@ impl Player {
         let v = self.cz as f64 * cs + self.lz as f64 - half;
         let (tu, tv, n) = sphere::face_basis(self.face);
         let cube_pt = tu.as_dvec3() * u + tv.as_dvec3() * v + n.as_dvec3() * half;
-        let new_face = sphere::face_for_cube_point(cube_pt);
+        let new_face = sphere::face_for_cube_point_hysteretic(cube_pt, self.face, FACE_HYSTERESIS);
         let new_n = sphere::face_normal(new_face).as_dvec3();
         let new_dominant = cube_pt.dot(new_n).abs().max(1e-9);
         let scaled = cube_pt * (half / new_dominant);
@@ -341,9 +443,40 @@ impl Player {
         self.lx = new_lx;
         self.lz = new_lz;
         // cy / ly (radial) preserved across face boundaries.
-
-        self.reorthogonalize_forward();
+        // Basis is left intact: world position is continuous across the
+        // remap so the orthonormal (forward, right) pair stays valid.
     }
+}
+
+/// True if a sample at offset `(sx, sy, sz)` from chunk `(face, cx, cy, cz)`
+/// resolves to the same block as `(target, ix, iy, iz)`. Carries across
+/// chunk boundaries within the same face only — for placement guarding,
+/// this is enough since the player capsule never spans more than one face.
+fn same_block(
+    face: Face, cx: i32, cy: i32, cz: i32,
+    sx: i32, sy: i32, sz: i32,
+    target: ChunkPos, ix: usize, iy: usize, iz: usize,
+) -> bool {
+    let cs = CHUNK_SIZE as i32;
+    let mut acx = cx;
+    let mut acy = cy;
+    let mut acz = cz;
+    let mut aix = sx;
+    let mut aiy = sy;
+    let mut aiz = sz;
+    while aix >= cs { aix -= cs; acx += 1; }
+    while aix < 0 { aix += cs; acx -= 1; }
+    while aiz >= cs { aiz -= cs; acz += 1; }
+    while aiz < 0 { aiz += cs; acz -= 1; }
+    while aiy >= cs { aiy -= cs; acy += 1; }
+    while aiy < 0 { aiy += cs; acy -= 1; }
+    target.face == face
+        && target.cx == acx
+        && target.cy == acy
+        && target.cz == acz
+        && ix == aix as usize
+        && iy == aiy as usize
+        && iz == aiz as usize
 }
 
 /// Sample one specific integer block at face-local indices `(ix, iy, iz)`
@@ -459,6 +592,21 @@ fn ground_below(player: &Player, world: &World) -> bool {
         }
     }
     false
+}
+
+/// Parallel transport a tangent vector from one point on the sphere to
+/// another, given the radial outward directions at both points. Rotates
+/// `v` by the same rotation that takes `from_up` to `to_up`. Preserves
+/// the angle between `v` and the local tangent plane, so the camera
+/// horizon stays level after long walks.
+fn parallel_transport(v: Vec3, from_up: Vec3, to_up: Vec3) -> Vec3 {
+    let dot = from_up.dot(to_up).clamp(-1.0, 1.0);
+    if dot > 0.999_999 {
+        return v;
+    }
+    let axis = from_up.cross(to_up).normalize_or(Vec3::X);
+    let angle = dot.acos();
+    rotate_around(v, axis, angle)
 }
 
 fn rotate_around(v: Vec3, axis: Vec3, angle: f32) -> Vec3 {
@@ -678,24 +826,27 @@ mod tests {
     }
 
     /// Drift of the forward vector's tangent component over a long walk.
-    /// Currently fails — documented as the "no parallel transport"
-    /// limitation. Re-enable once forward gets parallel-transported on
-    /// each cross-face transition or each move step.
+    /// Now passes thanks to per-step parallel transport.
     #[test]
-    #[ignore]
     fn forward_stays_tangent_after_long_walk() {
         let _world = solid_planet();
         let mut p = Player::new();
         p.fly_mode = true;
         p.cy = 8;
         p.ly = 8.0;
+        // Re-tangent forward against the actual local up at the spawn so the
+        // test measures drift caused by walking, not initial misalignment.
+        p.reorthogonalize_forward();
+        let up_start = p.up();
+        let tangent_start = (p.forward - up_start * p.forward.dot(up_start)).normalize_or(Vec3::X);
+        p.forward = tangent_start;
         for _ in 0..200 {
             let (tu, _, _) = sphere::face_basis(p.face);
             p.fly_move(tu * 0.3);
         }
         let up = p.up();
         let dot = p.forward.dot(up).abs();
-        assert!(dot < 0.1, "forward drifted off tangent plane: |dot|={}", dot);
+        assert!(dot < 0.05, "forward drifted off tangent plane: |dot|={}", dot);
     }
 
     // ----- (9) Physics tick determinism -----

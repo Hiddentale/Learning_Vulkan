@@ -16,6 +16,7 @@ const FAR_PLANE: f32 = 10000.0;
 pub struct Camera {
     pub position: Vec3,
     pub forward: Vec3,
+    pub right: Vec3,
 }
 
 impl Camera {
@@ -23,6 +24,7 @@ impl Camera {
         Self {
             position: player.eye_pos(),
             forward: player.forward,
+            right: player.right,
         }
     }
 
@@ -31,6 +33,7 @@ impl Camera {
     pub fn sync_from_player(&mut self, player: &Player) {
         self.position = player.eye_pos();
         self.forward = player.forward;
+        self.right = player.right;
     }
 
     pub fn up(&self) -> Vec3 {
@@ -42,12 +45,12 @@ impl Camera {
     }
 
     pub fn right(&self) -> Vec3 {
-        self.forward.cross(self.up()).normalize_or(Vec3::X)
+        self.right
     }
 
     pub fn view_matrix(&self) -> Mat4 {
-        let up = self.up();
-        Mat4::look_at_rh(self.position, self.position + self.forward, up)
+        let view_up = self.right.cross(self.forward).normalize_or(Vec3::Y);
+        Mat4::look_at_rh(self.position, self.position + self.forward, view_up)
     }
 }
 

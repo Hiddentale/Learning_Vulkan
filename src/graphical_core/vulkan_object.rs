@@ -162,11 +162,27 @@ impl VulkanApplication {
         self.wr.as_ref().is_none_or(|wr| wr.lod_idle_frames >= 3)
     }
 
-    /// Phase D': block edits are disabled until raycast is rebuilt against
-    /// the cube-space block API. Stub kept so the call site (currently
-    /// unused) compiles.
-    #[allow(dead_code)]
-    pub unsafe fn set_block(&mut self, _wx: i32, _wy: i32, _wz: i32, _block: crate::voxel::block::BlockType) {}
+    /// Set a single block in cube space and re-upload its chunk (and any
+    /// neighbor chunks whose boundary slice depends on it). Used by the
+    /// raycast-driven place / break inputs.
+    pub unsafe fn set_block_at(
+        &mut self,
+        cp: crate::voxel::sphere::ChunkPos,
+        lx: usize,
+        ly: usize,
+        lz: usize,
+        block: crate::voxel::block::BlockType,
+    ) {
+        let Some(wr) = self.wr.as_mut() else { return };
+        if !wr.world.set_block_at(cp, lx, ly, lz, block) {
+            return;
+        }
+        if let Some(chunk) = wr.world.get_chunk_at(cp) {
+            let chunk_ptr: *const crate::voxel::chunk::Chunk = chunk;
+            wr.voxel_pool.reupload_chunk(cp, &*chunk_ptr, &wr.world);
+            wr.voxel_pool.invalidate_neighbor_boundaries(cp, &wr.world);
+        }
+    }
 
     pub fn swapchain_extent(&self) -> vk::Extent2D {
         self.vulkan_application_data.swapchain_extent

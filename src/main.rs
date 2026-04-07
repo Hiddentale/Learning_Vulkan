@@ -247,11 +247,26 @@ fn main() -> Result<()> {
                             physics_accumulator -= PHYSICS_TICK;
                         }
                         camera.sync_from_player(&player);
-                        // Phase D': raycast / set_block are not yet rebuilt
-                        // for cube-space — input clicks are consumed but
-                        // ignored until the raycast rewrite lands.
-                        let _ = input.take_left_click();
-                        let _ = input.take_right_click();
+                        let left = input.take_left_click();
+                        let right = input.take_right_click();
+                        if left || right {
+                            if let Some(world) = application.world() {
+                                if let Some(hit) = raycast::raycast(player.eye_pos(), player.forward, world) {
+                                    let target = if left { hit.hit } else { hit.adjacent };
+                                    let allowed = left || !player.overlaps_block(target.chunk, target.lx, target.ly, target.lz);
+                                    if allowed {
+                                        let new_block = if left {
+                                            voxel::block::BlockType::Air
+                                        } else {
+                                            voxel::block::BlockType::Stone
+                                        };
+                                        unsafe {
+                                            application.set_block_at(target.chunk, target.lx, target.ly, target.lz, new_block);
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                     GameState::PreGenerating { .. } => {
                         unsafe { application.update_world(&camera).ok() };
