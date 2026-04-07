@@ -220,88 +220,180 @@ impl Player {
         }
     }
 
-    /// Convert the player's current cube-space position to a world point,
-    /// then re-derive `(face, cx, cy, cz, lx, ly, lz)` on whichever face
-    /// owns that point. Used only at chunk-boundary face crossings (a
-    /// discrete event), not for collision.
+    /// Cross a face boundary. The player's current `(cx, lx, cz, lz)` are
+    /// out of face range; reproject onto the neighbor face by computing the
+    /// cube-surface point and dotting against the neighbor's basis.
+    ///
+    /// This is **not** the inverse of [`sphere::cube_to_sphere_unit`] —
+    /// it works directly on the cube point with no normalization, no
+    /// fixed-point iteration, and no rounding ambiguity. The geometry it
+    /// preserves is the cube edge, which is the actual boundary between
+    /// the two faces.
     fn remap_to_neighbor_face(&mut self) {
-        let world = sphere::chunk_to_world(self.chunk_pos(), Vec3::new(self.lx, self.ly, self.lz));
-        if let Some((cp, lx, ly, lz)) = sphere::world_to_chunk_local(world) {
-            self.face = cp.face;
-            self.cx = cp.cx;
-            self.cy = cp.cy;
-            self.cz = cp.cz;
-            self.lx = lx;
-            self.ly = ly;
-            self.lz = lz;
+        let cs = CHUNK_SIZE as f64;
+        let half = (sphere::FACE_SIDE_CHUNKS * CHUNK_SIZE as i32) as f64 * 0.5;
+        // Face-local cube tangent coords (centered at cube center).
+        let u = self.cx as f64 * cs + self.lx as f64 - half;
+        let v = self.cz as f64 * cs + self.lz as f64 - half;
+        let (tu, tv, n) = sphere::face_basis(self.face);
+        // Cube point on the original face's surface plane, slightly past
+        // the edge in the tangent direction.
+        let cube_pt = tu.as_dvec3() * u + tv.as_dvec3() * v + n.as_dvec3() * half;
+
+        // The neighbor face is the one whose normal axis dominates.
+        let ax = cube_pt.x.abs();
+        let ay = cube_pt.y.abs();
+        let az = cube_pt.z.abs();
+        let new_face = if ax >= ay && ax >= az {
+            if cube_pt.x > 0.0 { Face::PosX } else { Face::NegX }
+        } else if ay >= az {
+            if cube_pt.y > 0.0 { Face::PosY } else { Face::NegY }
+        } else {
+            if cube_pt.z > 0.0 { Face::PosZ } else { Face::NegZ }
+        };
+        if new_face == self.face {
+            return;
         }
-        // Re-orthogonalize forward against the new face's local up.
+        // Scale the cube point so its dominant axis sits on the new face plane.
+        let dominant = ax.max(ay).max(az);
+        let scaled = cube_pt * (half / dominant);
+
+        // Re-express in the new face's tangent basis.
+        let (ntu, ntv, _) = sphere::face_basis(new_face);
+        let new_u_center = scaled.dot(ntu.as_dvec3());
+        let new_v_center = scaled.dot(ntv.as_dvec3());
+        let new_face_u = new_u_center + half; // [0, FACE_SIDE_BLOCKS]
+        let new_face_v = new_v_center + half;
+
+        let n_chunks = sphere::FACE_SIDE_CHUNKS;
+        let max_face = n_chunks as f64 * cs - 1e-4;
+        let new_face_u = new_face_u.clamp(0.0, max_face);
+        let new_face_v = new_face_v.clamp(0.0, max_face);
+        let new_cx = (new_face_u / cs).floor() as i32;
+        let new_cz = (new_face_v / cs).floor() as i32;
+        let new_lx = (new_face_u - new_cx as f64 * cs) as f32;
+        let new_lz = (new_face_v - new_cz as f64 * cs) as f32;
+
+        self.face = new_face;
+        self.cx = new_cx.clamp(0, n_chunks - 1);
+        self.cz = new_cz.clamp(0, n_chunks - 1);
+        self.lx = new_lx;
+        self.lz = new_lz;
+        // cy / ly (radial) preserved.
         self.reorthogonalize_forward();
     }
 }
 
-/// Sample whether the chunk at `(face, cx, cy, cz)` has a solid block at
-/// the given sub-chunk position. Cross-face samples (cx/cz out of face
-/// range) return `false` (passable) — the cross-face transition table is
-/// not yet wired up, so we let the player walk past face edges and let
-/// `Player::carry` re-derive the new face once the integer chunk index
-/// itself crosses the boundary.
-fn sample_solid_at(face: Face, mut cx: i32, mut cy: i32, mut cz: i32, mut lx: f32, mut ly: f32, mut lz: f32, world: &World) -> bool {
-    let cs = CHUNK_SIZE as f32;
-    while lx >= cs { lx -= cs; cx += 1; }
-    while lx < 0.0 { lx += cs; cx -= 1; }
-    while lz >= cs { lz -= cs; cz += 1; }
-    while lz < 0.0 { lz += cs; cz -= 1; }
-    while ly >= cs { ly -= cs; cy += 1; }
-    while ly < 0.0 { ly += cs; cy -= 1; }
+/// Sample one specific integer block at face-local indices `(ix, iy, iz)`
+/// relative to the player's current chunk. Carries across chunk and face
+/// boundaries. Cross-face samples are resolved by re-deriving the
+/// neighbor's chunk via the same `remap_to_neighbor_face` math used for
+/// player movement, so collision matches the rendered geometry exactly.
+fn sample_block_solid(face: Face, mut cx: i32, mut cy: i32, mut cz: i32, mut ix: i32, mut iy: i32, mut iz: i32, world: &World) -> bool {
+    let cs = CHUNK_SIZE as i32;
+    // Integer chunk carry.
+    while ix >= cs { ix -= cs; cx += 1; }
+    while ix < 0 { ix += cs; cx -= 1; }
+    while iz >= cs { iz -= cs; cz += 1; }
+    while iz < 0 { iz += cs; cz -= 1; }
+    while iy >= cs { iy -= cs; cy += 1; }
+    while iy < 0 { iy += cs; cy -= 1; }
     if cy < 0 {
-        return true; // anything below the planet core pins the player.
+        return true; // below planet core — pin the player.
     }
     let n = sphere::FACE_SIDE_CHUNKS;
-    if cx < 0 || cx >= n || cz < 0 || cz >= n {
-        return false;
-    }
-    world.block_solid(ChunkPos { face, cx, cy, cz }, lx as usize, ly as usize, lz as usize)
+    let cp = if cx < 0 || cx >= n || cz < 0 || cz >= n {
+        // Cross-face sample: derive the neighbor face from the cube point.
+        let (new_face, new_cx, new_ix, new_cz, new_iz) = remap_block_to_neighbor(face, cx, cz, ix, iz);
+        if new_face == face {
+            return false;
+        }
+        ix = new_ix;
+        iz = new_iz;
+        ChunkPos { face: new_face, cx: new_cx, cy, cz: new_cz }
+    } else {
+        ChunkPos { face, cx, cy, cz }
+    };
+    world.block_solid(cp, ix as usize, iy as usize, iz as usize)
 }
 
+/// Static remap of a block-level (cx, cz, ix, iz) on `face` whose chunk
+/// indices have left the face range, onto the neighbor face. cy/iy are
+/// preserved (they are radial). This is the block-granularity analogue of
+/// [`Player::remap_to_neighbor_face`], using the same cube-edge geometry.
+fn remap_block_to_neighbor(face: Face, cx: i32, cz: i32, ix: i32, iz: i32) -> (Face, i32, i32, i32, i32) {
+    let cs = CHUNK_SIZE as f64;
+    let half = (sphere::FACE_SIDE_CHUNKS * CHUNK_SIZE as i32) as f64 * 0.5;
+    // Sample at the block centre.
+    let u = cx as f64 * cs + ix as f64 + 0.5 - half;
+    let v = cz as f64 * cs + iz as f64 + 0.5 - half;
+    let (tu, tv, n) = sphere::face_basis(face);
+    let cube_pt = tu.as_dvec3() * u + tv.as_dvec3() * v + n.as_dvec3() * half;
+    let ax = cube_pt.x.abs();
+    let ay = cube_pt.y.abs();
+    let az = cube_pt.z.abs();
+    let new_face = if ax >= ay && ax >= az {
+        if cube_pt.x > 0.0 { Face::PosX } else { Face::NegX }
+    } else if ay >= az {
+        if cube_pt.y > 0.0 { Face::PosY } else { Face::NegY }
+    } else {
+        if cube_pt.z > 0.0 { Face::PosZ } else { Face::NegZ }
+    };
+    if new_face == face {
+        return (face, cx, ix, cz, iz);
+    }
+    let dominant = ax.max(ay).max(az);
+    let scaled = cube_pt * (half / dominant);
+    let (ntu, ntv, _) = sphere::face_basis(new_face);
+    let new_u_center = scaled.dot(ntu.as_dvec3());
+    let new_v_center = scaled.dot(ntv.as_dvec3());
+    let new_face_u = (new_u_center + half).clamp(0.0, sphere::FACE_SIDE_BLOCKS as f64 - 1e-4);
+    let new_face_v = (new_v_center + half).clamp(0.0, sphere::FACE_SIDE_BLOCKS as f64 - 1e-4);
+    let new_cx = (new_face_u / cs).floor() as i32;
+    let new_cz = (new_face_v / cs).floor() as i32;
+    let new_ix = (new_face_u - new_cx as f64 * cs) as i32;
+    let new_iz = (new_face_v - new_cz as f64 * cs) as i32;
+    let nm = sphere::FACE_SIDE_CHUNKS;
+    (new_face, new_cx.clamp(0, nm - 1), new_ix, new_cz.clamp(0, nm - 1), new_iz)
+}
+
+/// Iterate every integer block the player's capsule overlaps. For a
+/// PLAYER_HEIGHT × 2*HALF_WIDTH × 2*HALF_WIDTH box this is at most
+/// 3 × 2 × 2 = 12 lookups, all direct chunk array reads.
 fn capsule_collides(player: &Player, world: &World) -> bool {
     let hw = PLAYER_HALF_WIDTH;
-    let height = PLAYER_HEIGHT;
-    let offsets = [
-        ( 0.0, 0.0),
-        ( hw,  hw),
-        ( hw, -hw),
-        (-hw,  hw),
-        (-hw, -hw),
-    ];
-    // Sample every block the body overlaps in the radial direction.
-    // For a 1.7-block tall player this is at most 3 distinct blocks.
-    let heights = [0.0_f32, -0.5 * height, -(height - 0.05)];
-    for h in heights {
-        for (dx, dz) in offsets {
-            if sample_solid_at(player.face, player.cx, player.cy, player.cz, player.lx + dx, player.ly + h, player.lz + dz, world) {
-                return true;
+    let lx_min = (player.lx - hw).floor() as i32;
+    let lx_max = (player.lx + hw).floor() as i32;
+    let lz_min = (player.lz - hw).floor() as i32;
+    let lz_max = (player.lz + hw).floor() as i32;
+    let ly_min = (player.ly - PLAYER_HEIGHT + 0.01).floor() as i32;
+    let ly_max = (player.ly - 0.01).floor() as i32;
+    for ix in lx_min..=lx_max {
+        for iy in ly_min..=ly_max {
+            for iz in lz_min..=lz_max {
+                if sample_block_solid(player.face, player.cx, player.cy, player.cz, ix, iy, iz, world) {
+                    return true;
+                }
             }
         }
     }
     false
 }
 
-/// True if there is a solid block immediately below the player's feet.
+/// True if there is a solid block in the layer immediately below the feet.
 /// Used for sticky `on_ground`.
 fn ground_below(player: &Player, world: &World) -> bool {
     let hw = PLAYER_HALF_WIDTH;
-    let probe_ly = player.ly - PLAYER_HEIGHT - 0.05;
-    let offsets = [
-        ( 0.0, 0.0),
-        ( hw,  hw),
-        ( hw, -hw),
-        (-hw,  hw),
-        (-hw, -hw),
-    ];
-    for (dx, dz) in offsets {
-        if sample_solid_at(player.face, player.cx, player.cy, player.cz, player.lx + dx, probe_ly, player.lz + dz, world) {
-            return true;
+    let lx_min = (player.lx - hw).floor() as i32;
+    let lx_max = (player.lx + hw).floor() as i32;
+    let lz_min = (player.lz - hw).floor() as i32;
+    let lz_max = (player.lz + hw).floor() as i32;
+    let iy = (player.ly - PLAYER_HEIGHT - 0.05).floor() as i32;
+    for ix in lx_min..=lx_max {
+        for iz in lz_min..=lz_max {
+            if sample_block_solid(player.face, player.cx, player.cy, player.cz, ix, iy, iz, world) {
+                return true;
+            }
         }
     }
     false
