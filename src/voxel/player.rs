@@ -135,29 +135,40 @@ impl Player {
         self.reorthogonalize_forward();
     }
 
-    /// Apply radial gravity. Sticky `on_ground` to avoid bobbing.
+    /// Apply radial gravity. Sticky `on_ground` is verified each frame by
+    /// probing the block below the feet.
     pub fn apply_physics(&mut self, dt: f32, world: &World) {
         if self.fly_mode {
             return;
         }
         if self.on_ground {
-            // Walked off the edge? Probe one step down.
-            let probe_ly = self.ly - 0.2;
-            if !sample_solid_at(self.face, self.cx, self.cy, self.cz, self.lx, probe_ly - PLAYER_HEIGHT, self.lz, world) {
-                self.on_ground = false;
-            } else {
-                return;
+            if ground_below(self, world) {
+                return; // standing — no motion this frame
             }
+            self.on_ground = false;
         }
+
         self.radial_velocity -= GRAVITY * dt;
         let dd = self.radial_velocity * dt;
-        self.try_move(0.0, dd, 0.0, world);
+        self.ly += dd;
+        self.carry();
+
+        // Push up out of any embedded geometry. Lift in 0.05 steps, max 3 blocks.
+        let mut lifted = 0;
+        while capsule_collides(self, world) && lifted < 60 {
+            self.ly += 0.05;
+            self.carry();
+            lifted += 1;
+        }
+        if lifted > 0 {
+            self.radial_velocity = 0.0;
+            self.on_ground = true;
+        }
     }
 
-    /// Attempt to move by `(du, dd, dv)` in face-local block units. The
-    /// move is applied as one integer carry, then collision-tested as a
-    /// capsule footprint. On collision the move is reverted and, if it was
-    /// a downward move, `on_ground` becomes true.
+    /// Attempt a horizontal move by `(du, dv)` (face-local block units).
+    /// On collision, revert. No vertical motion — gravity is handled in
+    /// `apply_physics`.
     fn try_move(&mut self, du: f32, dd: f32, dv: f32, world: &World) {
         let (old_face, old_cx, old_cy, old_cz) = (self.face, self.cx, self.cy, self.cz);
         let (old_lx, old_ly, old_lz) = (self.lx, self.ly, self.lz);
@@ -173,10 +184,6 @@ impl Player {
             self.lx = old_lx;
             self.ly = old_ly;
             self.lz = old_lz;
-            if dd < 0.0 {
-                self.radial_velocity = 0.0;
-                self.on_ground = true;
-            }
         } else if du != 0.0 || dv != 0.0 {
             self.reorthogonalize_forward();
         }
@@ -234,9 +241,11 @@ impl Player {
 }
 
 /// Sample whether the chunk at `(face, cx, cy, cz)` has a solid block at
-/// the given sub-chunk position. Sub-chunk coordinates outside `[0, 16)`
-/// are first carried into the appropriate neighbor (same face only — for
-/// capsule sampling we always stay within one chunk's worth of the player).
+/// the given sub-chunk position. Cross-face samples (cx/cz out of face
+/// range) return `false` (passable) — the cross-face transition table is
+/// not yet wired up, so we let the player walk past face edges and let
+/// `Player::carry` re-derive the new face once the integer chunk index
+/// itself crosses the boundary.
 fn sample_solid_at(face: Face, mut cx: i32, mut cy: i32, mut cz: i32, mut lx: f32, mut ly: f32, mut lz: f32, world: &World) -> bool {
     let cs = CHUNK_SIZE as f32;
     while lx >= cs { lx -= cs; cx += 1; }
@@ -246,41 +255,53 @@ fn sample_solid_at(face: Face, mut cx: i32, mut cy: i32, mut cz: i32, mut lx: f3
     while ly >= cs { ly -= cs; cy += 1; }
     while ly < 0.0 { ly += cs; cy -= 1; }
     if cy < 0 {
-        return true; // anything below the planet core is "solid" — pin the player.
+        return true; // anything below the planet core pins the player.
     }
     let n = sphere::FACE_SIDE_CHUNKS;
-    let cp = if cx < 0 || cx >= n || cz < 0 || cz >= n {
-        // Cross-face sample: re-derive via world position. One-shot, fine.
-        let world_pt = sphere::chunk_to_world(ChunkPos { face, cx, cy, cz }, Vec3::new(lx, ly, lz));
-        match sphere::world_to_chunk_local(world_pt) {
-            Some((cp, nlx, nly, nlz)) => {
-                lx = nlx; ly = nly; lz = nlz;
-                cp
-            }
-            None => return false,
-        }
-    } else {
-        ChunkPos { face, cx, cy, cz }
-    };
-    world.block_solid(cp, lx as usize, ly as usize, lz as usize)
+    if cx < 0 || cx >= n || cz < 0 || cz >= n {
+        return false;
+    }
+    world.block_solid(ChunkPos { face, cx, cy, cz }, lx as usize, ly as usize, lz as usize)
 }
 
 fn capsule_collides(player: &Player, world: &World) -> bool {
-    // Sample 4 footprint corners at 3 heights (head, mid, feet).
     let hw = PLAYER_HALF_WIDTH;
     let height = PLAYER_HEIGHT;
     let offsets = [
+        ( 0.0, 0.0),
         ( hw,  hw),
         ( hw, -hw),
         (-hw,  hw),
         (-hw, -hw),
     ];
+    // Sample every block the body overlaps in the radial direction.
+    // For a 1.7-block tall player this is at most 3 distinct blocks.
     let heights = [0.0_f32, -0.5 * height, -(height - 0.05)];
     for h in heights {
         for (dx, dz) in offsets {
             if sample_solid_at(player.face, player.cx, player.cy, player.cz, player.lx + dx, player.ly + h, player.lz + dz, world) {
                 return true;
             }
+        }
+    }
+    false
+}
+
+/// True if there is a solid block immediately below the player's feet.
+/// Used for sticky `on_ground`.
+fn ground_below(player: &Player, world: &World) -> bool {
+    let hw = PLAYER_HALF_WIDTH;
+    let probe_ly = player.ly - PLAYER_HEIGHT - 0.05;
+    let offsets = [
+        ( 0.0, 0.0),
+        ( hw,  hw),
+        ( hw, -hw),
+        (-hw,  hw),
+        (-hw, -hw),
+    ];
+    for (dx, dz) in offsets {
+        if sample_solid_at(player.face, player.cx, player.cy, player.cz, player.lx + dx, probe_ly, player.lz + dz, world) {
+            return true;
         }
     }
     false
