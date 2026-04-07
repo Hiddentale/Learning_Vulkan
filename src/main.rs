@@ -314,6 +314,11 @@ fn main() -> Result<()> {
                     GameState::Playing => {
                         application.ui.begin_frame();
                         application.ui.draw_text(&fps_counter.display(), 4.0, 4.0, 16.0, [1.0, 1.0, 1.0, 0.8]);
+                        let pos_text = format!(
+                            "face={:?} chunk=({},{},{}) local=({:.1},{:.1},{:.1})",
+                            player.face, player.cx, player.cy, player.cz, player.lx, player.ly, player.lz
+                        );
+                        application.ui.draw_text(&pos_text, 4.0, 22.0, 14.0, [1.0, 1.0, 1.0, 0.8]);
                         unsafe { application.render_frame(&user_window, &camera, &eyes) }
                     }
                     _ => {

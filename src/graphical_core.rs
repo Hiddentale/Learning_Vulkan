@@ -2,6 +2,7 @@ pub mod buffers;
 pub mod camera;
 pub mod commands;
 pub mod compute_cull;
+pub mod cull_compact;
 pub mod depth;
 pub mod descriptors;
 pub mod frustum;

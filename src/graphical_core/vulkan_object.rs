@@ -98,7 +98,7 @@ const SVDAG_DISTANCE: i32 = LOD4_DISTANCE;
 /// and FACE_RADIAL_CHUNKS=96 the worst-case total is 6·12·12·96 = 82944
 /// chunk slots; only the surface band is actually uploaded but we allocate
 /// the upper bound so the pool never overflows mid-load.
-const MAX_MESH_CHUNKS: usize = 131072;
+const MAX_MESH_CHUNKS: usize = 262144;
 const MAX_SVDAG_CHUNKS: u32 = 32768;
 const SUPER_CHUNK_VOXELS: u32 = 64;
 
@@ -107,6 +107,7 @@ pub struct WorldResources {
     pub world: World,
     voxel_pool: VoxelPool,
     mesh_shader_pipeline: MeshShaderPipeline,
+    cull_compact_pipeline: crate::graphical_core::cull_compact::CullCompactPipeline,
     svdag_pool: SvdagPool,
     svdag_pipeline: SvdagPipeline,
     svdag_compressor: SvdagCompressor,
@@ -144,6 +145,52 @@ pub struct VulkanApplication {
     /// None when in the menu, Some when a world is loaded.
     wr: Option<WorldResources>,
     pub ui: UiPipeline,
+    /// Single-slot timestamp query pool for per-stage GPU timing.
+    /// Size = `TIMING_QUERY_COUNT`. Read back synchronously each frame.
+    timing_query_pool: vk::QueryPool,
+    timing_period_ns: f64,
+}
+
+/// Number of timestamp queries written per frame in `record_mesh_shader_command_buffer`.
+/// Slot meanings (set by the recording code):
+/// 0 = start, 1 = after sky, 2 = after phase1 mesh, 3 = after depth pyramid,
+/// 4 = after phase2 mesh + heightmap, 5 = after svdag, 6 = after ui (= end).
+pub const TIMING_QUERY_COUNT: u32 = 7;
+
+/// True iff every one of `cp`'s six axis-neighbors is uniform-opaque (or out
+/// of generated range, which the world treats as solid below the terrain
+/// layer). A uniform-opaque chunk with this property is buried — none of its
+/// faces touch air, so it emits no geometry and can be skipped at upload.
+fn neighbors_all_opaque(world: &World, cp: crate::voxel::sphere::ChunkPos) -> bool {
+    use crate::voxel::sphere::{cross_face_neighbor, ChunkPos, FACE_SIDE_CHUNKS};
+    let neighbor_solid = |nb: ChunkPos| -> bool {
+        // Out of (cx, cz) face range → cross-face neighbor; treat as solid if
+        // we can't resolve (the world cap above the terrain band is air, not
+        // solid, so we explicitly only count radial neighbors as solid when
+        // they're inside the band).
+        let resolved = if nb.cx < 0 || nb.cx >= FACE_SIDE_CHUNKS || nb.cz < 0 || nb.cz >= FACE_SIDE_CHUNKS {
+            cross_face_neighbor(nb).unwrap_or(nb)
+        } else {
+            nb
+        };
+        match world.get_chunk_at(resolved) {
+            Some(c) => c.is_uniform_opaque(),
+            None => {
+                // Missing chunk → solid only if it's inside the radial terrain
+                // band. Above the band is sky.
+                (crate::voxel::world::TERRAIN_MIN_CY..=crate::voxel::world::TERRAIN_MAX_CY).contains(&resolved.cy)
+            }
+        }
+    };
+    let neighbors = [
+        ChunkPos { face: cp.face, cx: cp.cx + 1, cy: cp.cy, cz: cp.cz },
+        ChunkPos { face: cp.face, cx: cp.cx - 1, cy: cp.cy, cz: cp.cz },
+        ChunkPos { face: cp.face, cx: cp.cx, cy: cp.cy + 1, cz: cp.cz },
+        ChunkPos { face: cp.face, cx: cp.cx, cy: cp.cy - 1, cz: cp.cz },
+        ChunkPos { face: cp.face, cx: cp.cx, cy: cp.cy, cz: cp.cz + 1 },
+        ChunkPos { face: cp.face, cx: cp.cx, cy: cp.cy, cz: cp.cz - 1 },
+    ];
+    neighbors.iter().all(|&n| neighbor_solid(n))
 }
 
 impl VulkanApplication {
@@ -219,6 +266,7 @@ impl VulkanApplication {
             session,
             swapchain,
             &wr.mesh_shader_pipeline,
+            &wr.cull_compact_pipeline,
             &wr.voxel_pool,
         )
     }
@@ -247,6 +295,19 @@ impl VulkanApplication {
         let depth_pyramid_pipeline = crate::graphical_core::compute_cull::create_depth_pyramid_pipeline(&device, &data)?;
         let ui = UiPipeline::create(&device, &instance, &mut data)?;
 
+        // Per-stage GPU timestamp query pool. One pool with TIMING_QUERY_COUNT
+        // slots — we read it back synchronously after each frame, so no
+        // double-buffering is needed.
+        let qp_info = vk::QueryPoolCreateInfo::builder()
+            .query_type(vk::QueryType::TIMESTAMP)
+            .query_count(TIMING_QUERY_COUNT);
+        let timing_query_pool = device.create_query_pool(&qp_info, None)?;
+        let props = instance.get_physical_device_properties(data.physical_device);
+        let timing_period_ns = props.limits.timestamp_period as f64;
+        // Clear debug.log on startup so the user can see whether the new
+        // perf line ever gets written this run.
+        let _ = std::fs::write("debug.log", format!("[startup] timestamp_period={} ns\n", timing_period_ns));
+
         Ok(Self {
             _vulkan_entry_point: entry,
             vulkan_instance: instance,
@@ -260,6 +321,8 @@ impl VulkanApplication {
             _vr_swapchain: vr_swapchain,
             wr: None,
             ui,
+            timing_query_pool,
+            timing_period_ns,
         })
     }
 
@@ -277,15 +340,11 @@ impl VulkanApplication {
             &self.vulkan_instance,
             &mut self.vulkan_application_data,
         )?;
-        // Phase C: tiny planet — every chunk is in mesh range. Upload all.
-        let positions: Vec<crate::voxel::sphere::ChunkPos> = world.chunk_positions().collect();
-        for pos in positions {
-            if let Some(chunk) = world.get_chunk_at(pos) {
-                let chunk_ptr = chunk as *const _;
-                voxel_pool.upload_chunk(pos, unsafe { &*chunk_ptr }, &world);
-            }
-        }
+        // Note: chunks are uploaded per-frame in `update_chunks_inner` as the
+        // chunk generator threads finish — not here. Here the world is empty.
         let mesh_shader_pipeline = MeshShaderPipeline::create(&self.device, &self.vulkan_application_data, &voxel_pool)?;
+        let cull_compact_pipeline =
+            crate::graphical_core::cull_compact::CullCompactPipeline::create(&self.device, &self.vulkan_application_data, &voxel_pool)?;
 
         let svdag_pool = SvdagPool::new(MAX_SVDAG_CHUNKS, &self.device, &self.vulkan_instance, &mut self.vulkan_application_data)?;
         let svdag_pipeline = SvdagPipeline::create(&self.device, &self.vulkan_instance, &mut self.vulkan_application_data, &svdag_pool)?;
@@ -303,6 +362,7 @@ impl VulkanApplication {
             world,
             voxel_pool,
             mesh_shader_pipeline,
+            cull_compact_pipeline,
             svdag_pool,
             svdag_pipeline,
             svdag_compressor,
@@ -335,6 +395,7 @@ impl VulkanApplication {
             wr.heightmap_pool.destroy(&self.device);
             wr.svdag_pipeline.destroy(&self.device);
             wr.svdag_pool.destroy(&self.device);
+            wr.cull_compact_pipeline.destroy(&self.device);
             wr.mesh_shader_pipeline.destroy(&self.device);
             wr.voxel_pool.destroy(&self.device);
         }
@@ -450,13 +511,20 @@ impl VulkanApplication {
     /// # Safety
     /// Calls unsafe Vulkan queue and synchronization APIs.
     pub unsafe fn render_frame(&mut self, window: &Window, camera: &Camera, eyes: &EyeMatrices) -> anyhow::Result<()> {
+        let t_total = std::time::Instant::now();
+
+        let t0 = std::time::Instant::now();
         let wr = self.wr.as_mut().expect("render_frame called without a loaded world");
         Self::update_chunks_inner(wr, camera)?;
+        let dt_update_chunks = t0.elapsed();
+        let resident_count = wr.voxel_pool.chunk_count();
 
+        let t1 = std::time::Instant::now();
         let image_index = match self.acquire_next_image(window)? {
             Some(index) => index,
             None => return Ok(()),
         };
+        let dt_acquire = t1.elapsed();
         update_uniform_buffer(&self.vulkan_application_data, eyes)?;
 
         let wr = self.wr.as_ref().unwrap();
@@ -529,22 +597,123 @@ impl VulkanApplication {
             camera_pos: camera.position.to_array(),
             morph_factor: 0.0,
         };
+        let t2 = std::time::Instant::now();
         record_mesh_shader_command_buffer(
             &self.device,
             &self.vulkan_application_data,
             image_index,
             &wr.mesh_shader_pipeline,
+            &wr.cull_compact_pipeline,
+            &wr.voxel_pool,
             &self.depth_pyramid_pipeline,
             &cull_push,
             self.depth_pyramid_needs_init,
             svdag_args.as_ref().map(|(sp, c, t, m)| (*sp, c, t, m)),
             &self.ui,
             Some((&wr.heightmap_pipeline, &wr.heightmap_pool, &heightmap_visible, &heightmap_push)),
+            self.timing_query_pool,
         )?;
         self.depth_pyramid_needs_init = false;
+        let dt_record = t2.elapsed();
+
+        let t3 = std::time::Instant::now();
         self.submit_command_buffer(image_index)?;
+        let dt_submit = t3.elapsed();
+
+        let t4 = std::time::Instant::now();
         self.present_frame(image_index, window)?;
+        let dt_present = t4.elapsed();
+
+        // Read back GPU timestamps from THIS frame (blocks until done; the
+        // CPU is normally idle during this window because acquire blocks
+        // anyway). Convert tick deltas → ms via timestamp_period.
+        let mut ts = [0u64; TIMING_QUERY_COUNT as usize];
+        let _ = self.device.get_query_pool_results(
+            self.timing_query_pool,
+            0,
+            TIMING_QUERY_COUNT,
+            std::mem::size_of_val(&ts),
+            ts.as_mut_ptr() as *mut std::ffi::c_void,
+            std::mem::size_of::<u64>() as u64,
+            vk::QueryResultFlags::_64 | vk::QueryResultFlags::WAIT,
+        );
+        let to_ms = |ticks: u64| -> f64 { (ticks as f64) * self.timing_period_ns / 1_000_000.0 };
+        let gpu_sky = to_ms(ts[1] - ts[0]);
+        let gpu_phase1 = to_ms(ts[2] - ts[1]);
+        let gpu_pyramid = to_ms(ts[3] - ts[2]);
+        let gpu_phase2 = to_ms(ts[4] - ts[3]);
+        let gpu_svdag = to_ms(ts[5] - ts[4]);
+        let gpu_ui = to_ms(ts[6] - ts[5]);
+        let gpu_total = to_ms(ts[6] - ts[0]);
+
         self.frame = (self.frame + 1) % MAX_FRAMES_IN_FLIGHT;
+        let dt_total = t_total.elapsed();
+
+        // Rolling 60-frame average; write to debug.log once per second.
+        struct PerfAccum {
+            update_chunks: u128,
+            acquire: u128,
+            record: u128,
+            submit: u128,
+            present: u128,
+            total: u128,
+            gpu_sky: f64,
+            gpu_phase1: f64,
+            gpu_pyramid: f64,
+            gpu_phase2: f64,
+            gpu_svdag: f64,
+            gpu_ui: f64,
+            gpu_total: f64,
+            n: u32,
+        }
+        static PERF: std::sync::Mutex<PerfAccum> = std::sync::Mutex::new(PerfAccum {
+            update_chunks: 0, acquire: 0, record: 0, submit: 0, present: 0, total: 0,
+            gpu_sky: 0.0, gpu_phase1: 0.0, gpu_pyramid: 0.0, gpu_phase2: 0.0,
+            gpu_svdag: 0.0, gpu_ui: 0.0, gpu_total: 0.0, n: 0,
+        });
+        let mut p = PERF.lock().unwrap();
+        p.update_chunks += dt_update_chunks.as_micros();
+        p.acquire += dt_acquire.as_micros();
+        p.record += dt_record.as_micros();
+        p.submit += dt_submit.as_micros();
+        p.present += dt_present.as_micros();
+        p.total += dt_total.as_micros();
+        p.gpu_sky += gpu_sky;
+        p.gpu_phase1 += gpu_phase1;
+        p.gpu_pyramid += gpu_pyramid;
+        p.gpu_phase2 += gpu_phase2;
+        p.gpu_svdag += gpu_svdag;
+        p.gpu_ui += gpu_ui;
+        p.gpu_total += gpu_total;
+        p.n += 1;
+        if p.n >= 60 {
+            let n = p.n as f64;
+            let resident = resident_count;
+            let msg = format!(
+                "[perf avg over {}f] cpu_total={:.1}ms acquire={:.1} record={:.1} submit={:.1} present={:.1} update={:.1} | gpu_total={:.1}ms sky={:.1} phase1={:.1} pyramid={:.1} phase2={:.1} svdag={:.1} ui={:.1} | resident={}\n",
+                p.n,
+                p.total as f64 / n / 1000.0,
+                p.acquire as f64 / n / 1000.0,
+                p.record as f64 / n / 1000.0,
+                p.submit as f64 / n / 1000.0,
+                p.present as f64 / n / 1000.0,
+                p.update_chunks as f64 / n / 1000.0,
+                p.gpu_total / n,
+                p.gpu_sky / n,
+                p.gpu_phase1 / n,
+                p.gpu_pyramid / n,
+                p.gpu_phase2 / n,
+                p.gpu_svdag / n,
+                p.gpu_ui / n,
+                resident,
+            );
+            let _ = std::fs::write("debug.log", &msg);
+            *p = PerfAccum {
+                update_chunks: 0, acquire: 0, record: 0, submit: 0, present: 0, total: 0,
+                gpu_sky: 0.0, gpu_phase1: 0.0, gpu_pyramid: 0.0, gpu_phase2: 0.0,
+                gpu_svdag: 0.0, gpu_ui: 0.0, gpu_total: 0.0, n: 0,
+            };
+        }
         Ok(())
     }
 
@@ -622,15 +791,56 @@ impl VulkanApplication {
             wr.voxel_pool.invalidate_neighbor_boundaries(*pos, &wr.world);
             wr.voxel_pool.remove_chunk(pos);
         }
+        // Track which newly-loaded chunks were uniform-opaque so we can
+        // re-check their neighbors for "now buried" after this batch is done.
+        let mut newly_opaque: Vec<crate::voxel::sphere::ChunkPos> = Vec::new();
         for pos in &delta.loaded {
             if wr.voxel_pool.has_chunk(pos) {
                 continue;
             }
             if let Some(chunk) = wr.world.get_chunk_at(*pos) {
+                if chunk.is_uniform_air() {
+                    continue;
+                }
+                if chunk.is_uniform_opaque() {
+                    newly_opaque.push(*pos);
+                    if neighbors_all_opaque(&wr.world, *pos) {
+                        continue;
+                    }
+                }
                 let chunk_ptr = chunk as *const _;
                 wr.voxel_pool.upload_chunk(*pos, &*chunk_ptr, &wr.world);
                 wr.voxel_pool.invalidate_neighbor_boundaries(*pos, &wr.world);
             }
+        }
+        // Second sweep: each newly-opaque chunk may have just turned a
+        // previously-uploaded neighbor into a buried chunk. Re-check the
+        // 6 axis-neighbors of every newly-opaque chunk and evict any that
+        // are now buried.
+        use crate::voxel::sphere::ChunkPos;
+        let mut to_evict: std::collections::HashSet<ChunkPos> = Default::default();
+        for &cp in &newly_opaque {
+            let neighbors = [
+                ChunkPos { face: cp.face, cx: cp.cx + 1, cy: cp.cy, cz: cp.cz },
+                ChunkPos { face: cp.face, cx: cp.cx - 1, cy: cp.cy, cz: cp.cz },
+                ChunkPos { face: cp.face, cx: cp.cx, cy: cp.cy + 1, cz: cp.cz },
+                ChunkPos { face: cp.face, cx: cp.cx, cy: cp.cy - 1, cz: cp.cz },
+                ChunkPos { face: cp.face, cx: cp.cx, cy: cp.cy, cz: cp.cz + 1 },
+                ChunkPos { face: cp.face, cx: cp.cx, cy: cp.cy, cz: cp.cz - 1 },
+            ];
+            for n in neighbors {
+                if !wr.voxel_pool.has_chunk(&n) {
+                    continue;
+                }
+                let Some(nc) = wr.world.get_chunk_at(n) else { continue };
+                if nc.is_uniform_opaque() && neighbors_all_opaque(&wr.world, n) {
+                    to_evict.insert(n);
+                }
+            }
+        }
+        for cp in to_evict {
+            wr.voxel_pool.invalidate_neighbor_boundaries(cp, &wr.world);
+            wr.voxel_pool.remove_chunk(&cp);
         }
 
         const COMPRESSIONS_PER_FRAME: usize = 64;
@@ -1021,6 +1231,7 @@ impl VulkanApplication {
         // Re-bind depth pyramid descriptors for world pipelines (handles were invalidated)
         if let Some(wr) = &self.wr {
             wr.mesh_shader_pipeline.update_depth_pyramid(&self.device, &self.vulkan_application_data);
+            wr.cull_compact_pipeline.update_depth_pyramid(&self.device, &self.vulkan_application_data);
             wr.svdag_pipeline.update_depth_pyramid(&self.device, &self.vulkan_application_data);
         }
         Ok(())
@@ -1073,6 +1284,7 @@ impl VulkanApplication {
         if let Some(mut wr) = self.wr.take() {
             wr.svdag_pipeline.destroy(&self.device);
             wr.svdag_pool.destroy(&self.device);
+            wr.cull_compact_pipeline.destroy(&self.device);
             wr.mesh_shader_pipeline.destroy(&self.device);
             wr.voxel_pool.destroy(&self.device);
         }

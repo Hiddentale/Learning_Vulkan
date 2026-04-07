@@ -1,6 +1,14 @@
 #version 450
 #extension GL_EXT_mesh_shader : require
 
+// Per-chunk task shader. The cull/horizon/occlusion logic ran here in the
+// previous design but now lives in `chunk_cull_compact.comp`, which writes
+// a packed `visible_chunks[]` list and a 1-command indirect args buffer.
+// The host then issues `cmd_draw_mesh_tasks_indirect_ext` with x = visible
+// count, so each surviving chunk gets exactly one workgroup here. We just
+// look up our chunk index from the visible list and emit per-sub-chunk
+// meshlets — no early exits, no internal cull.
+
 layout(local_size_x = 64) in;
 
 struct MeshChunkInfo {
@@ -20,18 +28,13 @@ layout(std430, set = 0, binding = 3) readonly buffer VoxelDataBuffer {
     uint voxel_data[];
 };
 
-layout(std430, set = 0, binding = 6) buffer VisibilityBuffer {
-    uint visibility[];
+layout(std430, set = 0, binding = 8) readonly buffer VisiblePhase1 {
+    uint visible_phase1[];
 };
 
-layout(set = 0, binding = 7) uniform sampler2D depth_pyramid;
-
-layout(set = 0, binding = 1) uniform CameraUBO {
-    mat4 view_projection[2];
-    mat4 inverse_view_projection[2];
-    vec3 light_direction;
-    float ambient_strength;
-} camera;
+layout(std430, set = 0, binding = 9) readonly buffer VisiblePhase2 {
+    uint visible_phase2[];
+};
 
 layout(push_constant) uniform PushConstants {
     vec4 planes[6];
@@ -51,136 +54,6 @@ struct MeshPayload {
 
 taskPayloadSharedEXT MeshPayload payloads[64];
 shared uint meshlet_count;
-shared bool chunk_visible;
-
-bool frustum_visible(vec3 aabb_min, vec3 aabb_max) {
-    for (int i = 0; i < 6; i++) {
-        vec3 normal = planes[i].xyz;
-        vec3 p = vec3(
-            normal.x >= 0.0 ? aabb_max.x : aabb_min.x,
-            normal.y >= 0.0 ? aabb_max.y : aabb_min.y,
-            normal.z >= 0.0 ? aabb_max.z : aabb_min.z
-        );
-        if (dot(normal, p) + planes[i].w < 0.0) return false;
-    }
-    return true;
-}
-
-// Horizon cull. Conservative test: a chunk's bounding sphere on the visible
-// cap of the planet from the camera is kept; everything past the limb is
-// culled. Geometry: visible cap from a camera at distance `d` from planet
-// center subtends half-angle `acos(R/d)` from the planet center. The chunk's
-// angular footprint is `asin(r/|c|)`. Visible iff
-//   dot(chunk_dir, cam_dir) >= cos(acos(R/d) + asin(r/|c|)).
-// Computed exactly via cosine-of-sum so the test is tight.
-bool horizon_visible(vec3 sphere_center, float sphere_radius) {
-    float cam_dist = length(camera_pos);
-    if (cam_dist <= planet_radius) return true;
-    float c_dist = length(sphere_center);
-    if (c_dist < 1e-4) return true;
-    vec3 cam_dir = camera_pos / cam_dist;
-    vec3 chunk_dir = sphere_center / c_dist;
-    float cos_a = clamp(planet_radius / cam_dist, -1.0, 1.0);
-    float sin_a = sqrt(max(0.0, 1.0 - cos_a * cos_a));
-    float sin_alpha = clamp(sphere_radius / c_dist, 0.0, 1.0);
-    float cos_alpha = sqrt(max(0.0, 1.0 - sin_alpha * sin_alpha));
-    float threshold = cos_a * cos_alpha - sin_a * sin_alpha;
-    return dot(chunk_dir, cam_dir) >= threshold;
-}
-
-// Project an AABB through `vp` to a screen-space rect plus the chunk's
-// farthest NDC z (reverse-Z: the chunk's deepest point, i.e. smallest NDC z
-// — MAX of the per-corner `ndc.z` values, since in reverse-Z larger = nearer).
-// Wait: the hi-Z test needs the chunk's *farthest* (= most-permissive) point
-// under reverse-Z, which is the **max** of NDC z across corners because max
-// NDC z = nearest to camera = hardest to occlude. Returns true iff any corner
-// is in front of the camera. When some corners are behind the near plane, the
-// rect expands to the full screen and `chunk_z` becomes 1.0 (nearest) so the
-// occlusion test cannot cull the chunk.
-bool project_aabb(mat4 vp, vec3 aabb_min, vec3 aabb_max, out vec2 uv_min, out vec2 uv_max, out float chunk_z) {
-    uv_min = vec2(1e9);
-    uv_max = vec2(-1e9);
-    chunk_z = 0.0;
-    bool any_in_front = false;
-    bool any_behind = false;
-
-    for (int i = 0; i < 8; i++) {
-        vec3 corner = vec3(
-            (i & 1) != 0 ? aabb_max.x : aabb_min.x,
-            (i & 2) != 0 ? aabb_max.y : aabb_min.y,
-            (i & 4) != 0 ? aabb_max.z : aabb_min.z
-        );
-        vec4 clip = vp * vec4(corner, 1.0);
-        if (clip.w <= 1e-4) {
-            any_behind = true;
-            continue;
-        }
-        any_in_front = true;
-        vec3 ndc = clip.xyz / clip.w;
-        vec2 uv = ndc.xy * 0.5 + 0.5;
-        uv_min = min(uv_min, uv);
-        uv_max = max(uv_max, uv);
-        // Reverse-Z: nearest NDC z = largest value. Track max so the test
-        // uses the chunk's most-permissive (= hardest-to-occlude) point.
-        chunk_z = max(chunk_z, ndc.z);
-    }
-
-    if (!any_in_front) {
-        return false;
-    }
-    if (any_behind) {
-        // Straddles the near plane — expand to full screen and nearest-possible
-        // depth so the hi-Z test cannot cull it.
-        uv_min = vec2(0.0);
-        uv_max = vec2(1.0);
-        chunk_z = 1.0;
-    } else {
-        uv_min = clamp(uv_min, vec2(0.0), vec2(1.0));
-        uv_max = clamp(uv_max, vec2(0.0), vec2(1.0));
-    }
-    return true;
-}
-
-// Hi-Z occlusion test for a single eye, reverse-Z. Returns true iff the chunk
-// is potentially visible (not occluded). Reverse-Z: the pyramid stores the
-// minimum-of-tile (= nearest occluder in NDC). A chunk is occluded iff its
-// farthest NDC z is still less than that minimum — meaning even its closest
-// point (to the camera) is behind the nearest surface in the tile.
-bool eye_occlusion_visible(mat4 vp, vec3 aabb_min, vec3 aabb_max) {
-    vec2 uv_min, uv_max;
-    float chunk_z;
-    if (!project_aabb(vp, aabb_min, aabb_max, uv_min, uv_max, chunk_z)) {
-        return false;
-    }
-
-    vec2 size_pixels = (uv_max - uv_min) * screen_size;
-    float max_extent = max(size_pixels.x, size_pixels.y);
-    // Pick the smallest mip whose 2x2 gather covers the rect (zeux/niagara).
-    float mip = max(0.0, ceil(log2(max(max_extent * 0.5, 1.0))));
-    vec2 center_uv = (uv_min + uv_max) * 0.5;
-    // 2x2 min gather at the chosen mip (reverse-Z conservative occluder = min).
-    vec2 texel = 1.0 / vec2(textureSize(depth_pyramid, int(mip)));
-    float d0 = textureLod(depth_pyramid, center_uv + vec2(-0.5, -0.5) * texel, mip).r;
-    float d1 = textureLod(depth_pyramid, center_uv + vec2( 0.5, -0.5) * texel, mip).r;
-    float d2 = textureLod(depth_pyramid, center_uv + vec2(-0.5,  0.5) * texel, mip).r;
-    float d3 = textureLod(depth_pyramid, center_uv + vec2( 0.5,  0.5) * texel, mip).r;
-    float pyramid_depth = min(min(d0, d1), min(d2, d3));
-
-    // Visible iff chunk's nearest point is at or in front of the nearest
-    // occluder. `>=` so coplanar passes (no self-occlusion).
-    return chunk_z >= pyramid_depth;
-}
-
-// Stereo-aware occlusion test: visible iff visible in either eye.
-bool occlusion_visible(vec3 aabb_min, vec3 aabb_max) {
-    if (eye_occlusion_visible(camera.view_projection[0], aabb_min, aabb_max)) {
-        return true;
-    }
-    if (stereo == 1u) {
-        return eye_occlusion_visible(camera.view_projection[1], aabb_min, aabb_max);
-    }
-    return false;
-}
 
 bool sub_chunk_occupied(uint voxel_slot, uint sub_idx) {
     uint sx = (sub_idx & 3u) * 4u;
@@ -199,63 +72,20 @@ bool sub_chunk_occupied(uint voxel_slot, uint sub_idx) {
 }
 
 void main() {
-    uint chunk_idx = gl_WorkGroupID.x;
-    if (chunk_idx >= chunk_count) {
-        EmitMeshTasksEXT(0u, 1u, 1u);
-        return;
-    }
+    uint slot = gl_WorkGroupID.x;
+    uint chunk_idx = (phase == 1u) ? visible_phase1[slot] : visible_phase2[slot];
 
     uint tid = gl_LocalInvocationID.x;
-
     if (tid == 0u) {
         meshlet_count = 0u;
-        chunk_visible = false;
     }
     barrier();
 
     MeshChunkInfo chunk = chunks[chunk_idx];
-
-    // Approximate bounding sphere from the chunk's projected AABB. Used by
-    // the horizon early-out only — looser than the analytic sphere from
-    // sphere::chunk_bounding_sphere but doesn't require any extra upload.
-    vec3 sphere_center = (chunk.aabb_min + chunk.aabb_max) * 0.5;
-    float sphere_radius = length((chunk.aabb_max - chunk.aabb_min) * 0.5);
-
-    if (tid == 0u) {
-        bool was_visible = visibility[chunk_idx] == 1u;
-
-        // Phase filtering
-        if (phase == 1u && !was_visible) { chunk_visible = false; }
-        else if (phase == 2u && was_visible) { chunk_visible = false; }
-        else if (!horizon_visible(sphere_center, sphere_radius)) {
-            visibility[chunk_idx] = 0u;
-            chunk_visible = false;
-        }
-        else if (!frustum_visible(chunk.aabb_min, chunk.aabb_max)) {
-            visibility[chunk_idx] = 0u;
-            chunk_visible = false;
-        }
-        else if (phase == 2u && !occlusion_visible(chunk.aabb_min, chunk.aabb_max)) {
-            visibility[chunk_idx] = 0u;
-            chunk_visible = false;
-        }
-        else {
-            visibility[chunk_idx] = 1u;
-            chunk_visible = true;
-        }
-    }
-    barrier();
-
-    if (!chunk_visible) {
-        EmitMeshTasksEXT(0u, 1u, 1u);
-        return;
-    }
-
-    // Each of 64 threads checks one 4x4x4 sub-chunk
     if (tid < 64u && sub_chunk_occupied(chunk.voxel_slot, tid)) {
-        uint slot = atomicAdd(meshlet_count, 1u);
-        payloads[slot].chunk_index = chunk_idx;
-        payloads[slot].sub_chunk_index = tid;
+        uint emit_slot = atomicAdd(meshlet_count, 1u);
+        payloads[emit_slot].chunk_index = chunk_idx;
+        payloads[emit_slot].sub_chunk_index = tid;
     }
 
     barrier();

@@ -125,6 +125,18 @@ unsafe fn create_descriptor_layout(device: &Device) -> anyhow::Result<vk::Descri
             .descriptor_count(1)
             .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
             .stage_flags(TASK_STAGE),
+        // Binding 8: visible chunk indices (phase 1) — written by cull_compact, read here.
+        *vk::DescriptorSetLayoutBinding::builder()
+            .binding(8)
+            .descriptor_count(1)
+            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+            .stage_flags(TASK_STAGE),
+        // Binding 9: visible chunk indices (phase 2)
+        *vk::DescriptorSetLayoutBinding::builder()
+            .binding(9)
+            .descriptor_count(1)
+            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+            .stage_flags(TASK_STAGE),
     ];
 
     let create_info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings);
@@ -140,7 +152,7 @@ unsafe fn create_descriptor_pool(device: &Device) -> anyhow::Result<vk::Descript
             .descriptor_count(2) // CameraUBO + MaterialPalette
             .r#type(vk::DescriptorType::UNIFORM_BUFFER),
         *vk::DescriptorPoolSize::builder()
-            .descriptor_count(4) // voxel + boundary + chunk_info + visibility
+            .descriptor_count(6) // voxel + boundary + chunk_info + visibility + visible_phase1 + visible_phase2
             .r#type(vk::DescriptorType::STORAGE_BUFFER),
     ];
     let pool_info = vk::DescriptorPoolCreateInfo::builder().max_sets(1).pool_sizes(&pool_sizes);
@@ -189,6 +201,10 @@ unsafe fn write_descriptors(device: &Device, set: vk::DescriptorSet, data: &Vulk
         .sampler(data.depth_pyramid_sampler)
         .image_layout(vk::ImageLayout::GENERAL)];
 
+    // Bindings 8/9: per-phase visible chunk lists.
+    let visible_p1 = [*vk::DescriptorBufferInfo::builder().buffer(pool.visible_chunks_buffer[0]).range(vk::WHOLE_SIZE)];
+    let visible_p2 = [*vk::DescriptorBufferInfo::builder().buffer(pool.visible_chunks_buffer[1]).range(vk::WHOLE_SIZE)];
+
     let writes = [
         *vk::WriteDescriptorSet::builder()
             .dst_set(set)
@@ -230,6 +246,16 @@ unsafe fn write_descriptors(device: &Device, set: vk::DescriptorSet, data: &Vulk
             .dst_binding(7)
             .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
             .image_info(&depth_info),
+        *vk::WriteDescriptorSet::builder()
+            .dst_set(set)
+            .dst_binding(8)
+            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+            .buffer_info(&visible_p1),
+        *vk::WriteDescriptorSet::builder()
+            .dst_set(set)
+            .dst_binding(9)
+            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+            .buffer_info(&visible_p2),
     ];
 
     device.update_descriptor_sets(&writes, &[] as &[vk::CopyDescriptorSet]);

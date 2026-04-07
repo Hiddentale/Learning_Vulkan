@@ -49,6 +49,20 @@ pub struct VoxelPool {
     visibility_memory: vk::DeviceMemory,
     visibility_ptr: *mut u32,
 
+    // Per-phase visible chunk index list (filled by `chunk_cull_compact.comp`,
+    // read by the task shader as `visible_phaseN[gl_WorkGroupID.x]`).
+    pub visible_chunks_buffer: [vk::Buffer; 2],
+    visible_chunks_memory: [vk::DeviceMemory; 2],
+
+    // Per-phase indirect args buffer. Layout matches
+    // `VkDrawMeshTasksIndirectCommandEXT { groupCountX, Y, Z }`.
+    // Y and Z are pre-initialised to 1 at allocation; only X is touched per
+    // frame (cleared to 0 by cmd_fill_buffer, atomically incremented by the
+    // cull compact pass). The same buffer is bound as a storage SSBO to the
+    // compute pass and as INDIRECT_BUFFER to the mesh draw call.
+    pub indirect_args_buffer: [vk::Buffer; 2],
+    indirect_args_memory: [vk::DeviceMemory; 2],
+
     // Slot management
     free_slots: Vec<u32>,
     next_slot: u32,
@@ -65,6 +79,9 @@ impl VoxelPool {
     pub unsafe fn new(max_slots: u32, device: &Device, instance: &Instance, data: &mut VulkanApplicationData) -> anyhow::Result<Self> {
         let host_visible = super::host_visible_coherent();
         let ssbo_flags = vk::BufferUsageFlags::STORAGE_BUFFER;
+        let indirect_flags = vk::BufferUsageFlags::STORAGE_BUFFER
+            | vk::BufferUsageFlags::INDIRECT_BUFFER
+            | vk::BufferUsageFlags::TRANSFER_DST;
 
         let voxel_size = (max_slots as usize * VOXEL_CHUNK_BYTES) as u64;
         let (voxel_buffer, voxel_memory, voxel_ptr) = allocate_buffer::<u8>(voxel_size, ssbo_flags, device, instance, data, host_visible)?;
@@ -84,6 +101,22 @@ impl VoxelPool {
         // Zero visibility buffer
         std::ptr::write_bytes(visibility_ptr, 0, max_slots as usize);
 
+        // Per-phase visible chunk lists (one u32 per max_slot).
+        let visible_size = (max_slots as u64) * 4;
+        let (vc0_buf, vc0_mem, _vc0_ptr) = allocate_buffer::<u32>(visible_size, ssbo_flags, device, instance, data, host_visible)?;
+        let (vc1_buf, vc1_mem, _vc1_ptr) = allocate_buffer::<u32>(visible_size, ssbo_flags, device, instance, data, host_visible)?;
+
+        // Per-phase indirect args buffers (12 bytes each, layout matches
+        // VkDrawMeshTasksIndirectCommandEXT). Pre-init Y/Z to 1; the cull
+        // compact pass only touches X, and per-frame cmd_fill_buffer only
+        // resets X to 0.
+        let args_size: u64 = 12;
+        let (a0_buf, a0_mem, a0_ptr) = allocate_buffer::<u32>(args_size, indirect_flags, device, instance, data, host_visible)?;
+        let (a1_buf, a1_mem, a1_ptr) = allocate_buffer::<u32>(args_size, indirect_flags, device, instance, data, host_visible)?;
+        let init_args = [0u32, 1u32, 1u32];
+        std::ptr::copy_nonoverlapping(init_args.as_ptr(), a0_ptr, 3);
+        std::ptr::copy_nonoverlapping(init_args.as_ptr(), a1_ptr, 3);
+
         Ok(Self {
             voxel_buffer,
             voxel_memory,
@@ -97,6 +130,10 @@ impl VoxelPool {
             visibility_buffer,
             visibility_memory,
             visibility_ptr,
+            visible_chunks_buffer: [vc0_buf, vc1_buf],
+            visible_chunks_memory: [vc0_mem, vc1_mem],
+            indirect_args_buffer: [a0_buf, a1_buf],
+            indirect_args_memory: [a0_mem, a1_mem],
             free_slots: Vec::new(),
             next_slot: 0,
             max_slots,
@@ -225,6 +262,16 @@ impl VoxelPool {
         device.unmap_memory(self.visibility_memory);
         device.destroy_buffer(self.visibility_buffer, None);
         device.free_memory(self.visibility_memory, None);
+
+        for i in 0..2 {
+            device.unmap_memory(self.visible_chunks_memory[i]);
+            device.destroy_buffer(self.visible_chunks_buffer[i], None);
+            device.free_memory(self.visible_chunks_memory[i], None);
+
+            device.unmap_memory(self.indirect_args_memory[i]);
+            device.destroy_buffer(self.indirect_args_buffer[i], None);
+            device.free_memory(self.indirect_args_memory[i], None);
+        }
     }
 
     fn allocate_slot(&mut self, pos: ChunkPos) -> u32 {
