@@ -206,8 +206,13 @@ void emit_face(uint slot, vec3 center, uint face, uint material_id, uint chunk_f
     vec3 world_t = project_chunk_local(chunk_face, chunk_pos, face_center + t * EPS) - world_center;
     vec3 world_b = project_chunk_local(chunk_face, chunk_pos, face_center + b * EPS) - world_center;
     vec3 world_normal = normalize(cross(world_t, world_b));
-    // Choose the sign that points outward (away from the planet center).
-    if (dot(world_normal, world_center) < 0.0) {
+    // Sign reference: the world delta from the block's body to its face
+    // already points outward along the block face direction. For vertical
+    // walls this is tangent to the sphere, so a radial-out test would be
+    // unstable; the body→face delta is unambiguous on every face.
+    vec3 world_block_center = project_chunk_local(chunk_face, chunk_pos, center);
+    vec3 outward_ref = world_center - world_block_center;
+    if (dot(world_normal, outward_ref) < 0.0) {
         world_normal = -world_normal;
     }
 
