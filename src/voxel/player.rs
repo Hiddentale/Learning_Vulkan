@@ -177,14 +177,27 @@ impl Player {
             self.forward.cross(up).normalize_or(self.right)
         };
         let new_forward = rotate_around(self.forward, pitch_axis, radians).normalize_or(self.forward);
-        let sin_pitch = new_forward.dot(up).clamp(-1.0, 1.0);
+        // Reference horizontal direction from the pre-rotation forward so we
+        // can detect over-rotation past the pole. Just thresholding sin_pitch
+        // misses the case where a single frame's rotation jumps from +89°
+        // through 90° to e.g. 92° — sin is below the limit on both sides but
+        // the horizontal component has flipped sign.
+        let prev_sin = self.forward.dot(up).clamp(-1.0, 1.0);
+        let prev_horizontal = (self.forward - up * prev_sin).normalize_or(pitch_axis);
+        let new_sin = new_forward.dot(up).clamp(-1.0, 1.0);
+        let new_horizontal_unnorm = new_forward - up * new_sin;
+        let crossed_pole = new_horizontal_unnorm.dot(prev_horizontal) < 0.0;
         let max_sin = MAX_PITCH.sin();
-        self.forward = if sin_pitch.abs() <= max_sin {
+        let needs_clamp = crossed_pole || new_sin.abs() > max_sin;
+        self.forward = if !needs_clamp {
             new_forward
         } else {
-            let horizontal = (new_forward - up * sin_pitch).normalize_or(pitch_axis);
             let cos_max = MAX_PITCH.cos();
-            (horizontal * cos_max + up * sin_pitch.signum() * max_sin).normalize_or(self.forward)
+            // Sign of vertical: if we crossed the pole, the requested rotation
+            // direction was "further toward the pole we came from", so pin to
+            // that pole's max. Otherwise use the over-rotated sin's sign.
+            let up_sign = if crossed_pole { prev_sin.signum() } else { new_sin.signum() };
+            (prev_horizontal * cos_max + up * up_sign * max_sin).normalize_or(self.forward)
         };
         if self.fly_mode {
             self.reorthonormalize_basis();
