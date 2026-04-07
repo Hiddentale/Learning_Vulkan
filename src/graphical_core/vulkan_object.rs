@@ -158,25 +158,11 @@ impl VulkanApplication {
         self.wr.as_ref().is_none_or(|wr| wr.lod_idle_frames >= 3)
     }
 
-    /// Sets a block in the world and re-uploads to the mesh shader pool.
-    /// Only near-field chunks (in VoxelPool) are editable.
-    pub unsafe fn set_block(&mut self, wx: i32, wy: i32, wz: i32, block: crate::voxel::block::BlockType) {
-        let wr = match self.wr.as_mut() {
-            Some(wr) => wr,
-            None => return,
-        };
-        if !wr.world.set_block(wx, wy, wz, block) {
-            return;
-        }
-        // Phase C: block edits map to a +Y face chunk for now (raycast/edit
-        // path is rebuilt for sphere coordinates in a later phase).
-        let chunk_pos = crate::voxel::sphere::block_to_chunk(wx, wy, wz);
-        if let Some(chunk) = wr.world.get_chunk_at(chunk_pos) {
-            let chunk = unsafe { &*(chunk as *const _) };
-            wr.voxel_pool.reupload_chunk(chunk_pos, chunk, &wr.world);
-            wr.voxel_pool.invalidate_neighbor_boundaries(chunk_pos, &wr.world);
-        }
-    }
+    /// Phase D': block edits are disabled until raycast is rebuilt against
+    /// the cube-space block API. Stub kept so the call site (currently
+    /// unused) compiles.
+    #[allow(dead_code)]
+    pub unsafe fn set_block(&mut self, _wx: i32, _wy: i32, _wz: i32, _block: crate::voxel::block::BlockType) {}
 
     pub fn swapchain_extent(&self) -> vk::Extent2D {
         self.vulkan_application_data.swapchain_extent

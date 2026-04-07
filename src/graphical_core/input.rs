@@ -1,5 +1,6 @@
-use crate::graphical_core::camera::Camera;
 use crate::voxel::metric;
+use crate::voxel::player::Player;
+use crate::voxel::world::World;
 use std::collections::HashSet;
 use winit::event::MouseButton;
 use winit::keyboard::KeyCode;
@@ -61,32 +62,28 @@ impl InputState {
         self.pressed_keys.contains(&key)
     }
 
-    pub fn update_camera(&mut self, camera: &mut Camera, delta_time: f32, fly_mode: bool, local_p: f32) {
-        self.apply_mouse_look(camera);
-        if fly_mode {
-            self.apply_fly_movement(camera, delta_time, local_p);
+    pub fn update_player(&mut self, player: &mut Player, world: &World, delta_time: f32, local_p: f32) {
+        self.apply_mouse_look(player);
+        if player.fly_mode {
+            self.apply_fly_movement(player, delta_time, local_p);
         } else {
-            self.apply_walk_movement(camera, delta_time, local_p);
+            self.apply_walk_movement(player, world, delta_time, local_p);
         }
     }
 
-    fn apply_mouse_look(&mut self, camera: &mut Camera) {
+    fn apply_mouse_look(&mut self, player: &mut Player) {
         let (dx, dy) = self.mouse_delta;
         self.mouse_delta = (0.0, 0.0);
-        // Mouse right → camera turns right. Rotation around +up by a
-        // negative angle moves `forward` toward `right`, so flip the sign.
-        camera.rotate_yaw(-dx as f32 * MOUSE_SENSITIVITY);
-        camera.rotate_pitch(-dy as f32 * MOUSE_SENSITIVITY);
+        player.rotate_yaw(-dx as f32 * MOUSE_SENSITIVITY);
+        player.rotate_pitch(-dy as f32 * MOUSE_SENSITIVITY);
     }
 
-    fn apply_fly_movement(&self, camera: &mut Camera, delta_time: f32, local_p: f32) {
+    fn apply_fly_movement(&self, player: &mut Player, delta_time: f32, local_p: f32) {
         let multiplier = if self.is_pressed(KeyCode::ShiftLeft) { SPRINT_MULTIPLIER } else { 1.0 };
         let speed = MOVE_SPEED * multiplier * delta_time;
-        // Phase D: fly axes are the camera's local frame. Up/Q go along
-        // the radial direction so "ascend" always means away from planet.
-        let front = camera.front();
-        let right = camera.right();
-        let up = camera.up();
+        let front = player.forward;
+        let right = player.right();
+        let up = player.up();
 
         let mut move_dir = glam::Vec3::ZERO;
         if self.is_pressed(KeyCode::KeyW) { move_dir += front; }
@@ -98,19 +95,17 @@ impl InputState {
 
         if move_dir != glam::Vec3::ZERO {
             let scale = metric::metric_speed_scale(move_dir, local_p);
-            camera.position += move_dir.normalize() * speed * scale;
-            camera.reorthogonalize();
+            player.fly_move(move_dir.normalize() * speed * scale);
         }
     }
 
     /// Walk movement: WASD moves in the local tangent plane (ignoring pitch).
-    fn apply_walk_movement(&self, camera: &mut Camera, delta_time: f32, local_p: f32) {
+    fn apply_walk_movement(&self, player: &mut Player, world: &World, delta_time: f32, local_p: f32) {
         let speed = MOVE_SPEED * delta_time;
-        let up = camera.up();
-        let front = camera.front();
-        // Project front onto the tangent plane.
-        let forward = (front - up * front.dot(up)).normalize_or(camera.right());
-        let right = forward.cross(up).normalize_or(camera.right());
+        let up = player.up();
+        let front = player.forward;
+        let forward = (front - up * front.dot(up)).normalize_or(player.right());
+        let right = forward.cross(up).normalize_or(player.right());
 
         let mut move_dir = glam::Vec3::ZERO;
         if self.is_pressed(KeyCode::KeyW) { move_dir += forward; }
@@ -120,8 +115,7 @@ impl InputState {
 
         if move_dir != glam::Vec3::ZERO {
             let scale = metric::metric_speed_scale(move_dir, local_p);
-            camera.position += move_dir.normalize() * speed * scale;
-            camera.reorthogonalize();
+            player.walk(move_dir.normalize() * speed * scale, world);
         }
     }
 }

@@ -229,31 +229,17 @@ fn main() -> Result<()> {
 
                 match &mut game_state {
                     GameState::Playing => {
-                        let old_position = camera.position;
                         if let Some(world) = application.world() {
-                            let local_p = world.metric.sample(camera.position).p;
-                            input.update_camera(&mut camera, delta_time, player.fly_mode, local_p);
-                            player.resolve_horizontal(&mut camera.position, old_position, world);
-                            player.apply_physics(&mut camera.position, delta_time, world);
+                            let local_p = world.metric.sample(player.world_pos()).p;
+                            input.update_player(&mut player, world, delta_time, local_p);
+                            player.apply_physics(delta_time, world);
                         }
-                        if application.has_world() {
-                            let destroy_hit = if input.take_left_click() {
-                                application.world().and_then(|w| raycast::raycast(camera.position, camera.front(), w))
-                            } else {
-                                None
-                            };
-                            let place_hit = if input.take_right_click() {
-                                application.world().and_then(|w| raycast::raycast(camera.position, camera.front(), w))
-                            } else {
-                                None
-                            };
-                            if let Some(hit) = destroy_hit {
-                                unsafe { application.set_block(hit.block[0], hit.block[1], hit.block[2], BlockType::Air) };
-                            }
-                            if let Some(hit) = place_hit {
-                                unsafe { application.set_block(hit.adjacent[0], hit.adjacent[1], hit.adjacent[2], BlockType::Stone) };
-                            }
-                        }
+                        camera.sync_from_player(&player);
+                        // Phase D': raycast / set_block are not yet rebuilt
+                        // for cube-space — input clicks are consumed but
+                        // ignored until the raycast rewrite lands.
+                        let _ = input.take_left_click();
+                        let _ = input.take_right_click();
                     }
                     GameState::PreGenerating { .. } => {
                         unsafe { application.update_world(&camera).ok() };

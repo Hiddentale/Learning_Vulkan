@@ -85,6 +85,9 @@ pub fn block_to_chunk(wx: i32, wy: i32, wz: i32) -> ChunkPos {
 /// distance from the planet center.
 pub const CUBE_HALF_BLOCKS: f64 = (FACE_SIDE_CHUNKS * CHUNK_SIZE as i32 / 2) as f64;
 
+/// Total side length of one face in blocks.
+pub const FACE_SIDE_BLOCKS: i32 = FACE_SIDE_CHUNKS * CHUNK_SIZE as i32;
+
 /// Map a point on the unit cube `[-1, 1]³` (any face) to the unit sphere.
 pub fn cube_to_sphere_unit(p: DVec3) -> DVec3 {
     let (x, y, z) = (p.x, p.y, p.z);
