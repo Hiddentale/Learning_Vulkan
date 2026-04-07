@@ -21,7 +21,7 @@ pub struct Camera {
 impl Camera {
     pub fn from_player(player: &Player) -> Self {
         Self {
-            position: player.world_pos(),
+            position: player.eye_pos(),
             forward: player.forward,
         }
     }
@@ -29,7 +29,7 @@ impl Camera {
     /// Re-derive view state from the player. Call once per frame after
     /// physics has settled.
     pub fn sync_from_player(&mut self, player: &Player) {
-        self.position = player.world_pos();
+        self.position = player.eye_pos();
         self.forward = player.forward;
     }
 

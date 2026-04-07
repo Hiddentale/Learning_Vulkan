@@ -87,7 +87,11 @@ impl InputState {
         let speed = MOVE_SPEED * multiplier * delta_time;
         let front = player.forward;
         let right = player.right();
-        let up = player.up();
+        // Camera-up: orthogonal to forward in the screen plane. Decouples
+        // E/Q from the planet's radial direction so "fly up" always means
+        // "up relative to where the camera is looking", not "away from the
+        // planet centre" (which on a side face is sideways on screen).
+        let up = right.cross(front).normalize_or(player.up());
 
         let mut move_dir = glam::Vec3::ZERO;
         if self.is_pressed(KeyCode::KeyW) { move_dir += front; }

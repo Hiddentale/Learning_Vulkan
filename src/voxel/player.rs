@@ -13,7 +13,7 @@
 //! a clean discrete event, not a continuous lookup.
 
 use super::chunk::CHUNK_SIZE;
-use super::sphere::{self, ChunkPos, EdgeDir, Face};
+use super::sphere::{self, ChunkPos, Face};
 use super::world::World;
 use glam::{DVec3, Vec3};
 
@@ -21,6 +21,9 @@ const GRAVITY: f32 = 20.0;
 const JUMP_VELOCITY: f32 = 8.0;
 const PLAYER_HEIGHT: f32 = 1.7;
 const PLAYER_HALF_WIDTH: f32 = 0.3;
+/// Eye sits this far in front of the body center along `forward`. Lets the
+/// camera approach a wall to within `PLAYER_HALF_WIDTH - CAMERA_FORWARD_OFFSET`.
+const CAMERA_FORWARD_OFFSET: f32 = 0.25;
 pub const MAX_PITCH: f32 = 89.0_f32 * (std::f32::consts::PI / 180.0);
 
 pub struct Player {
@@ -66,9 +69,15 @@ impl Player {
         ChunkPos { face: self.face, cx: self.cx, cy: self.cy, cz: self.cz }
     }
 
-    /// Cartesian world position. Always derived; never stored.
+    /// Cartesian body-center position. Always derived; never stored.
     pub fn world_pos(&self) -> Vec3 {
         sphere::chunk_to_world(self.chunk_pos(), Vec3::new(self.lx, self.ly, self.lz)).as_vec3()
+    }
+
+    /// Cartesian eye position: body center plus a small forward offset so the
+    /// camera can approach walls more closely than the body's half-width.
+    pub fn eye_pos(&self) -> Vec3 {
+        self.world_pos() + self.forward * CAMERA_FORWARD_OFFSET
     }
 
     /// Radial outward direction at the player.
@@ -121,17 +130,25 @@ impl Player {
         self.try_move(du, 0.0, dv, world);
     }
 
-    /// Fly with full 6DoF in the player's local frame: tangent (du, dv) +
-    /// radial (dd). Used by fly mode; no collision response.
+    /// Fly with full 6DoF in world space. Adds the displacement to the
+    /// player's cartesian position and re-derives the cube-space coords
+    /// via the inverse projection. Decoupled from the source face's flat
+    /// basis so motion follows the screen, not the underlying cube.
     pub fn fly_move(&mut self, displacement_world: Vec3) {
-        let (tu, tv, n) = sphere::face_basis(self.face);
-        let du = displacement_world.dot(tu);
-        let dv = displacement_world.dot(tv);
-        let dd = displacement_world.dot(n);
-        self.lx += du;
-        self.ly += dd;
-        self.lz += dv;
-        self.carry();
+        let cur = sphere::chunk_to_world(self.chunk_pos(), Vec3::new(self.lx, self.ly, self.lz));
+        let new_world = cur + displacement_world.as_dvec3();
+        if let Some((cp, lx, ly, lz)) = sphere::world_to_chunk_local(new_world) {
+            let n = sphere::FACE_SIDE_CHUNKS;
+            if cp.cy >= 0 {
+                self.face = cp.face;
+                self.cx = cp.cx.clamp(0, n - 1);
+                self.cy = cp.cy;
+                self.cz = cp.cz.clamp(0, n - 1);
+                self.lx = lx;
+                self.ly = ly;
+                self.lz = lz;
+            }
+        }
         self.reorthogonalize_forward();
     }
 
@@ -166,10 +183,26 @@ impl Player {
         }
     }
 
-    /// Attempt a horizontal move by `(du, dv)` (face-local block units).
-    /// On collision, revert. No vertical motion — gravity is handled in
-    /// `apply_physics`.
+    /// Attempt a move by `(du, dd, dv)` (face-local block units). Each axis
+    /// is tried independently so the player can slide along walls instead of
+    /// stopping dead the moment any axis collides.
     fn try_move(&mut self, du: f32, dd: f32, dv: f32, world: &World) {
+        let moved_lateral = (du != 0.0 || dv != 0.0) && {
+            let a = self.try_axis(du, 0.0, 0.0, world);
+            let b = self.try_axis(0.0, 0.0, dv, world);
+            a || b
+        };
+        if dd != 0.0 {
+            self.try_axis(0.0, dd, 0.0, world);
+        }
+        if moved_lateral {
+            self.reorthogonalize_forward();
+        }
+    }
+
+    /// Apply a single-axis displacement and revert that axis on collision.
+    /// Returns true if the move succeeded.
+    fn try_axis(&mut self, du: f32, dd: f32, dv: f32, world: &World) -> bool {
         let (old_face, old_cx, old_cy, old_cz) = (self.face, self.cx, self.cy, self.cz);
         let (old_lx, old_ly, old_lz) = (self.lx, self.ly, self.lz);
         self.lx += du;
@@ -184,8 +217,9 @@ impl Player {
             self.lx = old_lx;
             self.ly = old_ly;
             self.lz = old_lz;
-        } else if du != 0.0 || dv != 0.0 {
-            self.reorthogonalize_forward();
+            false
+        } else {
+            true
         }
     }
 
@@ -220,45 +254,29 @@ impl Player {
         }
     }
 
-    /// Cross a face boundary. Combines two pieces:
+    /// Cross a face boundary. Geometric remap derives the new
+    /// `(face, cx, cz, lx, lz)` by computing the cube point and projecting
+    /// onto the neighbor face whose normal axis dominates `cube_pt`. The
+    /// neighbor is chosen by the cube point itself, not the edge enum, so
+    /// double-overflow at corners picks a consistent face.
     ///
-    /// 1. **Geometric remap**: derives the new `(face, cx, cz, lx, lz)`
-    ///    by computing the cube point and dotting against the neighbor's
-    ///    tangent basis. Preserves the cube edge exactly.
-    ///
-    /// 2. **Forward rotation**: looks up the appropriate
-    ///    [`sphere::EdgeTransition`] (24-entry table indexed by face and
-    ///    edge direction) and rotates `forward` 90° around the shared
-    ///    cube edge so the camera tilts onto the new face's tangent plane.
-    ///
-    /// The dominant-axis remap and the edge-table rotation always agree
-    /// on which neighbor face is entered — the table is derived from the
-    /// same `face_basis` data, so this is one source of truth.
+    /// `forward` is *not* rotated — only re-tangent-projected. The sphere
+    /// surface is smooth, so the world-space tangent plane only tilts by a
+    /// small angle across a small step. A 90° rotation here would correspond
+    /// to walking on the un-projected cube and is visually a teleport.
     fn remap_to_neighbor_face(&mut self) {
         let n_chunks = sphere::FACE_SIDE_CHUNKS;
-        // Identify which edge we crossed (priority order doesn't matter
-        // because the carry only ever leaves one axis out of range per step).
-        let edge = if self.cx < 0 {
-            EdgeDir::NegU
-        } else if self.cx >= n_chunks {
-            EdgeDir::PosU
-        } else if self.cz < 0 {
-            EdgeDir::NegV
-        } else {
-            EdgeDir::PosV
-        };
-        let transition = sphere::edge_transition(self.face, edge);
-
-        // Geometric remap of (cx, lx, cz, lz) onto the neighbor face.
         let cs = CHUNK_SIZE as f64;
         let half = (n_chunks * CHUNK_SIZE as i32) as f64 * 0.5;
         let u = self.cx as f64 * cs + self.lx as f64 - half;
         let v = self.cz as f64 * cs + self.lz as f64 - half;
         let (tu, tv, n) = sphere::face_basis(self.face);
         let cube_pt = tu.as_dvec3() * u + tv.as_dvec3() * v + n.as_dvec3() * half;
-        let dominant = cube_pt.x.abs().max(cube_pt.y.abs()).max(cube_pt.z.abs());
-        let scaled = cube_pt * (half / dominant);
-        let (ntu, ntv, _) = sphere::face_basis(transition.neighbor);
+        let new_face = sphere::face_for_cube_point(cube_pt);
+        let new_n = sphere::face_normal(new_face).as_dvec3();
+        let new_dominant = cube_pt.dot(new_n).abs().max(1e-9);
+        let scaled = cube_pt * (half / new_dominant);
+        let (ntu, ntv, _) = sphere::face_basis(new_face);
         let new_face_u = (scaled.dot(ntu.as_dvec3()) + half).clamp(0.0, sphere::FACE_SIDE_BLOCKS as f64 - 1e-4);
         let new_face_v = (scaled.dot(ntv.as_dvec3()) + half).clamp(0.0, sphere::FACE_SIDE_BLOCKS as f64 - 1e-4);
         let new_cx = (new_face_u / cs).floor() as i32;
@@ -266,16 +284,13 @@ impl Player {
         let new_lx = (new_face_u - new_cx as f64 * cs) as f32;
         let new_lz = (new_face_v - new_cz as f64 * cs) as f32;
 
-        self.face = transition.neighbor;
+        self.face = new_face;
         self.cx = new_cx.clamp(0, n_chunks - 1);
         self.cz = new_cz.clamp(0, n_chunks - 1);
         self.lx = new_lx;
         self.lz = new_lz;
         // cy / ly (radial) preserved across face boundaries.
 
-        // Rotate forward 90° around the shared cube edge so "walking forward"
-        // continues to be a tangent direction on the new face.
-        self.forward = sphere::rotate_forward_through(transition, self.forward);
         self.reorthogonalize_forward();
     }
 }
@@ -509,26 +524,29 @@ mod tests {
                 p.ly = 8.0;
                 let n = sphere::FACE_SIDE_CHUNKS;
                 match edge {
-                    sphere::EdgeDir::PosU => { p.cx = n - 1; p.lx = (CHUNK_SIZE - 1) as f32 - 0.5; p.cz = 1; p.lz = 8.0; }
+                    sphere::EdgeDir::PosU => { p.cx = n - 1; p.lx = (CHUNK_SIZE - 1) as f32; p.cz = 1; p.lz = 8.0; }
                     sphere::EdgeDir::NegU => { p.cx = 0; p.lx = 0.5; p.cz = 1; p.lz = 8.0; }
-                    sphere::EdgeDir::PosV => { p.cz = n - 1; p.lz = (CHUNK_SIZE - 1) as f32 - 0.5; p.cx = 1; p.lx = 8.0; }
+                    sphere::EdgeDir::PosV => { p.cz = n - 1; p.lz = (CHUNK_SIZE - 1) as f32; p.cx = 1; p.lx = 8.0; }
                     sphere::EdgeDir::NegV => { p.cz = 0; p.lz = 0.5; p.cx = 1; p.lx = 8.0; }
                 }
                 let start_radius = p.world_pos().length();
                 let expected_face = sphere::edge_transition(start_face, edge).neighbor;
                 let (tu, tv, _) = sphere::face_basis(start_face);
                 let push = match edge {
-                    sphere::EdgeDir::PosU => tu * 2.0,
-                    sphere::EdgeDir::NegU => -tu * 2.0,
-                    sphere::EdgeDir::PosV => tv * 2.0,
-                    sphere::EdgeDir::NegV => -tv * 2.0,
+                    sphere::EdgeDir::PosU => tu * 30.0,
+                    sphere::EdgeDir::NegU => -tu * 30.0,
+                    sphere::EdgeDir::PosV => tv * 30.0,
+                    sphere::EdgeDir::NegV => -tv * 30.0,
                 };
                 p.fly_move(push);
                 assert_eq!(p.face, expected_face, "edge {:?} {:?}: landed on {:?}, expected {:?}", start_face, edge, p.face, expected_face);
                 let end_pos = p.world_pos();
                 assert!(end_pos.x.is_finite() && end_pos.y.is_finite() && end_pos.z.is_finite(), "non-finite position");
+                // Tangent fly_move legitimately leaves the sphere shell; we
+                // only assert the result is on the same order as the start.
                 let radius_drift = (end_pos.length() - start_radius).abs();
-                assert!(radius_drift < 1.0, "edge {:?} {:?}: radius drifted by {}", start_face, edge, radius_drift);
+                assert!(radius_drift < 50.0, "edge {:?} {:?}: radius drifted by {}", start_face, edge, radius_drift);
+                let _ = start_radius;
             }
         }
     }
@@ -690,6 +708,62 @@ mod tests {
     }
 
     #[test]
+    fn small_step_across_face_edge_is_continuous_in_world_space() {
+        // A tiny fly_move that crosses a face edge must produce a tiny
+        // change in world position AND in the forward vector. Pre-fix,
+        // remap_to_neighbor_face rotated forward 90° around the cube edge,
+        // which on the smooth sphere is a visible camera teleport.
+        let _world = solid_planet();
+        let mut p = Player::new();
+        p.fly_mode = true;
+        p.face = Face::PosY;
+        let n = sphere::FACE_SIDE_CHUNKS;
+        p.cx = n - 1;
+        p.lx = (CHUNK_SIZE - 1) as f32 + 0.999;
+        p.cz = 1;
+        p.lz = 8.0;
+        p.cy = 8;
+        p.ly = 8.0;
+        // Aim forward along the +tu direction (i.e., the direction of motion).
+        let (tu, _, _) = sphere::face_basis(p.face);
+        p.forward = tu;
+        let pos_before = p.world_pos();
+        let forward_before = p.forward;
+        // Push by enough world distance to actually cross the edge from the
+        // sub-block-away starting position. With the sphere at radius ~184,
+        // 1 world block ≈ 0.13 face-local cube units near a side face.
+        let step = 1.0_f32;
+        p.fly_move(tu * step);
+        // Confirm the crossing actually happened.
+        assert_ne!(p.face, Face::PosY, "expected face crossing");
+        let pos_after = p.world_pos();
+        let pos_jump = (pos_after - pos_before).length();
+        // Should be approximately the step magnitude — no extra teleport on top.
+        assert!(pos_jump < step as f32 * 1.5 + 0.1, "world position teleported by {} blocks across face edge (step was {})", pos_jump, step);
+        let forward_jump = (p.forward - forward_before).length();
+        assert!(forward_jump < 0.2, "forward vector teleported by {} across face edge", forward_jump);
+    }
+
+    #[test]
+    fn capsule_at_corner_triple_point_is_blocked_in_solid_planet() {
+        // Player is wedged into the corner block of a fully-solid planet.
+        // Capsule collision must report a hit no matter how the corner
+        // remap routes the off-face block samples.
+        let world = solid_planet();
+        let mut p = Player::new();
+        p.fly_mode = false;
+        p.face = Face::PosY;
+        let n = sphere::FACE_SIDE_CHUNKS;
+        p.cx = n - 1;
+        p.lx = (CHUNK_SIZE - 1) as f32 - 0.05;
+        p.cz = n - 1;
+        p.lz = (CHUNK_SIZE - 1) as f32 - 0.05;
+        p.cy = 8;
+        p.ly = 8.0;
+        assert!(capsule_collides(&p, &world), "player embedded in solid_planet at corner should collide");
+    }
+
+    #[test]
     fn edge_transition_consistent_with_player_remap() {
         // The Player::remap_to_neighbor_face math and sphere::edge_transition
         // must agree on which neighbor face is entered.
@@ -711,10 +785,10 @@ mod tests {
                 }
                 let (tu, tv, _) = sphere::face_basis(start_face);
                 let push = match edge {
-                    sphere::EdgeDir::PosU => tu * 2.0,
-                    sphere::EdgeDir::NegU => -tu * 2.0,
-                    sphere::EdgeDir::PosV => tv * 2.0,
-                    sphere::EdgeDir::NegV => -tv * 2.0,
+                    sphere::EdgeDir::PosU => tu * 30.0,
+                    sphere::EdgeDir::NegU => -tu * 30.0,
+                    sphere::EdgeDir::PosV => tv * 30.0,
+                    sphere::EdgeDir::NegV => -tv * 30.0,
                 };
                 p.fly_move(push);
                 assert_eq!(p.face, expected, "edge {:?} {:?}: player landed on {:?}, table says {:?}", start_face, edge, p.face, expected);

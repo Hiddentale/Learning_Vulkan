@@ -376,6 +376,21 @@ pub fn edge_transition(face: Face, dir: EdgeDir) -> EdgeTransition {
     EdgeTransition { neighbor, edge_axis, rotation }
 }
 
+/// Pick the cube face whose outward normal axis dominates `point`. Used by
+/// any code that needs to classify a cube-space point onto its owning face.
+pub fn face_for_cube_point(point: DVec3) -> Face {
+    let ax = point.x.abs();
+    let ay = point.y.abs();
+    let az = point.z.abs();
+    if ax >= ay && ax >= az {
+        if point.x > 0.0 { Face::PosX } else { Face::NegX }
+    } else if ay >= az {
+        if point.y > 0.0 { Face::PosY } else { Face::NegY }
+    } else {
+        if point.z > 0.0 { Face::PosZ } else { Face::NegZ }
+    }
+}
+
 /// Pick the cube face whose outward normal is closest to `axis`.
 fn face_for_axis(axis: Vec3) -> Face {
     let ax = axis.x.abs();
