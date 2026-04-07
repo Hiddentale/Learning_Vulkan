@@ -60,6 +60,12 @@ fn main() -> Result<()> {
     let mut camera = Camera::default();
     let mut input = InputState::new();
     let mut player = Player::new();
+    // Phase D': fixed-step physics at 60 Hz, decoupled from rendering.
+    // Mouse look stays per-frame (smoothness), movement + gravity tick at
+    // a constant rate so collision is deterministic regardless of FPS.
+    const PHYSICS_TICK: f32 = 1.0 / 60.0;
+    const MAX_PHYSICS_CATCHUP: f32 = 0.25;
+    let mut physics_accumulator: f32 = 0.0;
     let mut last_frame = Instant::now();
     let mut fps_counter = FpsCounter::new();
     let mut game_state = GameState::TitleScreen;
@@ -229,10 +235,16 @@ fn main() -> Result<()> {
 
                 match &mut game_state {
                     GameState::Playing => {
-                        if let Some(world) = application.world() {
-                            let local_p = world.metric.sample(player.world_pos()).p;
-                            input.update_player(&mut player, world, delta_time, local_p);
-                            player.apply_physics(delta_time, world);
+                        // Mouse look every frame.
+                        input.apply_mouse_look(&mut player);
+                        // Fixed-step physics + movement.
+                        physics_accumulator = (physics_accumulator + delta_time).min(MAX_PHYSICS_CATCHUP);
+                        while physics_accumulator >= PHYSICS_TICK {
+                            if let Some(world) = application.world() {
+                                let local_p = world.metric.sample(player.world_pos()).p;
+                                input.tick_movement(&mut player, world, PHYSICS_TICK, local_p);
+                            }
+                            physics_accumulator -= PHYSICS_TICK;
                         }
                         camera.sync_from_player(&player);
                         // Phase D': raycast / set_block are not yet rebuilt

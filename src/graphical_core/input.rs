@@ -62,20 +62,24 @@ impl InputState {
         self.pressed_keys.contains(&key)
     }
 
-    pub fn update_player(&mut self, player: &mut Player, world: &World, delta_time: f32, local_p: f32) {
-        self.apply_mouse_look(player);
-        if player.fly_mode {
-            self.apply_fly_movement(player, delta_time, local_p);
-        } else {
-            self.apply_walk_movement(player, world, delta_time, local_p);
-        }
-    }
-
-    fn apply_mouse_look(&mut self, player: &mut Player) {
+    /// Mouse look — call every render frame for smoothness.
+    pub fn apply_mouse_look(&mut self, player: &mut Player) {
         let (dx, dy) = self.mouse_delta;
         self.mouse_delta = (0.0, 0.0);
         player.rotate_yaw(-dx as f32 * MOUSE_SENSITIVITY);
         player.rotate_pitch(-dy as f32 * MOUSE_SENSITIVITY);
+    }
+
+    /// Per-physics-tick movement step. Reads pressed keys (which is fine
+    /// because key state is event-driven and stable across the tick) and
+    /// applies one fixed-dt move + physics integration.
+    pub fn tick_movement(&self, player: &mut Player, world: &World, dt: f32, local_p: f32) {
+        if player.fly_mode {
+            self.apply_fly_movement(player, dt, local_p);
+        } else {
+            self.apply_walk_movement(player, world, dt, local_p);
+        }
+        player.apply_physics(dt, world);
     }
 
     fn apply_fly_movement(&self, player: &mut Player, delta_time: f32, local_p: f32) {
