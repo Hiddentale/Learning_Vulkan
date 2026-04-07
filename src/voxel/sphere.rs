@@ -257,6 +257,95 @@ pub fn face_id(face: Face) -> u32 {
     face as u32
 }
 
+// ---------------------------------------------------------------------------
+// Edge transitions across face boundaries.
+//
+// When a chunk on face F sits at the edge of the face's grid, its
+// out-of-range neighbor lives on a different face F'. This module computes
+// the (F', cx', cy', cz') for any out-of-range chunk neighbor by walking the
+// 3D cube position one step over the cube edge and re-resolving which face
+// owns that position. The basis table is the single source of truth.
+// ---------------------------------------------------------------------------
+
+/// Step across a face boundary. Given a chunk position whose `(cx, cz)` may
+/// be out of range `[0, FACE_SIDE_CHUNKS)`, return the equivalent position
+/// on the neighbor face. Returns `None` for in-range positions.
+///
+/// The math: convert the face-local chunk grid coordinate to a 3D cube
+/// position (in chunk units), then re-classify which face's tangent plane
+/// it lies on by largest absolute axis. Re-express in that face's `(cx, cz)`.
+pub fn cross_face_neighbor(cp: ChunkPos) -> Option<ChunkPos> {
+    let n = FACE_SIDE_CHUNKS;
+    let in_range = cp.cx >= 0 && cp.cx < n && cp.cz >= 0 && cp.cz < n;
+    if in_range {
+        return None;
+    }
+    // Map face-local chunk grid to a 3D cube point in chunk units.
+    // Offset by 0.5 so we sample the chunk centre, and shift by -n/2 so the
+    // face is centred on the cube centre.
+    let (tu, tv, fn_) = face_basis(cp.face);
+    let half = n as f32 * 0.5;
+    let u = (cp.cx as f32 + 0.5) - half;
+    let v = (cp.cz as f32 + 0.5) - half;
+    let cube_pt = tu * u + tv * v + fn_ * half;
+    // Find the dominant axis — that's the new face.
+    let ax = cube_pt.x.abs();
+    let ay = cube_pt.y.abs();
+    let az = cube_pt.z.abs();
+    let new_face = if ax >= ay && ax >= az {
+        if cube_pt.x > 0.0 { Face::PosX } else { Face::NegX }
+    } else if ay >= az {
+        if cube_pt.y > 0.0 { Face::PosY } else { Face::NegY }
+    } else {
+        if cube_pt.z > 0.0 { Face::PosZ } else { Face::NegZ }
+    };
+    if new_face == cp.face {
+        return None;
+    }
+    // Re-express cube_pt in the new face's tangent basis.
+    let (ntu, ntv, _) = face_basis(new_face);
+    let new_u = cube_pt.dot(ntu);
+    let new_v = cube_pt.dot(ntv);
+    let new_cx = (new_u + half).floor() as i32;
+    let new_cz = (new_v + half).floor() as i32;
+    // Clamp to face range — corners can land just outside due to fp.
+    let new_cx = new_cx.clamp(0, n - 1);
+    let new_cz = new_cz.clamp(0, n - 1);
+    Some(ChunkPos { face: new_face, cx: new_cx, cy: cp.cy, cz: new_cz })
+}
+
+#[cfg(test)]
+mod transition_tests {
+    use super::*;
+
+    #[test]
+    fn in_range_returns_none() {
+        let cp = ChunkPos { face: Face::PosY, cx: 1, cy: 0, cz: 1 };
+        assert!(cross_face_neighbor(cp).is_none());
+    }
+
+    #[test]
+    fn step_off_each_edge_lands_on_a_different_face() {
+        // For every face, walk off all four edges and verify the result is
+        // on a different face and within range.
+        let n = FACE_SIDE_CHUNKS;
+        for face in ALL_FACES {
+            let edges = [
+                ChunkPos { face, cx: -1, cy: 0, cz: 1 },
+                ChunkPos { face, cx: n,  cy: 0, cz: 1 },
+                ChunkPos { face, cx: 1,  cy: 0, cz: -1 },
+                ChunkPos { face, cx: 1,  cy: 0, cz: n },
+            ];
+            for e in edges {
+                let nb = cross_face_neighbor(e).unwrap_or_else(|| panic!("no neighbor for {:?}", e));
+                assert!(nb.face != face, "edge {:?} did not change face: {:?}", e, nb);
+                assert!(nb.cx >= 0 && nb.cx < n, "cx out of range: {:?}", nb);
+                assert!(nb.cz >= 0 && nb.cz < n, "cz out of range: {:?}", nb);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod aabb_tests {
     use super::*;

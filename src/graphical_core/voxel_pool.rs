@@ -239,21 +239,49 @@ impl VoxelPool {
     }
 
     unsafe fn write_boundary(&self, slot: u32, pos: ChunkPos, world: &World) {
-        let ChunkPos { cx, cy, cz, .. } = pos;
+        let ChunkPos { face, cx, cy, cz } = pos;
         let base = slot as usize * BOUNDARY_CHUNK_BYTES;
 
-        // Face 0: +X neighbor's x=0 slice
-        self.write_boundary_face(base, 0, world.get_chunk(cx + 1, cy, cz), |c, u, v| c.get(0, v, u));
-        // Face 1: -X neighbor's x=15 slice
-        self.write_boundary_face(base, 1, world.get_chunk(cx - 1, cy, cz), |c, u, v| c.get(CHUNK_SIZE - 1, v, u));
-        // Face 2: +Y neighbor's y=0 slice
-        self.write_boundary_face(base, 2, world.get_chunk(cx, cy + 1, cz), |c, u, v| c.get(u, 0, v));
-        // Face 3: -Y neighbor's y=15 slice
-        self.write_boundary_face(base, 3, world.get_chunk(cx, cy - 1, cz), |c, u, v| c.get(u, CHUNK_SIZE - 1, v));
-        // Face 4: +Z neighbor's z=0 slice
-        self.write_boundary_face(base, 4, world.get_chunk(cx, cy, cz + 1), |c, u, v| c.get(u, v, 0));
-        // Face 5: -Z neighbor's z=15 slice
-        self.write_boundary_face(base, 5, world.get_chunk(cx, cy, cz - 1), |c, u, v| c.get(u, v, CHUNK_SIZE - 1));
+        // Phase C2: same-face neighbors use exact boundary slices.
+        // Cross-face neighbors are filled solid so the mesh shader emits
+        // no boundary faces there — this hides the seam without yet
+        // remapping the slice through the edge transition rotation.
+
+        let same_face = |dx: i32, dy: i32, dz: i32| ChunkPos { face, cx: cx + dx, cy: cy + dy, cz: cz + dz };
+
+        self.write_boundary_face_or_solid(base, 0, world, same_face(1, 0, 0), |c, u, v| c.get(0, v, u));
+        self.write_boundary_face_or_solid(base, 1, world, same_face(-1, 0, 0), |c, u, v| c.get(CHUNK_SIZE - 1, v, u));
+        self.write_boundary_face_or_solid(base, 2, world, same_face(0, 1, 0), |c, u, v| c.get(u, 0, v));
+        self.write_boundary_face_or_solid(base, 3, world, same_face(0, -1, 0), |c, u, v| c.get(u, CHUNK_SIZE - 1, v));
+        self.write_boundary_face_or_solid(base, 4, world, same_face(0, 0, 1), |c, u, v| c.get(u, v, 0));
+        self.write_boundary_face_or_solid(base, 5, world, same_face(0, 0, -1), |c, u, v| c.get(u, v, CHUNK_SIZE - 1));
+    }
+
+    /// Look up the chunk at `neighbor`. If it's in range and loaded, write
+    /// its slice. If it's in range but not loaded, treat as air. If it's
+    /// out of the face's range, fill the slice with stone (= "solid") so
+    /// the mesh shader culls boundary faces — this hides cross-face seams
+    /// without yet remapping slice (u, v) through the edge rotation.
+    unsafe fn write_boundary_face_or_solid(
+        &self,
+        base: usize,
+        face: usize,
+        world: &World,
+        neighbor: ChunkPos,
+        read_block: impl Fn(&Chunk, usize, usize) -> crate::voxel::block::BlockType,
+    ) {
+        let n = sphere::FACE_SIDE_CHUNKS;
+        let in_range = neighbor.cx >= 0 && neighbor.cx < n && neighbor.cz >= 0 && neighbor.cz < n;
+        if in_range {
+            self.write_boundary_face(base, face, world.get_chunk_at(neighbor), read_block);
+        } else {
+            // Cross-face: mark every cell solid (= Stone, id 2). Mesh
+            // shader will treat these positions as opaque and skip face
+            // emission. Phase C3 will replace this with the rotated slice
+            // from the actual neighbor face.
+            let offset = base + face * BOUNDARY_FACE_BYTES;
+            std::ptr::write_bytes(self.boundary_ptr.add(offset), crate::voxel::block::BlockType::Stone as u8, BOUNDARY_FACE_BYTES);
+        }
     }
 
     unsafe fn write_boundary_face(
