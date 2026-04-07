@@ -307,6 +307,161 @@ pub fn face_id(face: Face) -> u32 {
 }
 
 // ---------------------------------------------------------------------------
+// 24-entry edge transition table.
+//
+// When the player walks off one of a face's four edges, this table tells us
+// which neighbor face they enter and how to rotate their `forward` vector so
+// that "walking forward" continues to mean "into the new face" rather than
+// "off into space". The geometry is derived once from [`face_basis`] and
+// validated by `edge_transition_round_trip` — there is no hand-written data
+// to drift out of sync with the face basis.
+// ---------------------------------------------------------------------------
+
+/// Which edge of a face the player just crossed. Indexed by the chunk coord
+/// that left the face range.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum EdgeDir {
+    /// `cx < 0` (walked in `-tu` direction)
+    NegU,
+    /// `cx >= FACE_SIDE_CHUNKS` (walked in `+tu` direction)
+    PosU,
+    /// `cz < 0` (walked in `-tv` direction)
+    NegV,
+    /// `cz >= FACE_SIDE_CHUNKS` (walked in `+tv` direction)
+    PosV,
+}
+
+/// Result of crossing one edge: which face you land on, and the world-space
+/// rotation to apply to `forward` so the camera tilts onto the new face.
+#[derive(Copy, Clone, Debug)]
+pub struct EdgeTransition {
+    pub neighbor: Face,
+    /// Edge axis (the cube edge along which the two faces meet). The
+    /// `forward` vector rotates 90° around this axis.
+    pub edge_axis: Vec3,
+    /// Direction of rotation in radians: `+FRAC_PI_2` or `-FRAC_PI_2`. Sign
+    /// is chosen so the rotation takes the old face's outward normal to the
+    /// new face's outward normal (i.e., the camera's "up" rotates correctly).
+    pub rotation: f32,
+}
+
+/// Compute the transition for `(face, dir)` from the face basis. Pure
+/// function — the same call always returns the same result, so this is
+/// effectively a 24-entry static table without the storage overhead.
+pub fn edge_transition(face: Face, dir: EdgeDir) -> EdgeTransition {
+    let (tu, tv, n) = face_basis(face);
+    // Direction the player walked, in world space.
+    let walk_dir = match dir {
+        EdgeDir::PosU => tu,
+        EdgeDir::NegU => -tu,
+        EdgeDir::PosV => tv,
+        EdgeDir::NegV => -tv,
+    };
+    // Neighbor face: the one whose outward normal matches `walk_dir`.
+    let neighbor = face_for_axis(walk_dir);
+    // Edge axis = cross of the two face normals. This is the world-space
+    // line along which the two faces meet on the cube.
+    let new_n = face_normal(neighbor);
+    let edge_axis = n.cross(new_n).normalize_or(Vec3::X);
+    // Rotation: by 90° around edge_axis in the direction that takes the
+    // old normal to the new normal.
+    // Verify with a sample: rotate `n` by +90° around edge_axis and see if
+    // it lands on new_n. If not, use -90°.
+    let plus = rotate(n, edge_axis, std::f32::consts::FRAC_PI_2);
+    let rotation = if (plus - new_n).length() < 1e-3 {
+        std::f32::consts::FRAC_PI_2
+    } else {
+        -std::f32::consts::FRAC_PI_2
+    };
+    EdgeTransition { neighbor, edge_axis, rotation }
+}
+
+/// Pick the cube face whose outward normal is closest to `axis`.
+fn face_for_axis(axis: Vec3) -> Face {
+    let ax = axis.x.abs();
+    let ay = axis.y.abs();
+    let az = axis.z.abs();
+    if ax >= ay && ax >= az {
+        if axis.x > 0.0 { Face::PosX } else { Face::NegX }
+    } else if ay >= az {
+        if axis.y > 0.0 { Face::PosY } else { Face::NegY }
+    } else {
+        if axis.z > 0.0 { Face::PosZ } else { Face::NegZ }
+    }
+}
+
+/// Rodrigues' rotation: rotate `v` around unit `axis` by `angle` radians.
+fn rotate(v: Vec3, axis: Vec3, angle: f32) -> Vec3 {
+    let c = angle.cos();
+    let s = angle.sin();
+    v * c + axis.cross(v) * s + axis * axis.dot(v) * (1.0 - c)
+}
+
+/// Apply an [`EdgeTransition`] to a `forward` vector.
+pub fn rotate_forward_through(transition: EdgeTransition, forward: Vec3) -> Vec3 {
+    rotate(forward, transition.edge_axis, transition.rotation).normalize_or(forward)
+}
+
+/// All 4 edge directions, ordered for iteration.
+pub const ALL_EDGES: [EdgeDir; 4] = [EdgeDir::NegU, EdgeDir::PosU, EdgeDir::NegV, EdgeDir::PosV];
+
+#[cfg(test)]
+mod edge_table_tests {
+    use super::*;
+
+    #[test]
+    fn every_edge_transitions_to_a_different_face() {
+        for face in ALL_FACES {
+            for dir in ALL_EDGES {
+                let t = edge_transition(face, dir);
+                assert!(t.neighbor != face, "{:?} {:?} → same face", face, dir);
+            }
+        }
+    }
+
+    #[test]
+    fn rotation_takes_old_normal_to_new_normal() {
+        // The defining property of the rotation: it carries the camera's
+        // "up" (face normal) onto the new face's normal. This is what
+        // makes "walking forward" continue to feel forward.
+        for face in ALL_FACES {
+            for dir in ALL_EDGES {
+                let t = edge_transition(face, dir);
+                let old_n = face_normal(face);
+                let new_n = face_normal(t.neighbor);
+                let rotated = rotate(old_n, t.edge_axis, t.rotation);
+                assert!((rotated - new_n).length() < 1e-3, "rotation wrong for {:?} {:?}", face, dir);
+            }
+        }
+    }
+
+    #[test]
+    fn rotation_takes_walk_direction_to_minus_old_normal() {
+        // The direction the player walked OFF the old face, after rotation,
+        // should equal `-face_normal(old)` — that is, the rotation pivots
+        // the world "down the side" of the cube. On the new face this is
+        // a tangent direction pointing away from the shared edge toward
+        // the new face center, which is exactly what "keep walking forward"
+        // should mean.
+        for face in ALL_FACES {
+            for dir in ALL_EDGES {
+                let t = edge_transition(face, dir);
+                let (tu, tv, _) = face_basis(face);
+                let walk = match dir {
+                    EdgeDir::PosU => tu,
+                    EdgeDir::NegU => -tu,
+                    EdgeDir::PosV => tv,
+                    EdgeDir::NegV => -tv,
+                };
+                let rotated = rotate(walk, t.edge_axis, t.rotation);
+                let expected = -face_normal(face);
+                assert!((rotated - expected).length() < 1e-3, "walk dir wrong for {:?} {:?}: rotated={:?} expected={:?}", face, dir, rotated, expected);
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Edge transitions across face boundaries.
 //
 // When a chunk on face F sits at the edge of the face's grid, its

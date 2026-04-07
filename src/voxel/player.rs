@@ -13,7 +13,7 @@
 //! a clean discrete event, not a continuous lookup.
 
 use super::chunk::CHUNK_SIZE;
-use super::sphere::{self, ChunkPos, Face};
+use super::sphere::{self, ChunkPos, EdgeDir, Face};
 use super::world::World;
 use glam::{DVec3, Vec3};
 
@@ -220,66 +220,62 @@ impl Player {
         }
     }
 
-    /// Cross a face boundary. The player's current `(cx, lx, cz, lz)` are
-    /// out of face range; reproject onto the neighbor face by computing the
-    /// cube-surface point and dotting against the neighbor's basis.
+    /// Cross a face boundary. Combines two pieces:
     ///
-    /// This is **not** the inverse of [`sphere::cube_to_sphere_unit`] —
-    /// it works directly on the cube point with no normalization, no
-    /// fixed-point iteration, and no rounding ambiguity. The geometry it
-    /// preserves is the cube edge, which is the actual boundary between
-    /// the two faces.
+    /// 1. **Geometric remap**: derives the new `(face, cx, cz, lx, lz)`
+    ///    by computing the cube point and dotting against the neighbor's
+    ///    tangent basis. Preserves the cube edge exactly.
+    ///
+    /// 2. **Forward rotation**: looks up the appropriate
+    ///    [`sphere::EdgeTransition`] (24-entry table indexed by face and
+    ///    edge direction) and rotates `forward` 90° around the shared
+    ///    cube edge so the camera tilts onto the new face's tangent plane.
+    ///
+    /// The dominant-axis remap and the edge-table rotation always agree
+    /// on which neighbor face is entered — the table is derived from the
+    /// same `face_basis` data, so this is one source of truth.
     fn remap_to_neighbor_face(&mut self) {
+        let n_chunks = sphere::FACE_SIDE_CHUNKS;
+        // Identify which edge we crossed (priority order doesn't matter
+        // because the carry only ever leaves one axis out of range per step).
+        let edge = if self.cx < 0 {
+            EdgeDir::NegU
+        } else if self.cx >= n_chunks {
+            EdgeDir::PosU
+        } else if self.cz < 0 {
+            EdgeDir::NegV
+        } else {
+            EdgeDir::PosV
+        };
+        let transition = sphere::edge_transition(self.face, edge);
+
+        // Geometric remap of (cx, lx, cz, lz) onto the neighbor face.
         let cs = CHUNK_SIZE as f64;
-        let half = (sphere::FACE_SIDE_CHUNKS * CHUNK_SIZE as i32) as f64 * 0.5;
-        // Face-local cube tangent coords (centered at cube center).
+        let half = (n_chunks * CHUNK_SIZE as i32) as f64 * 0.5;
         let u = self.cx as f64 * cs + self.lx as f64 - half;
         let v = self.cz as f64 * cs + self.lz as f64 - half;
         let (tu, tv, n) = sphere::face_basis(self.face);
-        // Cube point on the original face's surface plane, slightly past
-        // the edge in the tangent direction.
         let cube_pt = tu.as_dvec3() * u + tv.as_dvec3() * v + n.as_dvec3() * half;
-
-        // The neighbor face is the one whose normal axis dominates.
-        let ax = cube_pt.x.abs();
-        let ay = cube_pt.y.abs();
-        let az = cube_pt.z.abs();
-        let new_face = if ax >= ay && ax >= az {
-            if cube_pt.x > 0.0 { Face::PosX } else { Face::NegX }
-        } else if ay >= az {
-            if cube_pt.y > 0.0 { Face::PosY } else { Face::NegY }
-        } else {
-            if cube_pt.z > 0.0 { Face::PosZ } else { Face::NegZ }
-        };
-        if new_face == self.face {
-            return;
-        }
-        // Scale the cube point so its dominant axis sits on the new face plane.
-        let dominant = ax.max(ay).max(az);
+        let dominant = cube_pt.x.abs().max(cube_pt.y.abs()).max(cube_pt.z.abs());
         let scaled = cube_pt * (half / dominant);
-
-        // Re-express in the new face's tangent basis.
-        let (ntu, ntv, _) = sphere::face_basis(new_face);
-        let new_u_center = scaled.dot(ntu.as_dvec3());
-        let new_v_center = scaled.dot(ntv.as_dvec3());
-        let new_face_u = new_u_center + half; // [0, FACE_SIDE_BLOCKS]
-        let new_face_v = new_v_center + half;
-
-        let n_chunks = sphere::FACE_SIDE_CHUNKS;
-        let max_face = n_chunks as f64 * cs - 1e-4;
-        let new_face_u = new_face_u.clamp(0.0, max_face);
-        let new_face_v = new_face_v.clamp(0.0, max_face);
+        let (ntu, ntv, _) = sphere::face_basis(transition.neighbor);
+        let new_face_u = (scaled.dot(ntu.as_dvec3()) + half).clamp(0.0, sphere::FACE_SIDE_BLOCKS as f64 - 1e-4);
+        let new_face_v = (scaled.dot(ntv.as_dvec3()) + half).clamp(0.0, sphere::FACE_SIDE_BLOCKS as f64 - 1e-4);
         let new_cx = (new_face_u / cs).floor() as i32;
         let new_cz = (new_face_v / cs).floor() as i32;
         let new_lx = (new_face_u - new_cx as f64 * cs) as f32;
         let new_lz = (new_face_v - new_cz as f64 * cs) as f32;
 
-        self.face = new_face;
+        self.face = transition.neighbor;
         self.cx = new_cx.clamp(0, n_chunks - 1);
         self.cz = new_cz.clamp(0, n_chunks - 1);
         self.lx = new_lx;
         self.lz = new_lz;
-        // cy / ly (radial) preserved.
+        // cy / ly (radial) preserved across face boundaries.
+
+        // Rotate forward 90° around the shared cube edge so "walking forward"
+        // continues to be a tangent direction on the new face.
+        self.forward = sphere::rotate_forward_through(transition, self.forward);
         self.reorthogonalize_forward();
     }
 }
