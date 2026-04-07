@@ -9,9 +9,11 @@ const FAR_PLANE: f32 = 10000.0;
 const WORLD_UP: Vec3 = Vec3::Y;
 const MAX_PITCH: f32 = 89.0_f32 * (std::f32::consts::PI / 180.0);
 
-const DEFAULT_POSITION: Vec3 = Vec3::new(0.0, 90.0, 60.0);
+// Phase B2b: spawn well above the +Y pole of the tiny planet (radius 48,
+// surface ~112, plus headroom). Looking straight down at the pole.
+const DEFAULT_POSITION: Vec3 = Vec3::new(24.0, 200.0, 24.0);
 const DEFAULT_YAW_DEGREES: f32 = 0.0;
-const DEFAULT_PITCH_DEGREES: f32 = -30.0;
+const DEFAULT_PITCH_DEGREES: f32 = -85.0;
 
 pub struct Camera {
     pub position: Vec3,
