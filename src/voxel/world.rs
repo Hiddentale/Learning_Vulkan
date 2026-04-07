@@ -63,6 +63,12 @@ impl World {
                     if xz_dist > self.render_distance {
                         continue;
                     }
+                    // Phase B2c: clamp to the +Y face range. Outside this
+                    // range the sphere projection is undefined and chunks
+                    // would render as wedges through space.
+                    if cx < 0 || cz < 0 || cx >= sphere::FACE_SIDE_CHUNKS || cz >= sphere::FACE_SIDE_CHUNKS {
+                        continue;
+                    }
                     let has_any = (TERRAIN_MIN_CY..=TERRAIN_MAX_CY).any(|cy| self.chunks.contains_key(&ChunkPos::posy(cx, cy, cz)));
                     if !has_any && !self.generator.is_pending(cx, cz) {
                         self.generator.request(cx, cz);

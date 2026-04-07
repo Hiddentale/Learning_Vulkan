@@ -879,6 +879,14 @@ const MAX_HEIGHTMAP_IN_FLIGHT: usize = 16;
 const HEIGHTMAP_SUBMISSIONS_PER_FRAME: usize = 8;
 
 fn schedule_heightmap_generation(wr: &mut WorldResources, player_cx: i32, player_cz: i32) {
+    // Phase B2c: heightmap tiles target 1km+ distant terrain. The tiny
+    // planet (48-block radius) is entirely inside the near-field, so
+    // heightmap tiles never overlap the face. Disable until the sphere
+    // heightmap path is rebuilt.
+    let _ = (wr, player_cx, player_cz);
+    return;
+    #[allow(unreachable_code)]
+    {
     if wr.heightmap_in_flight.len() >= MAX_HEIGHTMAP_IN_FLIGHT {
         return;
     }
@@ -925,6 +933,7 @@ fn schedule_heightmap_generation(wr: &mut WorldResources, player_cx: i32, player
                 }
             }
         }
+    }
     }
 }
 
