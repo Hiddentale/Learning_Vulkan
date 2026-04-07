@@ -54,6 +54,8 @@ layout(location = 0) out vec2 fragTexCoord[];
 layout(location = 1) out vec3 fragNormalWorld[];
 layout(location = 2) flat out uint fragMaterialId[];
 layout(location = 3) out vec3 fragWorldPos[];
+layout(location = 4) flat out ivec3 fragBlockCell[];
+layout(location = 5) flat out uint fragLocalFace[];
 
 // Shared state for two-pass allocation
 shared uint total_faces;
@@ -190,6 +192,20 @@ void emit_face(uint slot, vec3 center, uint face, uint material_id, uint chunk_f
     vec3 b = FACE_BITANGENTS[face];
     vec3 face_center = center + n * 0.5;
 
+    // World-space normal at the face center: map the block's local face
+    // direction through the cube face basis. Approximate (Jacobian-true
+    // normals would vary across the curved face) but stable per block.
+    vec3 world_normal;
+    if (face == 0u) world_normal = FACE_TU[chunk_face];
+    else if (face == 1u) world_normal = -FACE_TU[chunk_face];
+    else if (face == 2u) world_normal = FACE_N[chunk_face];
+    else if (face == 3u) world_normal = -FACE_N[chunk_face];
+    else if (face == 4u) world_normal = FACE_TV[chunk_face];
+    else world_normal = -FACE_TV[chunk_face];
+
+    // Stable per-block cell id for stochastic tiling: chunk_pos * 16 + block.
+    ivec3 block_cell = chunk_pos * 16 + ivec3(int(center.x), int(center.y), int(center.z));
+
     uint vi = slot * 4u;
     uint pi = slot * 2u;
 
@@ -203,12 +219,10 @@ void emit_face(uint slot, vec3 center, uint face, uint material_id, uint chunk_f
             camera.view_projection[gl_ViewIndex] * vec4(world_pos, 1.0);
         fragWorldPos[vi + c] = world_pos;
         fragTexCoord[vi + c] = CORNER_UVS[c];
-        // Phase C: face normal in world space is the projected face normal.
-        // Use the radial direction as a simple approximation — correct for
-        // top faces, slightly off for side faces. Will be replaced with
-        // the projection's true Jacobian normal in a polish pass.
-        fragNormalWorld[vi + c] = normalize(world_pos);
+        fragNormalWorld[vi + c] = world_normal;
         fragMaterialId[vi + c] = material_id;
+        fragBlockCell[vi + c] = block_cell;
+        fragLocalFace[vi + c] = face;
     }
 
     gl_PrimitiveTriangleIndicesEXT[pi]     = uvec3(vi, vi + 1u, vi + 2u);

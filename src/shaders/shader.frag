@@ -4,6 +4,8 @@ layout(location = 0) in vec2 fragTexCoord;
 layout(location = 1) in vec3 fragNormalWorld;
 layout(location = 2) flat in uint fragMaterialId;
 layout(location = 3) in vec3 fragWorldPos;
+layout(location = 4) flat in ivec3 fragBlockCell;
+layout(location = 5) flat in uint fragLocalFace;
 
 layout(binding = 0) uniform sampler2DArray texArray;
 
@@ -57,18 +59,17 @@ void main() {
 
     vec3 baseColor;
     if (hasTexture) {
-        // Atlas sample with per-block stochastic flip.
-        // Atlas layout: left half (U: 0.0-0.5) = side, right half (U: 0.5-1.0) = top.
-        bool isTop = fragNormalWorld.y > 0.5;
+        // Phase D: stochastic-tiling cell is the block's stable integer
+        // identity (chunk_pos*16 + block local), so the rotation is
+        // constant per block regardless of how curved the projection
+        // makes the face. The atlas top/side split is keyed off the
+        // block's *local* face id, not the world normal — this works for
+        // any cube face since "top" of a block on the planet means the
+        // block's local +Y face direction.
+        bool isTop = fragLocalFace == 2u;
         float atlasOffset = isTop ? 0.5 : 0.0;
-        vec2 cell;
-        if (isTop) {
-            cell = floor(fragWorldPos.xz);
-        } else if (abs(fragNormalWorld.x) > 0.5) {
-            cell = floor(fragWorldPos.yz);
-        } else {
-            cell = floor(fragWorldPos.xy);
-        }
+        vec2 cell = vec2(float(fragBlockCell.x ^ (fragBlockCell.y * 73)),
+                         float(fragBlockCell.z ^ (fragBlockCell.y * 19)));
         baseColor = stochastic_sample(fragMaterialId, fragTexCoord, cell, atlasOffset);
     } else {
         baseColor = mat.color;
