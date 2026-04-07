@@ -1,6 +1,7 @@
 use super::biome::{self, Biome};
 use super::block::BlockType;
 use super::chunk::{Chunk, CHUNK_SIZE};
+use super::sphere;
 use super::world::{TERRAIN_MAX_CY, TERRAIN_MIN_CY};
 use noise::{Fbm, MultiFractal, NoiseFn, Perlin, RidgedMulti};
 
@@ -108,15 +109,23 @@ struct TerrainParams {
 }
 
 /// Sample all terrain parameters at world coordinates, applying domain warping.
+/// Phase B2a: 2D `(wx, wz)` is reinterpreted as a position on the +Y cube
+/// face and projected onto the planet sphere; all noise is then sampled in
+/// 3D at that sphere point. This makes terrain seamless across face edges
+/// for free (3D noise has no seams) but means the world is finite — anything
+/// generated outside the face range gets pulled toward the same sphere
+/// surface point as its on-face counterpart.
 fn sample_params(noises: &WorldNoises, wx: f64, wz: f64, erosion_map: Option<&super::erosion::ErosionMap>) -> TerrainParams {
-    let warped_x = wx + noises.warp_x.get([wx, wz]) * WARP_STRENGTH;
-    let warped_z = wz + noises.warp_z.get([wx, wz]) * WARP_STRENGTH;
+    let warp_p = sphere::noise_pos_on_posy(wx, wz);
+    let warped_x = wx + noises.warp_x.get(warp_p) * WARP_STRENGTH;
+    let warped_z = wz + noises.warp_z.get(warp_p) * WARP_STRENGTH;
+    let p = sphere::noise_pos_on_posy(warped_x, warped_z);
 
-    let continentalness = noises.continentalness.get([warped_x, warped_z]);
-    let erosion = noises.erosion_noise.get([warped_x, warped_z]);
-    let weirdness = noises.weirdness.get([warped_x, warped_z]);
-    let temperature = noises.temperature.get([warped_x, warped_z]);
-    let humidity = noises.humidity.get([warped_x, warped_z]);
+    let continentalness = noises.continentalness.get(p);
+    let erosion = noises.erosion_noise.get(p);
+    let weirdness = noises.weirdness.get(p);
+    let temperature = noises.temperature.get(p);
+    let humidity = noises.humidity.get(p);
     let mut height = compute_height_from_params(noises, warped_x, warped_z, continentalness, erosion, weirdness);
 
     // Apply hydraulic erosion delta
@@ -165,11 +174,12 @@ fn lerp(a: f64, b: f64, t: f64) -> f64 {
 
 pub(crate) fn compute_height_from_params(noises: &WorldNoises, wx: f64, wz: f64, continentalness: f64, erosion: f64, weirdness: f64) -> usize {
     let base = continental_curve(continentalness);
+    let p = sphere::noise_pos_on_posy(wx, wz);
 
     // Erosion controls terrain roughness: high erosion = full mountains, low = flat
     let erosion_factor = (0.3 + erosion * 0.7).clamp(0.3, 1.0);
-    let mountain = noises.mountain.get([wx, wz]) * MOUNTAIN_AMPLITUDE * erosion_factor;
-    let detail = noises.detail.get([wx, wz]) * DETAIL_AMPLITUDE * erosion_factor;
+    let mountain = noises.mountain.get(p) * MOUNTAIN_AMPLITUDE * erosion_factor;
+    let detail = noises.detail.get(p) * DETAIL_AMPLITUDE * erosion_factor;
     let weirdness_offset = weirdness * WEIRDNESS_AMPLITUDE;
 
     let height = SEA_LEVEL as f64 + base + mountain + detail + weirdness_offset;

@@ -102,11 +102,13 @@ pub fn generate_erosion_map(size: usize, cell_size: f32, seed: u32, iterations: 
         for ix in 0..size {
             let wx = origin_x as f64 + ix as f64 * cell_size as f64;
             let wz = origin_z as f64 + iz as f64 * cell_size as f64;
-            let warped_x = wx + noises.warp_x.get([wx, wz]) * super::terrain::WARP_STRENGTH;
-            let warped_z = wz + noises.warp_z.get([wx, wz]) * super::terrain::WARP_STRENGTH;
-            let c = noises.continentalness.get([warped_x, warped_z]);
-            let e = noises.erosion_noise.get([warped_x, warped_z]);
-            let w = noises.weirdness.get([warped_x, warped_z]);
+            let warp_p = super::sphere::noise_pos_on_posy(wx, wz);
+            let warped_x = wx + noises.warp_x.get(warp_p) * super::terrain::WARP_STRENGTH;
+            let warped_z = wz + noises.warp_z.get(warp_p) * super::terrain::WARP_STRENGTH;
+            let p = super::sphere::noise_pos_on_posy(warped_x, warped_z);
+            let c = noises.continentalness.get(p);
+            let e = noises.erosion_noise.get(p);
+            let w = noises.weirdness.get(p);
             let h = super::terrain::compute_height_from_params(&noises, warped_x, warped_z, c, e, w);
             terrain.push(h as f32);
         }

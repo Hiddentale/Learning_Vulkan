@@ -193,6 +193,16 @@ pub fn chunk_to_world(cp: ChunkPos, local: Vec3) -> DVec3 {
     face_local_to_world(cp.face, u, v, d)
 }
 
+/// Convert a `(wx, wz)` block-space coordinate — interpreted as a position on
+/// the +Y face with the cube centre at the origin — to a 3D point on the
+/// planet sphere, for sampling 3D noise. Uses raw normalization (cheap, no
+/// branch on out-of-face coordinates) since noise sampling doesn't need the
+/// area-preserving Catmull/Everitt mapping.
+pub fn noise_pos_on_posy(wx: f64, wz: f64) -> [f64; 3] {
+    let v = DVec3::new(wx, CUBE_HALF_BLOCKS, wz).normalize() * PLANET_RADIUS_BLOCKS as f64;
+    [v.x, v.y, v.z]
+}
+
 #[cfg(test)]
 mod projection_tests {
     use super::*;
