@@ -783,6 +783,15 @@ const LOD_SUBMISSIONS_PER_FRAME: usize = 32;
 /// Schedule direct LOD terrain generation for positions beyond LOD-0 range.
 /// Returns true if any LOD work was submitted this frame.
 unsafe fn schedule_lod_generation(wr: &mut WorldResources, player_cx: i32, player_cy: i32, player_cz: i32) -> bool {
+    // Phase B2c: LOD super-chunks generate from noise into the SVDAG
+    // ray-march pipeline, which still operates in flat world space and
+    // would render slabs through the sphere-projected mesh. The tiny
+    // planet fits entirely in the mesh range, so disable until the SVDAG
+    // path is rebuilt for sphere geometry.
+    let _ = (wr, player_cx, player_cy, player_cz);
+    return false;
+    #[allow(unreachable_code)]
+    {
     if wr.lod_in_flight.len() >= MAX_LOD_IN_FLIGHT {
         return true;
     }
@@ -846,6 +855,7 @@ unsafe fn schedule_lod_generation(wr: &mut WorldResources, player_cx: i32, playe
         total_submitted += submitted;
     }
     total_submitted > 0
+    }
 }
 
 fn in_lod_band(gx: i32, gy: i32, gz: i32, px: i32, py: i32, pz: i32, min_dist: i32, max_dist: i32) -> bool {
