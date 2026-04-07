@@ -130,6 +130,30 @@ impl World {
     pub fn insert_empty_chunk(&mut self, cx: i32, cy: i32, cz: i32) {
         self.chunks.insert(ChunkPos::posy(cx, cy, cz), Chunk::new(BlockType::Air));
     }
+
+    /// Test-only: insert a fully-stone chunk at the given face/chunk position.
+    #[cfg(test)]
+    pub fn insert_solid_chunk(&mut self, cp: ChunkPos) {
+        self.chunks.insert(cp, Chunk::new(BlockType::Stone));
+    }
+
+    /// Test-only: insert an empty chunk at any face.
+    #[cfg(test)]
+    pub fn insert_empty_chunk_at(&mut self, cp: ChunkPos) {
+        self.chunks.insert(cp, Chunk::new(BlockType::Air));
+    }
+
+    /// Test-only: count of currently loaded chunks.
+    #[cfg(test)]
+    pub fn chunk_count(&self) -> usize {
+        self.chunks.len()
+    }
+
+    /// Test-only: direct mutable access to the chunk map for fixture setup.
+    #[cfg(test)]
+    pub fn chunks_mut_for_test(&mut self) -> &mut HashMap<ChunkPos, Chunk> {
+        &mut self.chunks
+    }
 }
 
 
@@ -138,11 +162,80 @@ pub fn chunk_distance(cx: i32, cy: i32, cz: i32, px: i32, py: i32, pz: i32) -> i
     (cx - px).abs().max((cy - py).abs()).max((cz - pz).abs())
 }
 
-// Phase D': render-distance tests are stale — Phase C generates all six
-// faces unconditionally, so the old "chunks_load_within_render_distance"
-// invariant no longer applies.
-#[cfg(all(test, any()))]
+#[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::voxel::sphere::{self, ChunkPos};
+
+    fn drain_world(world: &mut World, expected: usize) -> bool {
+        for _ in 0..2000 {
+            world.update(0, 0, 0);
+            if world.chunk_count() >= expected {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        false
+    }
+
+    /// Pre-generation reaches the full planet column count without
+    /// hanging. Catches generator deadlocks.
+    #[test]
+    fn pregen_completes_full_planet() {
+        let mut world = World::new(2, 0, None);
+        let total_columns = (6 * sphere::FACE_SIDE_CHUNKS * sphere::FACE_SIDE_CHUNKS) as usize;
+        let total_chunks = total_columns * (TERRAIN_MAX_CY - TERRAIN_MIN_CY + 1) as usize;
+        assert!(drain_world(&mut world, total_chunks), "pregen never reached {} chunks (got {})", total_chunks, world.chunk_count());
+        assert_eq!(world.chunk_count(), total_chunks);
+    }
+
+    /// Every face has the expected column count once generation settles.
+    #[test]
+    fn world_loads_all_six_faces() {
+        let mut world = World::new(2, 1, None);
+        let total_columns = (6 * sphere::FACE_SIDE_CHUNKS * sphere::FACE_SIDE_CHUNKS) as usize;
+        let total_chunks = total_columns * (TERRAIN_MAX_CY - TERRAIN_MIN_CY + 1) as usize;
+        assert!(drain_world(&mut world, total_chunks), "drain timed out at {}", world.chunk_count());
+        for face in sphere::ALL_FACES {
+            let count = world
+                .chunks
+                .keys()
+                .filter(|cp| cp.face == face)
+                .count();
+            let per_face = (sphere::FACE_SIDE_CHUNKS * sphere::FACE_SIDE_CHUNKS) as usize * (TERRAIN_MAX_CY - TERRAIN_MIN_CY + 1) as usize;
+            assert_eq!(count, per_face, "face {:?}: {} chunks (expected {})", face, count, per_face);
+        }
+    }
+
+    /// `block_solid` for an unloaded chunk falls back to "solid" inside the
+    /// terrain layer band and "air" above it. Catches regressions where the
+    /// fall-through guard breaks (player would fall to core through
+    /// ungenerated terrain).
+    #[test]
+    fn unloaded_terrain_chunks_are_solid() {
+        let world = World::new(2, 0, None);
+        let in_band = ChunkPos { face: sphere::Face::PosY, cx: 0, cy: 5, cz: 0 };
+        assert!(world.block_solid(in_band, 0, 0, 0));
+        let above_band = ChunkPos { face: sphere::Face::PosY, cx: 0, cy: TERRAIN_MAX_CY + 5, cz: 0 };
+        assert!(!world.block_solid(above_band, 0, 0, 0));
+    }
+
+    /// Block writes are visible to subsequent reads.
+    #[test]
+    fn set_then_read_block() {
+        let mut world = World::new(2, 0, None);
+        let cp = ChunkPos { face: sphere::Face::PosY, cx: 0, cy: 5, cz: 0 };
+        world.insert_empty_chunk_at(cp);
+        assert!(!world.block_solid(cp, 1, 1, 1));
+        world.set_block_at(cp, 1, 1, 1, BlockType::Stone);
+        assert!(world.block_solid(cp, 1, 1, 1));
+        assert_eq!(world.block_at(cp, 1, 1, 1), BlockType::Stone);
+    }
+}
+
+// Disabled stale tests retained below for reference.
+#[cfg(all(test, any()))]
+mod stale_tests {
     use super::*;
 
     const TEST_PLAYER_CY: i32 = 5;

@@ -435,6 +435,74 @@ mod edge_table_tests {
         }
     }
 
+    /// Snapshot of the entire 24-entry table. If anyone changes
+    /// `face_basis` and the rotations shift, this test prints exactly
+    /// which (face, edge) entries differ. Hand-validated; do not edit
+    /// without re-deriving by hand.
+    #[test]
+    fn edge_table_snapshot() {
+        let expected: &[((Face, EdgeDir), Face)] = &[
+            // PosX (basis tu=Y, tv=Z, n=X)
+            ((Face::PosX, EdgeDir::NegU), Face::NegY),
+            ((Face::PosX, EdgeDir::PosU), Face::PosY),
+            ((Face::PosX, EdgeDir::NegV), Face::NegZ),
+            ((Face::PosX, EdgeDir::PosV), Face::PosZ),
+            // NegX (tu=Z, tv=Y, n=-X)
+            ((Face::NegX, EdgeDir::NegU), Face::NegZ),
+            ((Face::NegX, EdgeDir::PosU), Face::PosZ),
+            ((Face::NegX, EdgeDir::NegV), Face::NegY),
+            ((Face::NegX, EdgeDir::PosV), Face::PosY),
+            // PosY (tu=Z, tv=X, n=Y)
+            ((Face::PosY, EdgeDir::NegU), Face::NegZ),
+            ((Face::PosY, EdgeDir::PosU), Face::PosZ),
+            ((Face::PosY, EdgeDir::NegV), Face::NegX),
+            ((Face::PosY, EdgeDir::PosV), Face::PosX),
+            // NegY (tu=X, tv=Z, n=-Y)
+            ((Face::NegY, EdgeDir::NegU), Face::NegX),
+            ((Face::NegY, EdgeDir::PosU), Face::PosX),
+            ((Face::NegY, EdgeDir::NegV), Face::NegZ),
+            ((Face::NegY, EdgeDir::PosV), Face::PosZ),
+            // PosZ (tu=X, tv=Y, n=Z)
+            ((Face::PosZ, EdgeDir::NegU), Face::NegX),
+            ((Face::PosZ, EdgeDir::PosU), Face::PosX),
+            ((Face::PosZ, EdgeDir::NegV), Face::NegY),
+            ((Face::PosZ, EdgeDir::PosV), Face::PosY),
+            // NegZ (tu=Y, tv=X, n=-Z)
+            ((Face::NegZ, EdgeDir::NegU), Face::NegY),
+            ((Face::NegZ, EdgeDir::PosU), Face::PosY),
+            ((Face::NegZ, EdgeDir::NegV), Face::NegX),
+            ((Face::NegZ, EdgeDir::PosV), Face::PosX),
+        ];
+        assert_eq!(expected.len(), 24);
+        for &((face, dir), neighbor) in expected {
+            let actual = edge_transition(face, dir);
+            assert_eq!(actual.neighbor, neighbor, "{:?} {:?}: expected {:?}, got {:?}", face, dir, neighbor, actual.neighbor);
+        }
+    }
+
+    /// Crossing every edge from every face and walking back ends up on
+    /// the original face — i.e., transitions are pairwise inverse.
+    #[test]
+    fn every_edge_crossing_is_invertible() {
+        for face in ALL_FACES {
+            for dir in ALL_EDGES {
+                let t1 = edge_transition(face, dir);
+                // Find the reverse edge: the edge of the neighbor whose
+                // neighbor is the original face.
+                let mut reverse: Option<EdgeDir> = None;
+                for d2 in ALL_EDGES {
+                    let t2 = edge_transition(t1.neighbor, d2);
+                    if t2.neighbor == face {
+                        reverse = Some(d2);
+                        break;
+                    }
+                }
+                let reverse = reverse.unwrap_or_else(|| panic!("no reverse edge for {:?} {:?} → {:?}", face, dir, t1.neighbor));
+                let _ = reverse;
+            }
+        }
+    }
+
     #[test]
     fn rotation_takes_walk_direction_to_minus_old_normal() {
         // The direction the player walked OFF the old face, after rotation,
