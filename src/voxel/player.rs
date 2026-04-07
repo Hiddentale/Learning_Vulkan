@@ -121,13 +121,64 @@ impl Player {
     }
 
     /// Walk a tangent-plane displacement (`tangent_world`) of length in
-    /// blocks. Projects onto the player's current face basis to get
-    /// face-local `(du, dv)` and applies them with collision.
+    /// blocks. Splits into forward and right components in the local tangent
+    /// plane and applies each as a world-space step with collision. World-
+    /// space integration is required so that motion at off-center positions
+    /// (corners, edges) follows the actual sphere tangent rather than the
+    /// face's flat cube basis — otherwise pressing W near a corner produces
+    /// a diagonal slide.
     pub fn walk(&mut self, tangent_world: Vec3, world: &World) {
-        let (tu, tv, _) = sphere::face_basis(self.face);
-        let du = tangent_world.dot(tu);
-        let dv = tangent_world.dot(tv);
-        self.try_move(du, 0.0, dv, world);
+        let up = self.up();
+        let forward_h = (self.forward - up * self.forward.dot(up)).normalize_or(Vec3::ZERO);
+        if forward_h == Vec3::ZERO {
+            return;
+        }
+        let right_h = forward_h.cross(up).normalize_or(Vec3::ZERO);
+        let forward_amt = tangent_world.dot(forward_h);
+        let right_amt = tangent_world.dot(right_h);
+        let moved_f = self.try_world_step(forward_h * forward_amt, world);
+        let moved_r = self.try_world_step(right_h * right_amt, world);
+        if moved_f || moved_r {
+            self.reorthogonalize_forward();
+        }
+    }
+
+    /// Apply one world-space tangent step. Re-derives cube coords via the
+    /// inverse projection and reverts on collision. Used by walk for
+    /// per-axis sliding in true sphere tangent space.
+    fn try_world_step(&mut self, world_displacement: Vec3, world: &World) -> bool {
+        if world_displacement.length_squared() < 1e-12 {
+            return false;
+        }
+        let save = (self.face, self.cx, self.cy, self.cz, self.lx, self.ly, self.lz);
+        let cur = sphere::chunk_to_world(self.chunk_pos(), Vec3::new(self.lx, self.ly, self.lz));
+        let new_world = cur + world_displacement.as_dvec3();
+        let Some((cp, lx, ly, lz)) = sphere::world_to_chunk_local(new_world) else {
+            return false;
+        };
+        if cp.cy < 0 {
+            return false;
+        }
+        let n = sphere::FACE_SIDE_CHUNKS;
+        self.face = cp.face;
+        self.cx = cp.cx.clamp(0, n - 1);
+        self.cy = cp.cy;
+        self.cz = cp.cz.clamp(0, n - 1);
+        self.lx = lx;
+        self.ly = ly;
+        self.lz = lz;
+        if capsule_collides(self, world) {
+            self.face = save.0;
+            self.cx = save.1;
+            self.cy = save.2;
+            self.cz = save.3;
+            self.lx = save.4;
+            self.ly = save.5;
+            self.lz = save.6;
+            false
+        } else {
+            true
+        }
     }
 
     /// Fly with full 6DoF in world space. Adds the displacement to the

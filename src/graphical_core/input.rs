@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use winit::event::MouseButton;
 use winit::keyboard::KeyCode;
 
-const MOVE_SPEED: f32 = 3.0;
+const MOVE_SPEED: f32 = 15.0;
 const SPRINT_MULTIPLIER: f32 = 100.0;
 const MOUSE_SENSITIVITY: f32 = 0.003;
 
