@@ -40,6 +40,8 @@ layout(push_constant) uniform PushConstants {
     vec2 screen_size;
     uint phase;
     uint opaque_mask;
+    float planet_radius;
+    uint stereo;
 };
 
 struct MeshPayload {
@@ -64,47 +66,113 @@ bool frustum_visible(vec3 aabb_min, vec3 aabb_max) {
     return true;
 }
 
-bool occlusion_visible(vec3 aabb_min, vec3 aabb_max) {
-    vec3 corners[8] = vec3[8](
-        vec3(aabb_min.x, aabb_min.y, aabb_min.z),
-        vec3(aabb_max.x, aabb_min.y, aabb_min.z),
-        vec3(aabb_min.x, aabb_max.y, aabb_min.z),
-        vec3(aabb_max.x, aabb_max.y, aabb_min.z),
-        vec3(aabb_min.x, aabb_min.y, aabb_max.z),
-        vec3(aabb_max.x, aabb_min.y, aabb_max.z),
-        vec3(aabb_min.x, aabb_max.y, aabb_max.z),
-        vec3(aabb_max.x, aabb_max.y, aabb_max.z)
-    );
+// Horizon cull. Conservative test: a chunk's bounding sphere on the visible
+// cap of the planet from the camera is kept; everything past the limb is
+// culled. Geometry: visible cap from a camera at distance `d` from planet
+// center subtends half-angle `acos(R/d)` from the planet center. The chunk's
+// angular footprint is `asin(r/|c|)`. Visible iff
+//   dot(chunk_dir, cam_dir) >= cos(acos(R/d) + asin(r/|c|)).
+// Computed exactly via cosine-of-sum so the test is tight.
+bool horizon_visible(vec3 sphere_center, float sphere_radius) {
+    float cam_dist = length(camera_pos);
+    if (cam_dist <= planet_radius) return true;
+    float c_dist = length(sphere_center);
+    if (c_dist < 1e-4) return true;
+    vec3 cam_dir = camera_pos / cam_dist;
+    vec3 chunk_dir = sphere_center / c_dist;
+    float cos_a = clamp(planet_radius / cam_dist, -1.0, 1.0);
+    float sin_a = sqrt(max(0.0, 1.0 - cos_a * cos_a));
+    float sin_alpha = clamp(sphere_radius / c_dist, 0.0, 1.0);
+    float cos_alpha = sqrt(max(0.0, 1.0 - sin_alpha * sin_alpha));
+    float threshold = cos_a * cos_alpha - sin_a * sin_alpha;
+    return dot(chunk_dir, cam_dir) >= threshold;
+}
 
-    float min_z = 1.0;
-    vec2 ndc_min = vec2(1.0);
-    vec2 ndc_max = vec2(-1.0);
+// Project an AABB through `vp` to a screen-space rect plus the chunk's
+// nearest NDC z (the value the hi-Z test compares against). Returns true iff
+// any corner is in front of the camera. When some corners are behind, the
+// rect is expanded to full screen and `chunk_z_near` is set to 0 so the
+// occlusion test cannot cull the chunk.
+bool project_aabb(mat4 vp, vec3 aabb_min, vec3 aabb_max, out vec2 uv_min, out vec2 uv_max, out float chunk_z_near) {
+    uv_min = vec2(1e9);
+    uv_max = vec2(-1e9);
+    chunk_z_near = 1.0;
+    bool any_in_front = false;
+    bool any_behind = false;
 
-    // Use eye 0 for occlusion (conservative for stereo)
     for (int i = 0; i < 8; i++) {
-        vec4 clip = camera.view_projection[0] * vec4(corners[i], 1.0);
-        if (clip.w <= 0.0) return true;
-
+        vec3 corner = vec3(
+            (i & 1) != 0 ? aabb_max.x : aabb_min.x,
+            (i & 2) != 0 ? aabb_max.y : aabb_min.y,
+            (i & 4) != 0 ? aabb_max.z : aabb_min.z
+        );
+        vec4 clip = vp * vec4(corner, 1.0);
+        if (clip.w <= 1e-4) {
+            any_behind = true;
+            continue;
+        }
+        any_in_front = true;
         vec3 ndc = clip.xyz / clip.w;
-        ndc_min = min(ndc_min, ndc.xy);
-        ndc_max = max(ndc_max, ndc.xy);
-        min_z = min(min_z, ndc.z);
+        vec2 uv = ndc.xy * 0.5 + 0.5;
+        uv_min = min(uv_min, uv);
+        uv_max = max(uv_max, uv);
+        chunk_z_near = min(chunk_z_near, ndc.z);
     }
 
-    ndc_min = clamp(ndc_min, vec2(-1.0), vec2(1.0));
-    ndc_max = clamp(ndc_max, vec2(-1.0), vec2(1.0));
+    if (!any_in_front) {
+        // Fully behind camera — cannot occur visible.
+        return false;
+    }
+    if (any_behind) {
+        // Straddles the near plane — expand to full screen and most-permissive
+        // depth so the hi-Z test cannot cull it.
+        uv_min = vec2(0.0);
+        uv_max = vec2(1.0);
+        chunk_z_near = 0.0;
+    } else {
+        uv_min = clamp(uv_min, vec2(0.0), vec2(1.0));
+        uv_max = clamp(uv_max, vec2(0.0), vec2(1.0));
+    }
+    return true;
+}
 
-    vec2 uv_min = ndc_min * 0.5 + 0.5;
-    vec2 uv_max = ndc_max * 0.5 + 0.5;
+// Hi-Z occlusion test for a single eye. Returns true iff the chunk is
+// potentially visible (not occluded) in this eye. Forward-Z: chunk is
+// occluded when its nearest NDC z is greater than the pyramid's max-of-tile.
+bool eye_occlusion_visible(mat4 vp, vec3 aabb_min, vec3 aabb_max) {
+    vec2 uv_min, uv_max;
+    float chunk_z_near;
+    if (!project_aabb(vp, aabb_min, aabb_max, uv_min, uv_max, chunk_z_near)) {
+        return false; // entirely behind camera
+    }
 
     vec2 size_pixels = (uv_max - uv_min) * screen_size;
     float max_extent = max(size_pixels.x, size_pixels.y);
+    // Pick the smallest mip whose 2x2 gather covers the rect (zeux/niagara).
+    float mip = max(0.0, ceil(log2(max(max_extent * 0.5, 1.0))));
+    vec2 center_uv = (uv_min + uv_max) * 0.5;
+    // 2x2 max gather at the chosen mip via four textureLod samples (portable
+    // alternative to textureGather, which ignores explicit LOD on many drivers).
+    vec2 texel = 1.0 / vec2(textureSize(depth_pyramid, int(mip)));
+    float d0 = textureLod(depth_pyramid, center_uv + vec2(-0.5, -0.5) * texel, mip).r;
+    float d1 = textureLod(depth_pyramid, center_uv + vec2( 0.5, -0.5) * texel, mip).r;
+    float d2 = textureLod(depth_pyramid, center_uv + vec2(-0.5,  0.5) * texel, mip).r;
+    float d3 = textureLod(depth_pyramid, center_uv + vec2( 0.5,  0.5) * texel, mip).r;
+    float pyramid_depth = max(max(d0, d1), max(d2, d3));
 
-    float mip = ceil(log2(max(max_extent, 1.0)));
-    float pyramid_depth = textureLod(depth_pyramid, (uv_min + uv_max) * 0.5, mip).r;
-
-    float chunk_depth = min_z * 0.5 + 0.5;
+    float chunk_depth = chunk_z_near; // forward-Z: chunk's nearest point
     return chunk_depth <= pyramid_depth;
+}
+
+// Stereo-aware occlusion test: visible iff visible in either eye.
+bool occlusion_visible(vec3 aabb_min, vec3 aabb_max) {
+    if (eye_occlusion_visible(camera.view_projection[0], aabb_min, aabb_max)) {
+        return true;
+    }
+    if (stereo == 1u) {
+        return eye_occlusion_visible(camera.view_projection[1], aabb_min, aabb_max);
+    }
+    return false;
 }
 
 bool sub_chunk_occupied(uint voxel_slot, uint sub_idx) {
@@ -140,13 +208,22 @@ void main() {
 
     MeshChunkInfo chunk = chunks[chunk_idx];
 
-    // Thread 0 performs chunk-level culling
+    // Approximate bounding sphere from the chunk's projected AABB. Used by
+    // the horizon early-out only — looser than the analytic sphere from
+    // sphere::chunk_bounding_sphere but doesn't require any extra upload.
+    vec3 sphere_center = (chunk.aabb_min + chunk.aabb_max) * 0.5;
+    float sphere_radius = length((chunk.aabb_max - chunk.aabb_min) * 0.5);
+
     if (tid == 0u) {
         bool was_visible = visibility[chunk_idx] == 1u;
 
         // Phase filtering
         if (phase == 1u && !was_visible) { chunk_visible = false; }
         else if (phase == 2u && was_visible) { chunk_visible = false; }
+        else if (!horizon_visible(sphere_center, sphere_radius)) {
+            visibility[chunk_idx] = 0u;
+            chunk_visible = false;
+        }
         else if (!frustum_visible(chunk.aabb_min, chunk.aabb_max)) {
             visibility[chunk_idx] = 0u;
             chunk_visible = false;

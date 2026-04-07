@@ -145,6 +145,9 @@ unsafe fn draw_voxels_mesh_shader(device: &Device, cmd: vk::CommandBuffer, mesh_
         screen_size: [0.0; 2],
         phase: 1,
         draw_offset: crate::voxel::block::BlockType::opaque_mask(),
+        planet_radius: crate::voxel::sphere::PLANET_RADIUS_BLOCKS as f32,
+        stereo: 1,
+        _pad: [0.0; 2],
     };
     let push_bytes: &[u8] = std::slice::from_raw_parts(
         &push as *const crate::graphical_core::compute_cull::CullPushConstants as *const u8,

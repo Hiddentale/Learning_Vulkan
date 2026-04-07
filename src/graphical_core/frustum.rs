@@ -1,6 +1,116 @@
-use glam::{Mat4, Vec3, Vec4};
+use glam::{Mat4, Vec2, Vec3, Vec4};
 
 const PLANE_COUNT: usize = 6;
+
+// ---------------------------------------------------------------------------
+// Horizon culling and Hi-Z occlusion math.
+//
+// These helpers mirror the GLSL math in `chunk_cull.task` so it can be unit
+// tested on the CPU. Each function here has a corresponding shader-side
+// implementation; if the GLSL drifts, the parity test in `cull_math_tests`
+// catches it via direct numeric comparison.
+// ---------------------------------------------------------------------------
+
+/// True iff a sphere of `radius` centered at `chunk_center` (planet-centered
+/// world space) is on the visible side of the planet's horizon as seen from
+/// `cam_pos`. Conservative: a chunk that touches the visible cap is visible.
+///
+/// Geometry: from a camera at distance `d > planet_radius` from the planet
+/// center, the visible cap subtends a half-angle `A = acos(planet_radius/d)`
+/// from the planet center. A chunk's bounding sphere of angular radius
+/// `α = asin(radius / |center|)` is visible iff its angle from the camera's
+/// direction (planet-center → camera) is at most `A + α`. Computed via the
+/// exact `cos(A + α)` so the test is tight.
+pub fn horizon_visible(cam_pos: Vec3, chunk_center: Vec3, chunk_radius: f32, planet_radius: f32) -> bool {
+    let cam_dist = cam_pos.length();
+    if cam_dist <= planet_radius {
+        // Camera at or below surface — the horizon test isn't meaningful.
+        return true;
+    }
+    let center_dist = chunk_center.length();
+    if center_dist < 1e-4 {
+        return true;
+    }
+    let cam_dir = cam_pos / cam_dist;
+    let chunk_dir = chunk_center / center_dist;
+    let cos_a = (planet_radius / cam_dist).clamp(-1.0, 1.0);
+    let sin_a = (1.0 - cos_a * cos_a).max(0.0).sqrt();
+    let sin_alpha = (chunk_radius / center_dist).clamp(0.0, 1.0);
+    let cos_alpha = (1.0 - sin_alpha * sin_alpha).max(0.0).sqrt();
+    let threshold = cos_a * cos_alpha - sin_a * sin_alpha;
+    chunk_dir.dot(cam_dir) >= threshold
+}
+
+/// Mip level to sample in a Hi-Z pyramid for an AABB whose screen extent is
+/// `max_extent_pixels` along the larger axis. Picks the smallest mip whose
+/// 2×2 gather covers the AABB. Matches `niagara`/zeux: `ceil(log2(extent/2))`,
+/// floored at 0.
+pub fn mip_for_extent_pixels(max_extent_pixels: f32) -> i32 {
+    if max_extent_pixels <= 2.0 {
+        return 0;
+    }
+    (max_extent_pixels * 0.5).log2().ceil() as i32
+}
+
+/// Hi-Z occlusion predicate. `chunk_z_far` is the chunk's far-most NDC z;
+/// `hiz_value` is the conservative depth from the pyramid (max under
+/// forward-Z, min under reverse-Z). Returns true iff the chunk is occluded.
+///
+/// - Forward-Z: occluded iff `chunk_z_near > hiz_max` (chunk's nearest point
+///   is behind the pyramid's farthest occluder).
+/// - Reverse-Z: occluded iff `chunk_z_far < hiz_min` (chunk's farthest point
+///   is in front of (= smaller depth than) the pyramid's nearest occluder).
+///
+/// Coplanar (`==`) is treated as visible to avoid self-occlusion.
+pub fn hiz_occluded(chunk_z: f32, hiz_value: f32, reverse_z: bool) -> bool {
+    if reverse_z {
+        chunk_z < hiz_value
+    } else {
+        chunk_z > hiz_value
+    }
+}
+
+/// Project an AABB through `vp` to a screen-space rect plus the depth range.
+/// Returns `(uv_min, uv_max, depth_extreme)` where `depth_extreme` is the
+/// chunk depth to feed into [`hiz_occluded`] (`min` of NDC z under forward-Z,
+/// `max` under reverse-Z). When any corner is at or behind the camera, the
+/// rect expands to the full screen and the depth becomes the most permissive
+/// value (so the occlusion test cannot cull a chunk that may be visible).
+pub fn project_aabb_screen_rect(vp: &Mat4, aabb_min: Vec3, aabb_max: Vec3, reverse_z: bool) -> (Vec2, Vec2, f32) {
+    let mut uv_min = Vec2::splat(f32::INFINITY);
+    let mut uv_max = Vec2::splat(f32::NEG_INFINITY);
+    let mut depth_extreme: f32 = if reverse_z { 1.0 } else { 0.0 };
+    let mut behind_any = false;
+
+    for i in 0..8u32 {
+        let corner = Vec3::new(
+            if i & 1 != 0 { aabb_max.x } else { aabb_min.x },
+            if i & 2 != 0 { aabb_max.y } else { aabb_min.y },
+            if i & 4 != 0 { aabb_max.z } else { aabb_min.z },
+        );
+        let clip = *vp * corner.extend(1.0);
+        if clip.w <= 1e-4 {
+            behind_any = true;
+            continue;
+        }
+        let ndc = clip.truncate() / clip.w;
+        let uv = Vec2::new(ndc.x * 0.5 + 0.5, ndc.y * 0.5 + 0.5);
+        uv_min = uv_min.min(uv);
+        uv_max = uv_max.max(uv);
+        if reverse_z {
+            depth_extreme = depth_extreme.max(ndc.z);
+        } else {
+            depth_extreme = depth_extreme.min(ndc.z);
+        }
+    }
+
+    if behind_any {
+        // Conservative: AABB straddles the near plane → expand to full screen
+        // and use the most permissive depth (occluder cannot cull it).
+        return (Vec2::ZERO, Vec2::ONE, if reverse_z { 1.0 } else { 0.0 });
+    }
+    (uv_min.clamp(Vec2::ZERO, Vec2::ONE), uv_max.clamp(Vec2::ZERO, Vec2::ONE), depth_extreme)
+}
 
 /// A view frustum defined by 6 planes, extracted from a view-projection matrix.
 /// Each plane normal points inward (toward visible space).
@@ -72,6 +182,18 @@ impl Frustum {
         } else {
             b
         }
+    }
+
+    /// Test whether a sphere intersects the frustum (cheaper than AABB; useful
+    /// after horizon culling has narrowed the candidate set).
+    pub fn intersects_sphere(&self, center: Vec3, radius: f32) -> bool {
+        for plane in &self.planes {
+            let normal = Vec3::new(plane.x, plane.y, plane.z);
+            if normal.dot(center) + plane.w < -radius {
+                return false;
+            }
+        }
+        true
     }
 
     /// Returns true if an axis-aligned bounding box is at least partially inside the frustum.
@@ -246,6 +368,114 @@ mod tests {
             let result = project_aabb(&vp, min, max, screen, 8);
             assert_eq!(first, result, "AABB projection is non-deterministic across calls");
         }
+    }
+
+    // ----- horizon culling -----
+
+    #[test]
+    fn horizon_top_of_planet_visible_from_above() {
+        let r = 100.0;
+        let cam = Vec3::new(0.0, 200.0, 0.0);
+        let chunk = Vec3::new(0.0, r, 0.0); // top
+        assert!(horizon_visible(cam, chunk, 8.0, r));
+    }
+
+    #[test]
+    fn horizon_antipode_culled() {
+        let r = 100.0;
+        let cam = Vec3::new(0.0, 200.0, 0.0);
+        let antipode = Vec3::new(0.0, -r, 0.0);
+        assert!(!horizon_visible(cam, antipode, 1.0, r));
+    }
+
+    #[test]
+    fn horizon_camera_inside_planet_returns_visible() {
+        let r = 100.0;
+        let cam = Vec3::new(0.0, 50.0, 0.0); // below surface
+        let chunk = Vec3::new(0.0, -r, 0.0);
+        assert!(horizon_visible(cam, chunk, 1.0, r));
+    }
+
+    #[test]
+    fn horizon_just_past_limb_culled_just_before_visible() {
+        let r = 100.0;
+        let d = 200.0;
+        let cam = Vec3::new(0.0, d, 0.0);
+        // The visible cap from cam subtends half-angle A=acos(R/d)=60° from
+        // planet center. A point at angle 59° is visible; 61° is not.
+        let p = |deg: f32| {
+            let rad = deg.to_radians();
+            Vec3::new(rad.sin() * r, rad.cos() * r, 0.0)
+        };
+        assert!(horizon_visible(cam, p(50.0), 0.0, r));
+        assert!(!horizon_visible(cam, p(75.0), 0.0, r));
+    }
+
+    #[test]
+    fn horizon_chunk_radius_extends_visibility() {
+        let r = 100.0;
+        let d = 200.0;
+        let cam = Vec3::new(0.0, d, 0.0);
+        // Just past the limb at 65°: a point chunk is culled, but a 30-block
+        // chunk near it should be visible because its angular footprint
+        // crosses the horizon.
+        let rad = 65.0_f32.to_radians();
+        let pt = Vec3::new(rad.sin() * r, rad.cos() * r, 0.0);
+        assert!(!horizon_visible(cam, pt, 0.0, r));
+        assert!(horizon_visible(cam, pt, 30.0, r));
+    }
+
+    // ----- hi-Z math -----
+
+    #[test]
+    fn mip_for_extent_pixels_table() {
+        // ceil(log2(extent/2)), floored at 0
+        assert_eq!(mip_for_extent_pixels(1.0), 0);
+        assert_eq!(mip_for_extent_pixels(2.0), 0);
+        assert_eq!(mip_for_extent_pixels(3.0), 1); // ceil(log2(1.5)) = 1
+        assert_eq!(mip_for_extent_pixels(4.0), 1); // ceil(log2(2.0)) = 1
+        assert_eq!(mip_for_extent_pixels(5.0), 2); // ceil(log2(2.5)) = 2
+        assert_eq!(mip_for_extent_pixels(8.0), 2); // ceil(log2(4.0)) = 2
+        assert_eq!(mip_for_extent_pixels(9.0), 3);
+    }
+
+    #[test]
+    fn hiz_occluded_forward_z_predicate() {
+        // Forward-Z, hi-Z stores far. Chunk near=0.3 < hiz=0.5: visible.
+        assert!(!hiz_occluded(0.3, 0.5, false));
+        // Chunk near=0.6 > hiz=0.5: occluded.
+        assert!(hiz_occluded(0.6, 0.5, false));
+        // Coplanar: visible.
+        assert!(!hiz_occluded(0.5, 0.5, false));
+    }
+
+    #[test]
+    fn hiz_occluded_reverse_z_predicate() {
+        // Reverse-Z, hi-Z stores nearest (max-of-tile in NDC). Chunk far=0.7 > hiz=0.5: visible.
+        assert!(!hiz_occluded(0.7, 0.5, true));
+        // Chunk far=0.3 < hiz=0.5: occluded.
+        assert!(hiz_occluded(0.3, 0.5, true));
+        // Coplanar: visible.
+        assert!(!hiz_occluded(0.5, 0.5, true));
+    }
+
+    #[test]
+    fn project_aabb_behind_camera_returns_fullscreen() {
+        let vp = test_vp_matrix();
+        // Camera at (0,30,0) looking -Z, AABB entirely behind camera.
+        let (uv_min, uv_max, depth) = project_aabb_screen_rect(&vp, Vec3::new(-1.0, 28.0, 5.0), Vec3::new(1.0, 32.0, 10.0), false);
+        assert_eq!(uv_min, Vec2::ZERO);
+        assert_eq!(uv_max, Vec2::ONE);
+        assert_eq!(depth, 0.0); // forward-Z most-permissive (nearest possible)
+    }
+
+    #[test]
+    fn project_aabb_in_front_returns_tight_rect() {
+        let vp = test_vp_matrix();
+        let (uv_min, uv_max, _depth) = project_aabb_screen_rect(&vp, Vec3::new(-1.0, 29.0, -5.0), Vec3::new(1.0, 31.0, -3.0), false);
+        // AABB is in front of and centered on the screen
+        assert!(uv_min.x > 0.3 && uv_max.x < 0.7);
+        assert!(uv_min.y > 0.3 && uv_max.y < 0.7);
     }
 
     #[test]

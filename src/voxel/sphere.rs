@@ -302,21 +302,34 @@ pub fn noise_pos_on_face(face: Face, u: f64, v: f64) -> [f64; 3] {
     [p.x, p.y, p.z]
 }
 
+/// Number of samples per axis when bounding a sphere-projected chunk.
+/// 5×5×5 = 125 samples gives a substantially tighter AABB than the previous
+/// 3×3×3 grid for chunks on curved face areas (the projection bulges between
+/// samples; finer sampling shrinks the bulge that the bound has to contain).
+const AABB_SAMPLES_PER_AXIS: i32 = 5;
+
+/// Safety pad in blocks added to each AABB axis to absorb the residual
+/// inter-sample bulge. Bounded by the cube-to-sphere derivative norm times
+/// the sample step (`CHUNK_SIZE / (N-1)`) — a conservative half-block at
+/// `FACE_SIDE_CHUNKS=12, N=5` covers the worst case.
+const AABB_SAMPLE_PAD: f32 = 0.5;
+
 /// Compute a conservative axis-aligned bounding box (in cartesian world
 /// space relative to the planet center) for a single chunk after sphere
-/// projection. Samples the 8 cube corners + chunk face centers and unions
-/// the results — slightly conservative because the projection is non-linear.
+/// projection. Samples a dense grid over the chunk's cube-space box and
+/// pads by [`AABB_SAMPLE_PAD`] to absorb residual inter-sample bulge.
 pub fn chunk_world_aabb(cp: ChunkPos) -> ([f32; 3], [f32; 3]) {
     let cs = CHUNK_SIZE as f32;
+    let n = AABB_SAMPLES_PER_AXIS;
+    let step = 1.0 / (n - 1) as f32;
     let mut min = [f32::INFINITY; 3];
     let mut max = [f32::NEG_INFINITY; 3];
-    // Sample a 3x3x3 grid (corners + edge mids + center) for a tighter bound.
-    for ix in 0..=2 {
-        for iy in 0..=2 {
-            for iz in 0..=2 {
-                let lx = ix as f32 * 0.5 * cs;
-                let ly = iy as f32 * 0.5 * cs;
-                let lz = iz as f32 * 0.5 * cs;
+    for ix in 0..n {
+        for iy in 0..n {
+            for iz in 0..n {
+                let lx = ix as f32 * step * cs;
+                let ly = iy as f32 * step * cs;
+                let lz = iz as f32 * step * cs;
                 let w = chunk_to_world(cp, Vec3::new(lx, ly, lz));
                 let p = [w.x as f32, w.y as f32, w.z as f32];
                 for k in 0..3 {
@@ -326,7 +339,43 @@ pub fn chunk_world_aabb(cp: ChunkPos) -> ([f32; 3], [f32; 3]) {
             }
         }
     }
+    for k in 0..3 {
+        min[k] -= AABB_SAMPLE_PAD;
+        max[k] += AABB_SAMPLE_PAD;
+    }
     (min, max)
+}
+
+/// Conservative bounding sphere of a sphere-projected chunk, in cartesian
+/// world space relative to the planet center. Returns `(center, radius)`.
+/// The center is the world position of the chunk's cube-space midpoint;
+/// the radius is the maximum distance from that center to any of a dense
+/// sample grid, padded by [`AABB_SAMPLE_PAD`].
+///
+/// Used by horizon culling and as a tighter cull primitive than the AABB
+/// for chunks on curved face areas.
+pub fn chunk_bounding_sphere(cp: ChunkPos) -> (Vec3, f32) {
+    let cs = CHUNK_SIZE as f32;
+    let half = cs * 0.5;
+    let center_world = chunk_to_world(cp, Vec3::new(half, half, half));
+    let center = Vec3::new(center_world.x as f32, center_world.y as f32, center_world.z as f32);
+    let n = AABB_SAMPLES_PER_AXIS;
+    let step = 1.0 / (n - 1) as f32;
+    let mut max_d2: f32 = 0.0;
+    for ix in 0..n {
+        for iy in 0..n {
+            for iz in 0..n {
+                let lx = ix as f32 * step * cs;
+                let ly = iy as f32 * step * cs;
+                let lz = iz as f32 * step * cs;
+                let w = chunk_to_world(cp, Vec3::new(lx, ly, lz));
+                let p = Vec3::new(w.x as f32, w.y as f32, w.z as f32);
+                let d2 = (p - center).length_squared();
+                if d2 > max_d2 { max_d2 = d2; }
+            }
+        }
+    }
+    (center, max_d2.sqrt() + AABB_SAMPLE_PAD)
 }
 
 /// All faces in their `Face::*` discriminant order — used for enumerating
@@ -728,6 +777,79 @@ mod aabb_tests {
                 assert!(mn[k].is_finite() && mx[k].is_finite());
                 assert!(mx[k] >= mn[k]);
             }
+        }
+    }
+
+    /// Sample a dense pseudo-random grid of points inside a chunk's cube-space
+    /// box, project them through the sphere, and assert every projected point
+    /// lies inside the AABB. The previous 3×3×3 sampling could miss the bulge
+    /// at curved-face chunks; this pins correctness for all faces.
+    #[test]
+    fn chunk_aabb_contains_dense_surface_samples() {
+        let cs = CHUNK_SIZE as f32;
+        // Choose a corner chunk on each face — that's where the projection
+        // bulge is largest.
+        for face in ALL_FACES {
+            for &(cx, cz) in &[(0, 0), (FACE_SIDE_CHUNKS - 1, FACE_SIDE_CHUNKS - 1), (0, FACE_SIDE_CHUNKS - 1)] {
+                let cp = ChunkPos { face, cx, cy: 0, cz };
+                let (mn, mx) = chunk_world_aabb(cp);
+                // 11×11×11 = 1331 quasi-random samples (irrational stride to avoid
+                // hitting only the sample lattice the AABB is computed from).
+                for i in 0..11 {
+                    for j in 0..11 {
+                        for k in 0..11 {
+                            let fx = ((i as f32 * 0.1734).fract() + i as f32 * 0.1) % 1.0;
+                            let fy = ((j as f32 * 0.2917).fract() + j as f32 * 0.1) % 1.0;
+                            let fz = ((k as f32 * 0.3491).fract() + k as f32 * 0.1) % 1.0;
+                            let w = chunk_to_world(cp, Vec3::new(fx * cs, fy * cs, fz * cs));
+                            let p = [w.x as f32, w.y as f32, w.z as f32];
+                            for axis in 0..3 {
+                                assert!(
+                                    p[axis] >= mn[axis] - 1e-3 && p[axis] <= mx[axis] + 1e-3,
+                                    "face={:?} chunk=({},{}) sample {:?} outside AABB axis {} ({}..{})",
+                                    face, cx, cz, p, axis, mn[axis], mx[axis]
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn chunk_bounding_sphere_contains_dense_surface_samples() {
+        let cs = CHUNK_SIZE as f32;
+        for face in ALL_FACES {
+            for &(cx, cz) in &[(0, 0), (FACE_SIDE_CHUNKS - 1, FACE_SIDE_CHUNKS - 1)] {
+                let cp = ChunkPos { face, cx, cy: 0, cz };
+                let (center, radius) = chunk_bounding_sphere(cp);
+                for i in 0..7 {
+                    for j in 0..7 {
+                        for k in 0..7 {
+                            let f = |x: i32| x as f32 / 6.0;
+                            let w = chunk_to_world(cp, Vec3::new(f(i) * cs, f(j) * cs, f(k) * cs));
+                            let p = Vec3::new(w.x as f32, w.y as f32, w.z as f32);
+                            let d = (p - center).length();
+                            assert!(d <= radius + 1e-3, "sample distance {} > radius {}", d, radius);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// At the planet scale, a chunk's bounding sphere radius shouldn't be
+    /// dramatically larger than the chunk's diagonal (which would mean a
+    /// pathologically loose bound). The sphere projection adds some bulge but
+    /// not 10×.
+    #[test]
+    fn chunk_bounding_sphere_radius_is_reasonable() {
+        let diag = (CHUNK_SIZE as f32) * 3.0_f32.sqrt();
+        for face in ALL_FACES {
+            let cp = ChunkPos { face, cx: FACE_SIDE_CHUNKS / 2, cy: 0, cz: FACE_SIDE_CHUNKS / 2 };
+            let (_, r) = chunk_bounding_sphere(cp);
+            assert!(r < diag * 2.0, "face {:?}: bounding radius {} > 2 * diagonal {}", face, r, diag);
         }
     }
 }

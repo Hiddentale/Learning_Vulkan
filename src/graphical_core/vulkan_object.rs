@@ -482,6 +482,9 @@ impl VulkanApplication {
             ],
             phase: 1,
             draw_offset: crate::voxel::block::BlockType::opaque_mask(),
+            planet_radius: crate::voxel::sphere::PLANET_RADIUS_BLOCKS as f32,
+            stereo: if eyes.is_stereo() { 1 } else { 0 },
+            _pad: [0.0; 2],
         };
         let svdag_chunk_count = wr.svdag_pool.chunk_count();
         let extent = self.vulkan_application_data.swapchain_extent;
