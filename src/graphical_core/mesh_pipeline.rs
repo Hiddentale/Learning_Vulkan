@@ -275,11 +275,11 @@ unsafe fn create_graphics_pipeline(
     let rasterization_state = vk::PipelineRasterizationStateCreateInfo::builder()
         .polygon_mode(vk::PolygonMode::FILL)
         .line_width(1.0)
-        // Phase C2: sphere projection inverts the winding of some faces
-        // depending on which side of the cube they sit on, so a uniform
-        // CW/CCW culling rule no longer works. Disable culling and rely on
-        // the depth buffer until a winding-aware fix lands.
-        .cull_mode(vk::CullModeFlags::NONE)
+        // Phase D: re-enable culling. The winding the original code emitted
+        // (CW front-face) was correct for a flat world but the sphere
+        // projection inverts it across the planet — so cull FRONT faces
+        // and the result is correct from outside the planet.
+        .cull_mode(vk::CullModeFlags::FRONT)
         .front_face(vk::FrontFace::CLOCKWISE);
 
     let multisample_state = vk::PipelineMultisampleStateCreateInfo::builder().rasterization_samples(vk::SampleCountFlags::_1);
