@@ -4,6 +4,7 @@ use glam::Vec3;
 const GRAVITY: f32 = 20.0;
 const JUMP_VELOCITY: f32 = 8.0;
 const PLAYER_HEIGHT: f32 = 1.7;
+const PLAYER_HALF_WIDTH: f32 = 0.3;
 
 /// Phase D: velocity is stored as a scalar along the radial direction.
 /// Horizontal motion is handled by the input system in the tangent plane;
@@ -80,16 +81,45 @@ impl Player {
     }
 
     /// Stop horizontal motion if the new position would intersect terrain.
-    /// "Horizontal" means the displacement in the tangent plane.
+    /// Samples a 4-point capsule footprint at head and feet height in the
+    /// local tangent plane around `position`.
     pub fn resolve_horizontal(&self, position: &mut Vec3, old_position: Vec3, world: &World) {
         if self.fly_mode {
             return;
         }
-        let up = position.normalize_or(Vec3::Y);
-        let head = *position;
-        let feet = *position - up * (PLAYER_HEIGHT - 0.1);
-        if world.is_solid(head.x, head.y, head.z) || world.is_solid(feet.x, feet.y, feet.z) {
+        if capsule_intersects(*position, world) {
             *position = old_position;
         }
     }
+}
+
+/// True if any point of the player's capsule footprint at `pos` overlaps a
+/// solid block. The footprint is 4 corners offset by PLAYER_HALF_WIDTH in
+/// two perpendicular tangent directions, sampled at head, mid, and feet.
+fn capsule_intersects(pos: Vec3, world: &World) -> bool {
+    let up = pos.normalize_or(Vec3::Y);
+    // Pick any two perpendicular tangent axes — they only need to be
+    // orthogonal to up; their absolute orientation does not matter for a
+    // 4-corner test.
+    let helper = if up.x.abs() < 0.9 { Vec3::X } else { Vec3::Z };
+    let t1 = (helper - up * helper.dot(up)).normalize_or(Vec3::X);
+    let t2 = up.cross(t1).normalize_or(Vec3::Z);
+    let hw = PLAYER_HALF_WIDTH;
+    let offsets = [
+        t1 * hw + t2 * hw,
+        t1 * hw - t2 * hw,
+        -t1 * hw + t2 * hw,
+        -t1 * hw - t2 * hw,
+    ];
+    let heights = [0.0_f32, -0.5 * PLAYER_HEIGHT, -(PLAYER_HEIGHT - 0.1)];
+    for h in heights {
+        let center = pos + up * h;
+        for off in offsets {
+            let p = center + off;
+            if world.is_solid(p.x, p.y, p.z) {
+                return true;
+            }
+        }
+    }
+    false
 }
