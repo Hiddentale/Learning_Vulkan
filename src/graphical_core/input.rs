@@ -7,7 +7,6 @@ use winit::keyboard::KeyCode;
 const MOVE_SPEED: f32 = 3.0;
 const SPRINT_MULTIPLIER: f32 = 100.0;
 const MOUSE_SENSITIVITY: f32 = 0.003;
-const MAX_PITCH: f32 = 89.0_f32 * (std::f32::consts::PI / 180.0);
 
 pub struct InputState {
     pressed_keys: HashSet<KeyCode>,
@@ -74,68 +73,53 @@ impl InputState {
     fn apply_mouse_look(&mut self, camera: &mut Camera) {
         let (dx, dy) = self.mouse_delta;
         self.mouse_delta = (0.0, 0.0);
-
-        camera.yaw += dx as f32 * MOUSE_SENSITIVITY;
-        camera.pitch -= dy as f32 * MOUSE_SENSITIVITY;
-        camera.pitch = camera.pitch.clamp(-MAX_PITCH, MAX_PITCH);
+        camera.rotate_yaw(dx as f32 * MOUSE_SENSITIVITY);
+        camera.rotate_pitch(-dy as f32 * MOUSE_SENSITIVITY);
     }
 
     fn apply_fly_movement(&self, camera: &mut Camera, delta_time: f32, local_p: f32) {
         let multiplier = if self.is_pressed(KeyCode::ShiftLeft) { SPRINT_MULTIPLIER } else { 1.0 };
         let speed = MOVE_SPEED * multiplier * delta_time;
+        // Phase D: fly axes are the camera's local frame. Up/Q go along
+        // the radial direction so "ascend" always means away from planet.
         let front = camera.front();
         let right = camera.right();
+        let up = camera.up();
 
         let mut move_dir = glam::Vec3::ZERO;
-        if self.is_pressed(KeyCode::KeyW) {
-            move_dir += front;
-        }
-        if self.is_pressed(KeyCode::KeyS) {
-            move_dir -= front;
-        }
-        if self.is_pressed(KeyCode::KeyD) {
-            move_dir += right;
-        }
-        if self.is_pressed(KeyCode::KeyA) {
-            move_dir -= right;
-        }
-        if self.is_pressed(KeyCode::KeyE) {
-            move_dir += glam::Vec3::Y;
-        }
-        if self.is_pressed(KeyCode::KeyQ) {
-            move_dir -= glam::Vec3::Y;
-        }
+        if self.is_pressed(KeyCode::KeyW) { move_dir += front; }
+        if self.is_pressed(KeyCode::KeyS) { move_dir -= front; }
+        if self.is_pressed(KeyCode::KeyD) { move_dir += right; }
+        if self.is_pressed(KeyCode::KeyA) { move_dir -= right; }
+        if self.is_pressed(KeyCode::KeyE) { move_dir += up; }
+        if self.is_pressed(KeyCode::KeyQ) { move_dir -= up; }
 
         if move_dir != glam::Vec3::ZERO {
             let scale = metric::metric_speed_scale(move_dir, local_p);
             camera.position += move_dir.normalize() * speed * scale;
+            camera.reorthogonalize();
         }
     }
 
-    /// Walk movement: WASD moves horizontally (ignoring pitch), no Q/E vertical.
+    /// Walk movement: WASD moves in the local tangent plane (ignoring pitch).
     fn apply_walk_movement(&self, camera: &mut Camera, delta_time: f32, local_p: f32) {
         let speed = MOVE_SPEED * delta_time;
+        let up = camera.up();
         let front = camera.front();
-        let right = camera.right();
-        let forward = glam::Vec3::new(front.x, 0.0, front.z).normalize_or_zero();
+        // Project front onto the tangent plane.
+        let forward = (front - up * front.dot(up)).normalize_or(camera.right());
+        let right = forward.cross(up).normalize_or(camera.right());
 
         let mut move_dir = glam::Vec3::ZERO;
-        if self.is_pressed(KeyCode::KeyW) {
-            move_dir += forward;
-        }
-        if self.is_pressed(KeyCode::KeyS) {
-            move_dir -= forward;
-        }
-        if self.is_pressed(KeyCode::KeyD) {
-            move_dir += right;
-        }
-        if self.is_pressed(KeyCode::KeyA) {
-            move_dir -= right;
-        }
+        if self.is_pressed(KeyCode::KeyW) { move_dir += forward; }
+        if self.is_pressed(KeyCode::KeyS) { move_dir -= forward; }
+        if self.is_pressed(KeyCode::KeyD) { move_dir += right; }
+        if self.is_pressed(KeyCode::KeyA) { move_dir -= right; }
 
         if move_dir != glam::Vec3::ZERO {
             let scale = metric::metric_speed_scale(move_dir, local_p);
             camera.position += move_dir.normalize() * speed * scale;
+            camera.reorthogonalize();
         }
     }
 }

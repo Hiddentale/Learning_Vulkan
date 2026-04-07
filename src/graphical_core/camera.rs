@@ -6,47 +6,101 @@ use vulkan_rust::{vk, Device, Instance};
 const FOV_DEGREES: f32 = 90.0;
 const NEAR_PLANE: f32 = 0.1;
 const FAR_PLANE: f32 = 10000.0;
-const WORLD_UP: Vec3 = Vec3::Y;
-const MAX_PITCH: f32 = 89.0_f32 * (std::f32::consts::PI / 180.0);
+pub const MAX_PITCH: f32 = 89.0_f32 * (std::f32::consts::PI / 180.0);
 
-// Phase B2b: spawn well above the +Y pole of the tiny planet (radius 48,
-// surface ~112, plus headroom). Looking straight down at the pole.
-const DEFAULT_POSITION: Vec3 = Vec3::new(24.0, 200.0, 24.0);
-const DEFAULT_YAW_DEGREES: f32 = 0.0;
-const DEFAULT_PITCH_DEGREES: f32 = -85.0;
+// Phase D: spawn just above the +Y pole surface looking horizontally along
+// +X. The radial up at this position is (0, 1, 0), so the player can
+// immediately walk on the planet (toggle with F).
+const DEFAULT_POSITION: Vec3 = Vec3::new(0.0, 130.0, 0.0);
+const DEFAULT_FORWARD: Vec3 = Vec3::new(1.0, 0.0, 0.0);
 
+/// Phase D: forward-as-state camera. The "up" direction is the radial
+/// vector from the planet centre, recomputed every frame from `position`,
+/// so the camera tilt automatically follows the curved surface as the
+/// player walks. Yaw is rotation of `forward` around `up`; pitch is
+/// rotation of `forward` around the local `right`. Both are applied as
+/// deltas — there is no global yaw/pitch state.
 pub struct Camera {
     pub position: Vec3,
-    pub yaw: f32,
-    pub pitch: f32,
+    pub forward: Vec3,
 }
 
 impl Camera {
-    pub fn new(position: Vec3, yaw_degrees: f32, pitch_degrees: f32) -> Self {
+    pub fn new(position: Vec3, forward: Vec3) -> Self {
         Self {
             position,
-            yaw: yaw_degrees.to_radians(),
-            pitch: pitch_degrees.to_radians().clamp(-MAX_PITCH, MAX_PITCH),
+            forward: forward.normalize_or(Vec3::X),
         }
     }
 
-    pub fn front(&self) -> Vec3 {
-        Vec3::new(self.pitch.cos() * self.yaw.sin(), self.pitch.sin(), -self.pitch.cos() * self.yaw.cos()).normalize()
+    /// Radial outward direction at the camera position. Falls back to
+    /// global +Y at the planet centre.
+    pub fn up(&self) -> Vec3 {
+        self.position.normalize_or(Vec3::Y)
     }
 
+    /// Direction the camera is currently facing.
+    pub fn front(&self) -> Vec3 {
+        self.forward
+    }
+
+    /// Right-hand axis perpendicular to forward in the local tangent plane.
     pub fn right(&self) -> Vec3 {
-        self.front().cross(WORLD_UP).normalize()
+        self.forward.cross(self.up()).normalize_or(Vec3::X)
     }
 
     pub fn view_matrix(&self) -> Mat4 {
-        let front = self.front();
-        Mat4::look_at_rh(self.position, self.position + front, WORLD_UP)
+        let up = self.up();
+        Mat4::look_at_rh(self.position, self.position + self.forward, up)
     }
+
+    /// Apply a yaw delta (rotation of forward around the local up).
+    pub fn rotate_yaw(&mut self, radians: f32) {
+        self.forward = rotate_around(self.forward, self.up(), radians).normalize_or(self.forward);
+    }
+
+    /// Apply a pitch delta (rotation of forward around the local right),
+    /// clamped so that forward stays at most MAX_PITCH off the tangent plane.
+    pub fn rotate_pitch(&mut self, radians: f32) {
+        let up = self.up();
+        let right = self.right();
+        let new_forward = rotate_around(self.forward, right, radians).normalize_or(self.forward);
+        // Clamp: angle between new_forward and tangent plane = asin(new_forward · up).
+        let sin_pitch = new_forward.dot(up).clamp(-1.0, 1.0);
+        let max_sin = MAX_PITCH.sin();
+        if sin_pitch.abs() <= max_sin {
+            self.forward = new_forward;
+        } else {
+            // Project new_forward onto the cone of max pitch around up.
+            let horizontal = (new_forward - up * sin_pitch).normalize_or(self.right());
+            let cos_max = MAX_PITCH.cos();
+            self.forward = (horizontal * cos_max + up * sin_pitch.signum() * max_sin).normalize_or(self.forward);
+        }
+    }
+
+    /// Re-orthogonalize `forward` against the current `up` (call after
+    /// translating `position` so the camera stays tangent to the new local
+    /// frame). Preserves the yaw direction projected onto the new tangent
+    /// plane and re-applies the previous pitch.
+    pub fn reorthogonalize(&mut self) {
+        let up = self.up();
+        let dot = self.forward.dot(up);
+        let tangent = (self.forward - up * dot).normalize_or(self.forward.normalize_or(Vec3::X));
+        // Restore pitch component.
+        self.forward = (tangent * (1.0 - dot * dot).max(0.0).sqrt() + up * dot).normalize_or(tangent);
+    }
+}
+
+/// Rodrigues' rotation: rotate `v` around unit `axis` by `angle` radians.
+fn rotate_around(v: Vec3, axis: Vec3, angle: f32) -> Vec3 {
+    let c = angle.cos();
+    let s = angle.sin();
+    v * c + axis.cross(v) * s + axis * axis.dot(v) * (1.0 - c)
 }
 
 impl Default for Camera {
     fn default() -> Self {
-        Self::new(DEFAULT_POSITION, DEFAULT_YAW_DEGREES, DEFAULT_PITCH_DEGREES)
+        Self::new(DEFAULT_POSITION, DEFAULT_FORWARD)
     }
 }
 
