@@ -5,6 +5,9 @@ const GRAVITY: f32 = 20.0;
 const JUMP_VELOCITY: f32 = 8.0;
 const PLAYER_HEIGHT: f32 = 1.7;
 const PLAYER_HALF_WIDTH: f32 = 0.3;
+/// Cap fall speed so the player never moves more than ~0.5 blocks per
+/// 60 Hz frame, preventing tunneling through 1-block-thick surfaces.
+const TERMINAL_VELOCITY: f32 = 25.0;
 
 /// Phase D: velocity is stored as a scalar along the radial direction.
 /// Horizontal motion is handled by the input system in the tangent plane;
@@ -64,7 +67,19 @@ impl Player {
 
         let up = position.normalize_or(Vec3::Y);
         self.radial_velocity -= GRAVITY * delta_time;
-        *position += up * self.radial_velocity * delta_time;
+        if self.radial_velocity < -TERMINAL_VELOCITY {
+            self.radial_velocity = -TERMINAL_VELOCITY;
+        }
+        // Substep the radial integration so we never advance more than
+        // 0.4 blocks between collision checks even at max velocity.
+        let total = self.radial_velocity * delta_time;
+        let max_step = 0.4_f32;
+        let steps = (total.abs() / max_step).ceil().max(1.0) as i32;
+        let step_dt = 1.0 / steps as f32;
+        for _ in 0..steps {
+            *position += up * total * step_dt;
+            if feet_solid(*position) { break; }
+        }
 
         if feet_solid(*position) {
             // Lift radially in 0.1-block steps until clear (max ~3 blocks).
@@ -111,7 +126,10 @@ fn capsule_intersects(pos: Vec3, world: &World) -> bool {
         -t1 * hw + t2 * hw,
         -t1 * hw - t2 * hw,
     ];
-    let heights = [0.0_f32, -0.5 * PLAYER_HEIGHT, -(PLAYER_HEIGHT - 0.1)];
+    // Extra sample 0.5 below feet catches projection-rounding cases where
+    // the inverse map puts feet in the air block just above a curved
+    // surface step.
+    let heights = [0.0_f32, -0.5 * PLAYER_HEIGHT, -(PLAYER_HEIGHT - 0.1), -(PLAYER_HEIGHT + 0.5)];
     for h in heights {
         let center = pos + up * h;
         for off in offsets {
