@@ -136,13 +136,16 @@ fn main() -> Result<()> {
                                     match storage::world_meta::create_world(name, seed) {
                                         Ok(dir) => {
                                             let side = 2 * WORLD_DISTANCE + 1;
+                                            // Phase B2c: clamp pregen total to the actual face column count.
+                                            let face_cols = (voxel::sphere::FACE_SIDE_CHUNKS * voxel::sphere::FACE_SIDE_CHUNKS) as usize;
+                                            let total = ((side * side) as usize).min(face_cols);
                                             let erosion_path = dir.join("erosion_map.bin");
                                             let ew = voxel::erosion_worker::ErosionWorker::start(seed, erosion_path);
                                             game_state = GameState::PreGenerating {
                                                 world_dir: dir,
                                                 seed,
                                                 loaded: 0,
-                                                total: (side * side) as usize,
+                                                total,
                                                 erosion_worker: Some(ew),
                                                 erosion_map: None,
                                             };
@@ -407,13 +410,15 @@ fn draw_menu(ui: &mut UiPipeline, state: &mut GameState, sw: f32, sh: f32, curso
                     match storage::world_meta::create_world(name, seed) {
                         Ok(dir) => {
                             let side = 2 * WORLD_DISTANCE + 1;
+                            let face_cols = (voxel::sphere::FACE_SIDE_CHUNKS * voxel::sphere::FACE_SIDE_CHUNKS) as usize;
+                            let total = ((side * side) as usize).min(face_cols);
                             let erosion_path = dir.join("erosion_map.bin");
                             let ew = voxel::erosion_worker::ErosionWorker::start(seed, erosion_path);
                             *state = GameState::PreGenerating {
                                 world_dir: dir,
                                 seed,
                                 loaded: 0,
-                                total: (side * side) as usize,
+                                total,
                                 erosion_worker: Some(ew),
                                 erosion_map: None,
                             };
