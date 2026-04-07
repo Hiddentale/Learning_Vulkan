@@ -126,7 +126,7 @@ pub struct WorldResources {
     heightmap_pool: HeightmapPool,
     heightmap_pipeline: HeightmapPipeline,
     heightmap_generator: HeightmapGenerator,
-    heightmap_in_flight: std::collections::HashSet<[i32; 2]>,
+    heightmap_in_flight: std::collections::HashSet<crate::voxel::heightmap_generator::TileKey>,
     #[allow(dead_code)] // retained for future access (shadow rays, re-erosion)
     erosion_map: Option<Arc<ErosionMap>>,
 }
@@ -586,13 +586,10 @@ impl VulkanApplication {
         } else {
             None
         };
-        let hm_bands: Vec<(i32, i32)> = HEIGHTMAP_BANDS.iter().map(|b| (b.4, b.5)).collect();
-        let heightmap_visible = wr.heightmap_pool.visible_tiles(
-            &frustum,
-            (camera.position.x / CHUNK_SIZE as f32).floor() as i32,
-            (camera.position.z / CHUNK_SIZE as f32).floor() as i32,
-            &hm_bands,
-        );
+        let chunked_arc = chunked_arc_radians();
+        let hm_bands: Vec<(f32, f32)> = HEIGHTMAP_BANDS.iter().map(|b| (chunked_arc + b.3, chunked_arc + b.4)).collect();
+        let player_world_d = glam::DVec3::new(camera.position.x as f64, camera.position.y as f64, camera.position.z as f64);
+        let heightmap_visible = wr.heightmap_pool.visible_tiles(&frustum, player_world_d, &hm_bands);
         let heightmap_push = crate::graphical_core::heightmap_pipeline::HeightmapPush {
             camera_pos: camera.position.to_array(),
             morph_factor: 0.0,
@@ -939,14 +936,15 @@ impl VulkanApplication {
 
         // --- Heightmap tile generation (replaces LOD-3 and LOD-4) ---
         wr.heightmap_pool.tick();
+        let player_world_d = glam::DVec3::new(camera.position.x as f64, camera.position.y as f64, camera.position.z as f64);
         for mesh in wr.heightmap_generator.receive() {
-            wr.heightmap_in_flight.remove(&mesh.pos);
-            wr.heightmap_pool.upload_tile(&mesh, player_cx, player_cz);
+            wr.heightmap_in_flight.remove(&mesh.key);
+            wr.heightmap_pool.upload_tile(&mesh, player_world_d);
         }
-        // Evict tiles beyond the outermost heightmap band
-        let hm_max_dist = HEIGHTMAP_BANDS.last().map(|b| b.5).unwrap_or(0) + 64;
-        wr.heightmap_pool.evict_out_of_range(player_cx, player_cz, hm_max_dist);
-        schedule_heightmap_generation(wr, player_cx, player_cz);
+        // Evict tiles beyond the outermost heightmap band (angular radians).
+        let hm_max_angle = chunked_arc_radians() + HEIGHTMAP_BANDS.last().map(|b| b.4).unwrap_or(0.0) + 0.05;
+        wr.heightmap_pool.evict_out_of_range(player_world_d, hm_max_angle);
+        schedule_heightmap_generation(wr, player_world_d);
 
         wr.last_player_chunk = [player_cx, player_cy, player_cz];
         Ok(())
@@ -1072,70 +1070,88 @@ unsafe fn try_load_cached_lod(wr: &mut WorldResources, pos: [i32; 3], lod_level:
     true
 }
 
-/// Heightmap tile bands: (tile_align_chunks, grid_posts, spacing_blocks, coarse_spacing, min_dist, max_dist).
-const HEIGHTMAP_BANDS: &[(i32, usize, f64, f64, i32, i32)] = &[
-    (32, 129, 4.0, 16.0, LOD2_DISTANCE, LOD3_DISTANCE + 32),
-    (64, 65, 16.0, 64.0, LOD3_DISTANCE, LOD4_DISTANCE),
+/// Heightmap tile bands: (tile_chunks_per_side, grid_posts, coarse_grid_posts,
+/// extra_min_angle, extra_max_angle). The actual angular range is computed
+/// at runtime as `chunked_arc + extra_*`, where `chunked_arc = WORLD_DISTANCE
+/// * CHUNK_SIZE / PLANET_RADIUS` is the angular reach of the mesh-shader
+/// chunk renderer. Tiles never overlap chunk geometry: the inner band starts
+/// exactly where chunks stop. On a small planet where the chunk reach
+/// already covers > π radians, no tile renders at all (correct — the planet
+/// is fully chunked).
+const HEIGHTMAP_BANDS: &[(i32, usize, usize, f32, f32)] = &[
+    (8, 65, 17, 0.0, 0.50),
+    (16, 65, 17, 0.50, 1.50),
 ];
+
+fn chunked_arc_radians() -> f32 {
+    (WORLD_DISTANCE as f32 * CHUNK_SIZE as f32) / crate::voxel::sphere::PLANET_RADIUS_BLOCKS as f32
+}
 const MAX_HEIGHTMAP_IN_FLIGHT: usize = 16;
 const HEIGHTMAP_SUBMISSIONS_PER_FRAME: usize = 8;
 
-fn schedule_heightmap_generation(wr: &mut WorldResources, player_cx: i32, player_cz: i32) {
-    // Phase B2c: heightmap tiles target 1km+ distant terrain. The tiny
-    // planet (48-block radius) is entirely inside the near-field, so
-    // heightmap tiles never overlap the face. Disable until the sphere
-    // heightmap path is rebuilt.
-    let _ = (wr, player_cx, player_cz);
-    return;
-    #[allow(unreachable_code)]
-    {
+/// Walk every (face, cx, cz) tile in the world, classify by angular distance
+/// to the player, and submit any that fall inside a heightmap band and are
+/// not already loaded or in flight. The tile-aligned (cx, cz) is the
+/// chunk-grid coordinate of the tile's lower corner; tiles on a face never
+/// straddle the seam — neighboring face tiles cover the seam from the other
+/// side, and the curved meshes meet at the projected cube edge.
+fn schedule_heightmap_generation(wr: &mut WorldResources, player_world: glam::DVec3) {
+    use crate::voxel::heightmap_generator::{angular_distance, HeightmapRequest, TileKey};
+    use crate::voxel::sphere::{ChunkPos, Face, FACE_SIDE_CHUNKS};
     if wr.heightmap_in_flight.len() >= MAX_HEIGHTMAP_IN_FLIGHT {
         return;
     }
-    let mut total_submitted = 0usize;
-    for (band_idx, &(align, grid_posts, spacing, coarse_spacing, min_dist, max_dist)) in HEIGHTMAP_BANDS.iter().enumerate() {
-        let half = max_dist / align + 1;
-        let pcx = player_cx.div_euclid(align) * align;
-        let pcz = player_cz.div_euclid(align) * align;
-
-        for ring in 0..=half {
-            if total_submitted >= HEIGHTMAP_SUBMISSIONS_PER_FRAME {
-                return;
-            }
-            for dz in -ring..=ring {
-                for dx in -ring..=ring {
-                    if dx.abs() != ring && dz.abs() != ring {
-                        continue;
-                    }
-                    let gx = pcx + dx * align;
-                    let gz = pcz + dz * align;
-                    let dist = (gx - player_cx).abs().max((gz - player_cz).abs());
-                    if dist < min_dist || dist > max_dist {
-                        continue;
-                    }
-                    let pos = [gx, gz];
-                    if wr.heightmap_pool.has_tile(&pos) || wr.heightmap_in_flight.contains(&pos) {
-                        continue;
-                    }
-                    let tile_size_blocks = align as f64 * CHUNK_SIZE as f64;
-                    wr.heightmap_generator.request(HeightmapRequest {
-                        pos,
-                        lod: band_idx as u8,
-                        tile_size_blocks,
-                        grid_posts,
-                        spacing,
-                        coarse_spacing,
-                        seed: wr.seed,
-                    });
-                    wr.heightmap_in_flight.insert(pos);
-                    total_submitted += 1;
-                    if total_submitted >= HEIGHTMAP_SUBMISSIONS_PER_FRAME {
+    let mut submitted = 0usize;
+    let chunked_arc = chunked_arc_radians();
+    let faces = [Face::PosX, Face::NegX, Face::PosY, Face::NegY, Face::PosZ, Face::NegZ];
+    for (band_idx, &(tile_chunks, grid_posts, coarse_grid_posts, extra_min, extra_max)) in HEIGHTMAP_BANDS.iter().enumerate() {
+        let min_angle = chunked_arc + extra_min;
+        let max_angle = chunked_arc + extra_max;
+        if min_angle > std::f32::consts::PI {
+            // Chunks already cover the whole visible hemisphere — no tiles needed.
+            continue;
+        }
+        for &face in &faces {
+            let mut cz = 0;
+            while cz + tile_chunks <= FACE_SIDE_CHUNKS {
+                let mut cx = 0;
+                while cx + tile_chunks <= FACE_SIDE_CHUNKS {
+                    if submitted >= HEIGHTMAP_SUBMISSIONS_PER_FRAME {
                         return;
                     }
+                    let key = TileKey { face, cx, cz };
+                    if wr.heightmap_pool.has_tile(&key) || wr.heightmap_in_flight.contains(&key) {
+                        cx += tile_chunks;
+                        continue;
+                    }
+                    // Tile center in world cartesian (probe the cube surface
+                    // at the tile midpoint).
+                    let cs = CHUNK_SIZE as f32;
+                    let half_span = (tile_chunks as f32 * cs) * 0.5;
+                    let center_w = crate::voxel::sphere::chunk_to_world(
+                        ChunkPos { face, cx, cy: 0, cz },
+                        glam::Vec3::new(half_span, 0.0, half_span),
+                    );
+                    let dist = angular_distance(player_world, center_w);
+                    if dist < min_angle || dist > max_angle {
+                        cx += tile_chunks;
+                        continue;
+                    }
+                    wr.heightmap_generator.request(HeightmapRequest {
+                        key,
+                        lod: band_idx as u8,
+                        tile_chunks_per_side: tile_chunks,
+                        grid_posts,
+                        coarse_grid_posts,
+                        seed: wr.seed,
+                    });
+                    wr.heightmap_in_flight.insert(key);
+                    submitted += 1;
+                    cx += tile_chunks;
                 }
+                cz += tile_chunks;
             }
         }
-    }
     }
 }
 

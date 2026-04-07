@@ -391,6 +391,23 @@ fn sample_params_at_world(noises: &WorldNoises, world: glam::DVec3, erosion_map:
     }
 }
 
+/// Sample the params-derived surface radius and surface block at an arbitrary
+/// world cartesian point. The returned radius is `PLANET_RADIUS + height` from
+/// the same `sample_params_at_world` path that drives chunk density terrain,
+/// so heightmap tiles using this stay consistent with the mesh-shader chunks
+/// at every world point. The returned block is the surface biome block at
+/// the same point.
+pub fn surface_radius_at_world(
+    noises: &WorldNoises,
+    world: glam::DVec3,
+    erosion_map: Option<&super::erosion::ErosionMap>,
+) -> (f64, BlockType) {
+    let params = sample_params_at_world(noises, world, erosion_map);
+    let radius = sphere::PLANET_RADIUS_BLOCKS as f64 + params.height as f64;
+    let block = biome::surface_block(params.biome);
+    (radius, block)
+}
+
 /// Generate a 64³ LOD super-chunk by sampling terrain noise at `voxel_size` spacing.
 pub fn generate_lod_super_chunk(origin: [i32; 3], voxel_size: u32, seed: u32, erosion_map: Option<&super::erosion::ErosionMap>) -> LodVoxelGrid {
     let noises = WorldNoises::new(seed);
