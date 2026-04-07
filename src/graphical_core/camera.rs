@@ -107,6 +107,9 @@ pub struct UniformBufferObject {
     inverse_view_projection: [[[f32; 4]; 4]; MAX_VIEWS],
     light_direction: [f32; 3],
     ambient_strength: f32,
+    planet_radius: f32,
+    cube_half: f32,
+    _pad: [f32; 2],
 }
 
 /// Allocates a persistently mapped uniform buffer for camera matrices.
@@ -145,6 +148,9 @@ pub fn update_uniform_buffer(data: &VulkanApplicationData, eyes: &EyeMatrices) -
         ],
         light_direction: sun_direction.to_array(),
         ambient_strength: 0.15,
+        planet_radius: crate::voxel::sphere::PLANET_RADIUS_BLOCKS as f32,
+        cube_half: crate::voxel::sphere::CUBE_HALF_BLOCKS as f32,
+        _pad: [0.0; 2],
     };
 
     unsafe {

@@ -11,6 +11,8 @@ layout(set = 0, binding = 0) uniform UBO {
     mat4 inverse_view_projection[2];
     vec3 light_direction;
     float ambient_strength;
+    float planet_radius;
+    float cube_half;
 } ubo;
 
 layout(push_constant) uniform PC {
@@ -22,9 +24,10 @@ layout(location = 0) out vec3 fragNormal;
 layout(location = 1) flat out uint fragMaterialId;
 layout(location = 2) out vec3 fragWorldPos;
 
-// Phase B2b: cube-to-sphere projection (must match voxel.mesh / sphere.rs).
-const float PLANET_RADIUS = 48.0;
-const float CUBE_HALF = 24.0;
+// Phase B2b: cube-to-sphere projection. Sphere dimensions come from the
+// camera UBO so they stay in sync with src/voxel/sphere.rs.
+#define PLANET_RADIUS (ubo.planet_radius)
+#define CUBE_HALF (ubo.cube_half)
 
 vec3 cube_to_sphere_unit(vec3 v) {
     float x = v.x, y = v.y, z = v.z;

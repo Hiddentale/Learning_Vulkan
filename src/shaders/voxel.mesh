@@ -31,6 +31,8 @@ layout(set = 0, binding = 1) uniform CameraUBO {
     mat4 inverse_view_projection[2];
     vec3 light_direction;
     float ambient_strength;
+    float planet_radius;
+    float cube_half;
 } camera;
 
 layout(push_constant) uniform PushConstants {
@@ -81,10 +83,11 @@ const vec2 CORNER_UVS[4] = vec2[4](
     vec2(0, 1), vec2(1, 1), vec2(1, 0), vec2(0, 0)
 );
 
-// Phase C: cube-to-sphere projection for any face. Constants must match
-// src/voxel/sphere.rs (PLANET_RADIUS_BLOCKS, CUBE_HALF_BLOCKS).
-const float PLANET_RADIUS = 48.0;
-const float CUBE_HALF = 24.0;
+// Phase C: cube-to-sphere projection for any face. Sphere dimensions come
+// from the camera UBO so they stay in sync with src/voxel/sphere.rs without
+// hand-editing two files.
+#define PLANET_RADIUS (camera.planet_radius)
+#define CUBE_HALF (camera.cube_half)
 
 // Face basis table: (tangent_u, tangent_v, normal). Must mirror
 // sphere.rs::face_basis exactly. Indexed by face_id 0..5.

@@ -94,7 +94,11 @@ const LOD4_DISTANCE: i32 = 384; // 6144m (>5km)
 const WORLD_DISTANCE: i32 = LOD0_DISTANCE + 8 + 4;
 /// Maximum SVDAG render distance across all LOD levels.
 const SVDAG_DISTANCE: i32 = LOD4_DISTANCE;
-const MAX_MESH_CHUNKS: usize = ((2 * MESH_DISTANCE + 1) * (2 * MESH_DISTANCE + 1) * (2 * MESH_DISTANCE + 1)) as usize;
+/// Sized to hold the entire tiny-planet chunk set. With FACE_SIDE_CHUNKS=6
+/// and FACE_RADIAL_CHUNKS=96 there are 6·6·6·96 = 20736 chunk slots total;
+/// only the surface band is actually uploaded but we allocate the upper
+/// bound so the pool never overflows mid-load. Bump again when scaling up.
+const MAX_MESH_CHUNKS: usize = 32768;
 const MAX_SVDAG_CHUNKS: u32 = 32768;
 const SUPER_CHUNK_VOXELS: u32 = 64;
 
