@@ -87,7 +87,8 @@ pub unsafe fn draw_sky(device: &Device, cmd: vk::CommandBuffer, data: &VulkanApp
 }
 
 pub unsafe fn begin_render_pass(device: &Device, cmd: vk::CommandBuffer, data: &VulkanApplicationData, framebuffer_index: usize) {
-    let clear_values = &[vk::ClearValue::color_f32([0.0, 0.0, 0.0, 1.0]), vk::ClearValue::depth_stencil(1.0, 0)];
+    // Reverse-Z: clear depth to 0.0 (= far plane in reverse-Z NDC).
+    let clear_values = &[vk::ClearValue::color_f32([0.0, 0.0, 0.0, 1.0]), vk::ClearValue::depth_stencil(0.0, 0)];
     let info = vk::RenderPassBeginInfo::builder()
         .render_pass(data.render_pass)
         .framebuffer(data.framebuffers[framebuffer_index])
@@ -460,7 +461,8 @@ unsafe fn record_svdag_passes(
 
     // Clear output images to transparent / far depth
     let clear_color = vk::ClearColorValue::from_float32([0.0, 0.0, 0.0, 0.0]);
-    let clear_depth = vk::ClearColorValue::from_float32([1.0, 0.0, 0.0, 0.0]);
+    // Reverse-Z: 0.0 is the far plane / "no occluder" sentinel.
+    let clear_depth = vk::ClearColorValue::from_float32([0.0, 0.0, 0.0, 0.0]);
     device.cmd_clear_color_image(cmd, sp.color_image, vk::ImageLayout::GENERAL, &clear_color, &[color_range]);
     device.cmd_clear_color_image(cmd, sp.depth_image, vk::ImageLayout::GENERAL, &clear_depth, &[color_range]);
 

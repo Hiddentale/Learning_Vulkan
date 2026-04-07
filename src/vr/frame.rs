@@ -83,7 +83,8 @@ unsafe fn record_vr_frame(
     )?;
 
     // Begin render pass (clears color + depth)
-    let clear_values = &[vk::ClearValue::color_f32([0.0, 0.0, 0.0, 1.0]), vk::ClearValue::depth_stencil(1.0, 0)];
+    // Reverse-Z: clear depth to 0.0 (= far plane in reverse-Z NDC).
+    let clear_values = &[vk::ClearValue::color_f32([0.0, 0.0, 0.0, 1.0]), vk::ClearValue::depth_stencil(0.0, 0)];
     let rp_info = vk::RenderPassBeginInfo::builder()
         .render_pass(swapchain.render_pass)
         .framebuffer(swapchain.framebuffers[image_index])

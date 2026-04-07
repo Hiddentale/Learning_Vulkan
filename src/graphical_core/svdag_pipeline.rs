@@ -540,7 +540,7 @@ unsafe fn create_composite_pipeline(device: &Device, data: &VulkanApplicationDat
     let depth_stencil = vk::PipelineDepthStencilStateCreateInfo::builder()
         .depth_test_enable(true)
         .depth_write_enable(true)
-        .depth_compare_op(vk::CompareOp::LESS);
+        .depth_compare_op(vk::CompareOp::GREATER_OR_EQUAL);
 
     let info = vk::GraphicsPipelineCreateInfo::builder()
         .stages(&stages)

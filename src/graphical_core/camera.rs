@@ -5,8 +5,10 @@ use glam::{Mat4, Vec3};
 use vulkan_rust::{vk, Device, Instance};
 
 const FOV_DEGREES: f32 = 90.0;
+/// Reverse-Z near plane. With infinite-far reverse-Z this is the *only* depth
+/// constant that affects precision: smaller near = more precision near the
+/// camera, no penalty far away.
 const NEAR_PLANE: f32 = 0.1;
-const FAR_PLANE: f32 = 10000.0;
 
 /// Phase D': camera is a *derived* view of the player. `position` and
 /// `forward` are written from `Player` once per frame and never mutated
@@ -163,6 +165,51 @@ pub fn update_uniform_buffer(data: &VulkanApplicationData, eyes: &EyeMatrices) -
 }
 
 /// Unmaps, destroys, and frees the uniform buffer and its memory.
+#[cfg(test)]
+mod reverse_z_tests {
+    use super::*;
+
+    fn project(m: &Mat4, view_z: f32) -> f32 {
+        let clip = *m * glam::Vec4::new(0.0, 0.0, view_z, 1.0);
+        clip.z / clip.w
+    }
+
+    #[test]
+    fn near_plane_maps_to_one() {
+        let m = reverse_z_infinite_perspective(90_f32.to_radians(), 16.0 / 9.0, 0.1);
+        let ndc_z = project(&m, -0.1);
+        assert!((ndc_z - 1.0).abs() < 1e-5, "ndc.z at near = {}, expected 1.0", ndc_z);
+    }
+
+    #[test]
+    fn far_point_maps_near_zero() {
+        let m = reverse_z_infinite_perspective(90_f32.to_radians(), 16.0 / 9.0, 0.1);
+        let ndc_z = project(&m, -1.0e6);
+        assert!(ndc_z.abs() < 1e-6, "ndc.z at ~infinity = {}, expected ~0", ndc_z);
+    }
+
+    #[test]
+    fn monotonic_farther_is_smaller_ndc_z() {
+        let m = reverse_z_infinite_perspective(90_f32.to_radians(), 1.0, 0.1);
+        let z1 = project(&m, -1.0);
+        let z10 = project(&m, -10.0);
+        let z100 = project(&m, -100.0);
+        assert!(z1 > z10 && z10 > z100, "expected monotonic decreasing, got {} {} {}", z1, z10, z100);
+        assert!(z1 > 0.0 && z100 > 0.0, "ndc.z should stay in (0, 1]");
+    }
+
+    #[test]
+    fn matrix_is_invertible() {
+        let m = reverse_z_infinite_perspective(90_f32.to_radians(), 16.0 / 9.0, 0.1);
+        let inv = m.inverse();
+        let p = inv * glam::Vec4::new(0.0, 0.0, 1.0, 1.0); // near plane at screen center
+        let w = p / p.w;
+        // Should land on the near plane (view z ≈ -near; since we have no view
+        // transform here, that's world z ≈ -0.1).
+        assert!((w.z + 0.1).abs() < 1e-4, "inverse * near = {:?}", w);
+    }
+}
+
 pub fn destroy_uniform_buffer(device: &Device, vulkan_application_data: &mut VulkanApplicationData) {
     unsafe {
         device.unmap_memory(vulkan_application_data.uniform_buffer_memory);
@@ -176,15 +223,23 @@ pub fn destroy_uniform_buffer(device: &Device, vulkan_application_data: &mut Vul
 pub fn view_projection_matrix(camera: &Camera, extent: vk::Extent2D) -> Mat4 {
     let width = extent.width as f32;
     let height = extent.height as f32;
-    let projection = compute_projection_matrix(FOV_DEGREES, NEAR_PLANE, FAR_PLANE, width, height);
+    let projection = reverse_z_infinite_perspective(FOV_DEGREES.to_radians(), width / height, NEAR_PLANE);
     projection * camera.view_matrix()
 }
 
-fn compute_projection_matrix(fov_degrees: f32, near: f32, far: f32, width: f32, height: f32) -> Mat4 {
-    let fov_radians = fov_degrees.to_radians();
-    let aspect_ratio = width / height;
-    let mut proj = Mat4::perspective_rh(fov_radians, aspect_ratio, near, far);
-    // Vulkan NDC has Y pointing down; glam's perspective_rh assumes Y up (OpenGL).
-    proj.y_axis.y *= -1.0;
-    proj
+/// Right-handed Vulkan projection with infinite-far and reverse-Z depth.
+/// Maps view-space `z = -near` → NDC `z = 1`, `z = -∞` → NDC `z = 0`. The
+/// reversed range puts depth precision where it matters (close to the camera)
+/// and the infinite far plane removes the second precision-eating divide.
+///
+/// Y axis is negated to match Vulkan's Y-down NDC.
+pub fn reverse_z_infinite_perspective(fov_y: f32, aspect: f32, near: f32) -> Mat4 {
+    let f = 1.0 / (fov_y * 0.5).tan();
+    let mut m = Mat4::ZERO;
+    m.x_axis.x = f / aspect;
+    m.y_axis.y = -f;
+    m.z_axis.z = 0.0;
+    m.z_axis.w = -1.0;
+    m.w_axis.z = near;
+    m
 }

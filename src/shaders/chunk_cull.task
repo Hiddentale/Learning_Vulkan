@@ -89,14 +89,18 @@ bool horizon_visible(vec3 sphere_center, float sphere_radius) {
 }
 
 // Project an AABB through `vp` to a screen-space rect plus the chunk's
-// nearest NDC z (the value the hi-Z test compares against). Returns true iff
-// any corner is in front of the camera. When some corners are behind, the
-// rect is expanded to full screen and `chunk_z_near` is set to 0 so the
+// farthest NDC z (reverse-Z: the chunk's deepest point, i.e. smallest NDC z
+// — MAX of the per-corner `ndc.z` values, since in reverse-Z larger = nearer).
+// Wait: the hi-Z test needs the chunk's *farthest* (= most-permissive) point
+// under reverse-Z, which is the **max** of NDC z across corners because max
+// NDC z = nearest to camera = hardest to occlude. Returns true iff any corner
+// is in front of the camera. When some corners are behind the near plane, the
+// rect expands to the full screen and `chunk_z` becomes 1.0 (nearest) so the
 // occlusion test cannot cull the chunk.
-bool project_aabb(mat4 vp, vec3 aabb_min, vec3 aabb_max, out vec2 uv_min, out vec2 uv_max, out float chunk_z_near) {
+bool project_aabb(mat4 vp, vec3 aabb_min, vec3 aabb_max, out vec2 uv_min, out vec2 uv_max, out float chunk_z) {
     uv_min = vec2(1e9);
     uv_max = vec2(-1e9);
-    chunk_z_near = 1.0;
+    chunk_z = 0.0;
     bool any_in_front = false;
     bool any_behind = false;
 
@@ -116,19 +120,20 @@ bool project_aabb(mat4 vp, vec3 aabb_min, vec3 aabb_max, out vec2 uv_min, out ve
         vec2 uv = ndc.xy * 0.5 + 0.5;
         uv_min = min(uv_min, uv);
         uv_max = max(uv_max, uv);
-        chunk_z_near = min(chunk_z_near, ndc.z);
+        // Reverse-Z: nearest NDC z = largest value. Track max so the test
+        // uses the chunk's most-permissive (= hardest-to-occlude) point.
+        chunk_z = max(chunk_z, ndc.z);
     }
 
     if (!any_in_front) {
-        // Fully behind camera — cannot occur visible.
         return false;
     }
     if (any_behind) {
-        // Straddles the near plane — expand to full screen and most-permissive
+        // Straddles the near plane — expand to full screen and nearest-possible
         // depth so the hi-Z test cannot cull it.
         uv_min = vec2(0.0);
         uv_max = vec2(1.0);
-        chunk_z_near = 0.0;
+        chunk_z = 1.0;
     } else {
         uv_min = clamp(uv_min, vec2(0.0), vec2(1.0));
         uv_max = clamp(uv_max, vec2(0.0), vec2(1.0));
@@ -136,14 +141,16 @@ bool project_aabb(mat4 vp, vec3 aabb_min, vec3 aabb_max, out vec2 uv_min, out ve
     return true;
 }
 
-// Hi-Z occlusion test for a single eye. Returns true iff the chunk is
-// potentially visible (not occluded) in this eye. Forward-Z: chunk is
-// occluded when its nearest NDC z is greater than the pyramid's max-of-tile.
+// Hi-Z occlusion test for a single eye, reverse-Z. Returns true iff the chunk
+// is potentially visible (not occluded). Reverse-Z: the pyramid stores the
+// minimum-of-tile (= nearest occluder in NDC). A chunk is occluded iff its
+// farthest NDC z is still less than that minimum — meaning even its closest
+// point (to the camera) is behind the nearest surface in the tile.
 bool eye_occlusion_visible(mat4 vp, vec3 aabb_min, vec3 aabb_max) {
     vec2 uv_min, uv_max;
-    float chunk_z_near;
-    if (!project_aabb(vp, aabb_min, aabb_max, uv_min, uv_max, chunk_z_near)) {
-        return false; // entirely behind camera
+    float chunk_z;
+    if (!project_aabb(vp, aabb_min, aabb_max, uv_min, uv_max, chunk_z)) {
+        return false;
     }
 
     vec2 size_pixels = (uv_max - uv_min) * screen_size;
@@ -151,17 +158,17 @@ bool eye_occlusion_visible(mat4 vp, vec3 aabb_min, vec3 aabb_max) {
     // Pick the smallest mip whose 2x2 gather covers the rect (zeux/niagara).
     float mip = max(0.0, ceil(log2(max(max_extent * 0.5, 1.0))));
     vec2 center_uv = (uv_min + uv_max) * 0.5;
-    // 2x2 max gather at the chosen mip via four textureLod samples (portable
-    // alternative to textureGather, which ignores explicit LOD on many drivers).
+    // 2x2 min gather at the chosen mip (reverse-Z conservative occluder = min).
     vec2 texel = 1.0 / vec2(textureSize(depth_pyramid, int(mip)));
     float d0 = textureLod(depth_pyramid, center_uv + vec2(-0.5, -0.5) * texel, mip).r;
     float d1 = textureLod(depth_pyramid, center_uv + vec2( 0.5, -0.5) * texel, mip).r;
     float d2 = textureLod(depth_pyramid, center_uv + vec2(-0.5,  0.5) * texel, mip).r;
     float d3 = textureLod(depth_pyramid, center_uv + vec2( 0.5,  0.5) * texel, mip).r;
-    float pyramid_depth = max(max(d0, d1), max(d2, d3));
+    float pyramid_depth = min(min(d0, d1), min(d2, d3));
 
-    float chunk_depth = chunk_z_near; // forward-Z: chunk's nearest point
-    return chunk_depth <= pyramid_depth;
+    // Visible iff chunk's nearest point is at or in front of the nearest
+    // occluder. `>=` so coplanar passes (no self-occlusion).
+    return chunk_z >= pyramid_depth;
 }
 
 // Stereo-aware occlusion test: visible iff visible in either eye.

@@ -230,7 +230,7 @@ unsafe fn create_graphics_pipeline(
     let depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo::builder()
         .depth_test_enable(true)
         .depth_write_enable(true)
-        .depth_compare_op(vk::CompareOp::LESS);
+        .depth_compare_op(vk::CompareOp::GREATER_OR_EQUAL);
 
     let stages = [vert_stage, frag_stage];
     let info = vk::GraphicsPipelineCreateInfo::builder()

@@ -21,12 +21,13 @@ void main() {
         vec2 uv = (vec2(pos) + 0.5) * texel_size;
         imageStore(dst_mip, ivec2(pos), vec4(texture(src_texture, uv).r));
     } else {
-        // Mip 1+: 2x2 max reduction from previous mip
+        // Mip 1+: 2x2 reduction from previous mip. Reverse-Z: nearer = larger
+        // NDC z, so the conservative "nearest occluder in this tile" is MIN.
         vec2 uv = (vec2(pos) * 2.0 + 1.0) * texel_size;
         float d0 = texture(src_texture, uv).r;
         float d1 = texture(src_texture, uv + vec2(texel_size.x, 0.0)).r;
         float d2 = texture(src_texture, uv + vec2(0.0, texel_size.y)).r;
         float d3 = texture(src_texture, uv + texel_size).r;
-        imageStore(dst_mip, ivec2(pos), vec4(max(max(d0, d1), max(d2, d3))));
+        imageStore(dst_mip, ivec2(pos), vec4(min(min(d0, d1), min(d2, d3))));
     }
 }
