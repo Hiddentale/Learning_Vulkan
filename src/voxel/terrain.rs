@@ -213,7 +213,10 @@ pub fn generate_column(face: Face, chunk_x: i32, chunk_z: i32, seed: u32, erosio
 }
 
 /// Per-(x, z) column fill: walks every radial layer, evaluates density at the
-/// block center, and writes the resulting block type.
+/// block center, and writes the resulting block type. The per-direction
+/// noise (continentalness, mountain, biome, …) is sampled ONCE for the
+/// whole column — it depends only on the direction, which is constant as
+/// `ly` varies. Only the 3D overhang and cave noise sample per block.
 fn fill_density_column(
     chunks: &mut [Chunk],
     face: Face,
@@ -224,19 +227,28 @@ fn fill_density_column(
     noises: &WorldNoises,
     erosion_map: Option<&super::erosion::ErosionMap>,
 ) {
-    let sea_level_radius = sphere::SURFACE_RADIUS_BLOCKS as f64;
-    let max_radius_seen = sea_level_radius + MOUNTAIN_AMPLITUDE + WEIRDNESS_AMPLITUDE + 50.0;
+    // Sample one representative point in the column to fix the direction.
+    let probe = sphere::chunk_to_world(
+        sphere::ChunkPos { face, cx: chunk_x, cy: 0, cz: chunk_z },
+        glam::Vec3::new(x as f32 + 0.5, 0.5, z as f32 + 0.5),
+    );
+    let params = sample_params_at_world(noises, probe, erosion_map);
+    let surface_radius = sphere::PLANET_RADIUS_BLOCKS as f64 + params.height as f64;
+    let sea_radius = sphere::SURFACE_RADIUS_BLOCKS as f64;
+    let max_radius_seen = sea_radius + MOUNTAIN_AMPLITUDE + WEIRDNESS_AMPLITUDE + 50.0;
+    let surface_block = biome::surface_block(params.biome);
+    let subsurface_block = biome::subsurface_block(params.biome);
+
     for cy in 0..CHUNK_LAYERS {
         for ly in 0..CHUNK_SIZE {
             let cp = sphere::ChunkPos { face, cx: chunk_x, cy: cy as i32, cz: chunk_z };
             let local = glam::Vec3::new(x as f32 + 0.5, ly as f32 + 0.5, z as f32 + 0.5);
             let world = sphere::chunk_to_world(cp, local);
             let r = world.length();
-            // Above any possible mountain → cheap air.
             if r > max_radius_seen + 1.0 {
                 continue;
             }
-            let block = sample_density_block(world, r, noises, erosion_map);
+            let block = sample_density_block(world, r, surface_radius, sea_radius, surface_block, subsurface_block, noises);
             if block != BlockType::Air {
                 chunks[cy].set(x, ly, z, block);
             }
@@ -244,13 +256,17 @@ fn fill_density_column(
     }
 }
 
-/// Density-based block lookup. `world` is the cartesian world position of the
-/// block center; `r = |world|`. Samples per-direction noise once and decides
-/// solid / water / air based on the radial distance.
-fn sample_density_block(world: glam::DVec3, r: f64, noises: &WorldNoises, erosion_map: Option<&super::erosion::ErosionMap>) -> BlockType {
-    let params = sample_params_at_world(noises, world, erosion_map);
-    let surface_radius = sphere::PLANET_RADIUS_BLOCKS as f64 + params.height as f64;
-    let sea_radius = sphere::SURFACE_RADIUS_BLOCKS as f64;
+/// Per-block density evaluation. Direction-dependent values are passed in.
+/// Only the 3D overhang/cave noises are sampled here.
+fn sample_density_block(
+    world: glam::DVec3,
+    r: f64,
+    surface_radius: f64,
+    sea_radius: f64,
+    surface: BlockType,
+    subsurface: BlockType,
+    noises: &WorldNoises,
+) -> BlockType {
 
     if r > surface_radius + OVERHANG_BAND as f64 {
         return if r < sea_radius { BlockType::Water } else { BlockType::Air };
@@ -269,9 +285,9 @@ fn sample_density_block(world: glam::DVec3, r: f64, noises: &WorldNoises, erosio
     // Below the surface — pick stone / subsurface / surface based on depth.
     let depth_from_surface = (surface_radius - r).max(0.0);
     let block = if depth_from_surface < 1.0 {
-        biome::surface_block(params.biome)
+        surface
     } else if depth_from_surface < DIRT_DEPTH as f64 {
-        biome::subsurface_block(params.biome)
+        subsurface
     } else {
         BlockType::Stone
     };
