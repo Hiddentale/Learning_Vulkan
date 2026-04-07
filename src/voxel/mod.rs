@@ -9,6 +9,7 @@ pub mod material;
 pub mod metric;
 pub mod player;
 pub mod raycast;
+pub mod sphere;
 pub mod svdag;
 pub mod svdag_compressor;
 pub mod terrain;

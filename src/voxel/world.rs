@@ -3,6 +3,7 @@ use super::chunk::{Chunk, CHUNK_SIZE};
 use super::chunk_generator::ChunkGenerator;
 use super::erosion::ErosionMap;
 use super::metric::MetricField;
+use super::sphere::{self, ChunkPos};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -10,7 +11,7 @@ pub const TERRAIN_MIN_CY: i32 = 0;
 pub const TERRAIN_MAX_CY: i32 = 47; // 768 blocks tall (48 × 16)
 
 pub struct World {
-    chunks: HashMap<[i32; 3], Chunk>,
+    chunks: HashMap<ChunkPos, Chunk>,
     render_distance: i32,
     generator: ChunkGenerator,
     pub metric: MetricField,
@@ -42,12 +43,12 @@ impl World {
         // Unload chunks outside render distance.
         // Chunks within XZ range always stay (full column needed for physics/gravity).
         // Beyond that, use 3D distance to cull vertically.
-        let keys: Vec<[i32; 3]> = self.chunks.keys().copied().collect();
+        let keys: Vec<ChunkPos> = self.chunks.keys().copied().collect();
         for pos in keys {
-            let xz_dist = (pos[0] - player_cx).abs().max((pos[2] - player_cz).abs());
+            let xz_dist = (pos.cx - player_cx).abs().max((pos.cz - player_cz).abs());
             if xz_dist > self.render_distance {
                 self.chunks.remove(&pos);
-                unloaded.push(pos);
+                unloaded.push(pos.coords());
             }
         }
 
@@ -62,7 +63,7 @@ impl World {
                     if xz_dist > self.render_distance {
                         continue;
                     }
-                    let has_any = (TERRAIN_MIN_CY..=TERRAIN_MAX_CY).any(|cy| self.chunks.contains_key(&[cx, cy, cz]));
+                    let has_any = (TERRAIN_MIN_CY..=TERRAIN_MAX_CY).any(|cy| self.chunks.contains_key(&ChunkPos::posy(cx, cy, cz)));
                     if !has_any && !self.generator.is_pending(cx, cz) {
                         self.generator.request(cx, cz);
                     }
@@ -74,8 +75,8 @@ impl World {
         for col in self.generator.receive() {
             for (i, chunk) in col.chunks.into_iter().enumerate() {
                 let cy = TERRAIN_MIN_CY + i as i32;
-                let key = [col.cx, cy, col.cz];
-                loaded.push(key);
+                let key = ChunkPos::posy(col.cx, cy, col.cz);
+                loaded.push(key.coords());
                 self.chunks.insert(key, chunk);
             }
         }
@@ -84,8 +85,8 @@ impl World {
     }
 
     pub fn get_block(&self, wx: f32, wy: f32, wz: f32) -> BlockType {
-        let (cx, cy, cz, lx, ly, lz) = world_to_chunk(wx, wy, wz);
-        match self.chunks.get(&[cx, cy, cz]) {
+        let (cp, lx, ly, lz) = world_to_chunk(wx, wy, wz);
+        match self.chunks.get(&cp) {
             Some(chunk) => chunk.get(lx, ly, lz),
             None => BlockType::Air,
         }
@@ -96,22 +97,20 @@ impl World {
     /// the player must not fall through space that hasn't been generated yet.
     /// Above the terrain range, unloaded means genuinely empty sky.
     pub fn is_solid(&self, wx: f32, wy: f32, wz: f32) -> bool {
-        let (cx, cy, cz, lx, ly, lz) = world_to_chunk(wx, wy, wz);
-        match self.chunks.get(&[cx, cy, cz]) {
+        let (cp, lx, ly, lz) = world_to_chunk(wx, wy, wz);
+        match self.chunks.get(&cp) {
             Some(chunk) => chunk.get(lx, ly, lz).is_opaque(),
-            None => (TERRAIN_MIN_CY..=TERRAIN_MAX_CY).contains(&cy),
+            None => (TERRAIN_MIN_CY..=TERRAIN_MAX_CY).contains(&cp.cy),
         }
     }
 
     pub fn set_block(&mut self, wx: i32, wy: i32, wz: i32, block: BlockType) -> bool {
         let size = CHUNK_SIZE as i32;
-        let cx = wx.div_euclid(size);
-        let cy = wy.div_euclid(size);
-        let cz = wz.div_euclid(size);
+        let cp = sphere::block_to_chunk(wx, wy, wz);
         let lx = wx.rem_euclid(size) as usize;
         let ly = wy.rem_euclid(size) as usize;
         let lz = wz.rem_euclid(size) as usize;
-        match self.chunks.get_mut(&[cx, cy, cz]) {
+        match self.chunks.get_mut(&cp) {
             Some(chunk) => {
                 chunk.set(lx, ly, lz, block);
                 true
@@ -121,25 +120,24 @@ impl World {
     }
 
     pub fn block_to_chunk(wx: i32, wy: i32, wz: i32) -> [i32; 3] {
-        let size = CHUNK_SIZE as i32;
-        [wx.div_euclid(size), wy.div_euclid(size), wz.div_euclid(size)]
+        sphere::block_to_chunk(wx, wy, wz).coords()
     }
 
     pub fn get_chunk(&self, cx: i32, cy: i32, cz: i32) -> Option<&Chunk> {
-        self.chunks.get(&[cx, cy, cz])
+        self.chunks.get(&ChunkPos::posy(cx, cy, cz))
     }
 
     pub fn chunk_positions(&self) -> impl Iterator<Item = [i32; 3]> + '_ {
-        self.chunks.keys().copied()
+        self.chunks.keys().map(|cp| cp.coords())
     }
 
     #[cfg(test)]
     pub fn insert_empty_chunk(&mut self, cx: i32, cy: i32, cz: i32) {
-        self.chunks.insert([cx, cy, cz], Chunk::new(BlockType::Air));
+        self.chunks.insert(ChunkPos::posy(cx, cy, cz), Chunk::new(BlockType::Air));
     }
 }
 
-fn world_to_chunk(wx: f32, wy: f32, wz: f32) -> (i32, i32, i32, usize, usize, usize) {
+fn world_to_chunk(wx: f32, wy: f32, wz: f32) -> (ChunkPos, usize, usize, usize) {
     let size = CHUNK_SIZE as f32;
     let cx = wx.div_euclid(size) as i32;
     let cy = wy.div_euclid(size) as i32;
@@ -147,7 +145,7 @@ fn world_to_chunk(wx: f32, wy: f32, wz: f32) -> (i32, i32, i32, usize, usize, us
     let lx = wx.rem_euclid(size) as usize;
     let ly = wy.rem_euclid(size) as usize;
     let lz = wz.rem_euclid(size) as usize;
-    (cx, cy, cz, lx, ly, lz)
+    (ChunkPos::posy(cx, cy, cz), lx, ly, lz)
 }
 
 /// 3D Chebyshev distance from a chunk to the player position.
