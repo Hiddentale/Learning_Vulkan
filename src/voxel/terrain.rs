@@ -5,10 +5,6 @@ use super::sphere::{self, Face};
 use super::world::{TERRAIN_MAX_CY, TERRAIN_MIN_CY};
 use noise::{Fbm, MultiFractal, NoiseFn, Perlin, RidgedMulti};
 
-/// Half side length of the cube face in blocks. Face-local cube coords are
-/// `(u, v) ∈ [-FACE_HALF, FACE_HALF]` with the face center at the origin.
-const FACE_HALF: f64 = (sphere::FACE_SIDE_CHUNKS * CHUNK_SIZE as i32 / 2) as f64;
-
 pub(crate) const SEA_LEVEL: usize = 64;
 const DIRT_DEPTH: usize = 4;
 const MIN_HEIGHT: usize = 4;
@@ -197,80 +193,154 @@ pub(crate) fn sample_surface(noises: &WorldNoises, face: Face, u: f64, v: f64, e
     (params.height, surface)
 }
 
-/// Generates a full column of chunks at the given face-local chunk coordinates.
+/// Generates a full column of chunks via 3D density sampling. For each block
+/// in the column, we compute the world cartesian position via the cube-to-
+/// sphere projection and evaluate a density function at that point. Density
+/// > 0 → solid; density ≤ 0 with `|world| < surface_radius_at_sea_level` →
+/// water; otherwise air. Because density is purely a function of world
+/// position (and noise on direction), terrain is seamless across face edges.
 pub fn generate_column(face: Face, chunk_x: i32, chunk_z: i32, seed: u32, erosion_map: Option<&super::erosion::ErosionMap>) -> Vec<Chunk> {
     let noises = WorldNoises::new(seed);
     let mut chunks: Vec<Chunk> = (0..CHUNK_LAYERS).map(|_| Chunk::new(BlockType::Air)).collect();
 
     for z in 0..CHUNK_SIZE {
         for x in 0..CHUNK_SIZE {
-            // Face-local cube coordinates with the face center at origin.
-            let u = chunk_x as f64 * CHUNK_SIZE as f64 + x as f64 - FACE_HALF;
-            let v = chunk_z as f64 * CHUNK_SIZE as f64 + z as f64 - FACE_HALF;
-            let params = sample_params(&noises, face, u, v, erosion_map);
-
-            fill_surface(&mut chunks, x, z, u, v, params.height, params.biome, &noises);
-            carve_caves(&mut chunks, x, z, u, v, params.height, &noises);
-            fill_water(&mut chunks, x, z, params.height);
+            fill_density_column(&mut chunks, face, chunk_x, chunk_z, x, z, &noises, erosion_map);
         }
     }
 
     chunks
 }
 
-fn fill_surface(chunks: &mut [Chunk], x: usize, z: usize, wx: f64, wz: f64, surface_y: usize, biome: Biome, noises: &WorldNoises) {
-    let surface = biome::surface_block(biome);
-    let subsurface = biome::subsurface_block(biome);
-    let band_bottom = surface_y.saturating_sub(OVERHANG_BAND);
-    let band_top = (surface_y + OVERHANG_BAND).min(MAX_HEIGHT);
+/// Per-(x, z) column fill: walks every radial layer, evaluates density at the
+/// block center, and writes the resulting block type.
+fn fill_density_column(
+    chunks: &mut [Chunk],
+    face: Face,
+    chunk_x: i32,
+    chunk_z: i32,
+    x: usize,
+    z: usize,
+    noises: &WorldNoises,
+    erosion_map: Option<&super::erosion::ErosionMap>,
+) {
+    let sea_level_radius = sphere::SURFACE_RADIUS_BLOCKS as f64;
+    let max_radius_seen = sea_level_radius + MOUNTAIN_AMPLITUDE + WEIRDNESS_AMPLITUDE + 50.0;
+    for cy in 0..CHUNK_LAYERS {
+        for ly in 0..CHUNK_SIZE {
+            let cp = sphere::ChunkPos { face, cx: chunk_x, cy: cy as i32, cz: chunk_z };
+            let local = glam::Vec3::new(x as f32 + 0.5, ly as f32 + 0.5, z as f32 + 0.5);
+            let world = sphere::chunk_to_world(cp, local);
+            let r = world.length();
+            // Above any possible mountain → cheap air.
+            if r > max_radius_seen + 1.0 {
+                continue;
+            }
+            let block = sample_density_block(world, r, noises, erosion_map);
+            if block != BlockType::Air {
+                chunks[cy].set(x, ly, z, block);
+            }
+        }
+    }
+}
 
-    for y in 0..band_bottom {
-        let block = if y + DIRT_DEPTH > surface_y { subsurface } else { BlockType::Stone };
-        set_block(chunks, x, y, z, block);
+/// Density-based block lookup. `world` is the cartesian world position of the
+/// block center; `r = |world|`. Samples per-direction noise once and decides
+/// solid / water / air based on the radial distance.
+fn sample_density_block(world: glam::DVec3, r: f64, noises: &WorldNoises, erosion_map: Option<&super::erosion::ErosionMap>) -> BlockType {
+    let params = sample_params_at_world(noises, world, erosion_map);
+    let surface_radius = sphere::PLANET_RADIUS_BLOCKS as f64 + params.height as f64;
+    let sea_radius = sphere::SURFACE_RADIUS_BLOCKS as f64;
+
+    if r > surface_radius + OVERHANG_BAND as f64 {
+        return if r < sea_radius { BlockType::Water } else { BlockType::Air };
     }
 
-    for y in band_bottom..=band_top {
-        let base_density = (surface_y as f64 - y as f64) / OVERHANG_BAND as f64;
-        let noise_val = noises.overhang.get([wx * OVERHANG_SCALE, y as f64 * OVERHANG_SCALE, wz * OVERHANG_SCALE]);
+    // Inside the overhang band: smoothly fade between solid and air via 3D noise.
+    if r > surface_radius - OVERHANG_BAND as f64 {
+        let base_density = (surface_radius - r) / OVERHANG_BAND as f64;
+        let noise_val = noises.overhang.get([world.x * OVERHANG_SCALE, world.y * OVERHANG_SCALE, world.z * OVERHANG_SCALE]);
         let density = base_density + noise_val * (OVERHANG_STRENGTH / OVERHANG_BAND as f64);
-
-        if density > 0.0 {
-            let block = if y >= surface_y {
-                surface
-            } else if y + DIRT_DEPTH > surface_y {
-                subsurface
-            } else {
-                BlockType::Stone
-            };
-            set_block(chunks, x, y, z, block);
+        if density <= 0.0 {
+            return if r < sea_radius { BlockType::Water } else { BlockType::Air };
         }
     }
-}
 
-fn carve_caves(chunks: &mut [Chunk], x: usize, z: usize, wx: f64, wz: f64, surface_y: usize, noises: &WorldNoises) {
-    let cave_top = surface_y.saturating_sub(5);
-    for y in 1..=cave_top {
-        let value = noises.cave.get([wx * CAVE_SCALE, y as f64 * CAVE_SCALE, wz * CAVE_SCALE]);
-        if value > CAVE_THRESHOLD {
-            set_block(chunks, x, y, z, BlockType::Air);
+    // Below the surface — pick stone / subsurface / surface based on depth.
+    let depth_from_surface = (surface_radius - r).max(0.0);
+    let block = if depth_from_surface < 1.0 {
+        biome::surface_block(params.biome)
+    } else if depth_from_surface < DIRT_DEPTH as f64 {
+        biome::subsurface_block(params.biome)
+    } else {
+        BlockType::Stone
+    };
+
+    // 3D cave carving — spheres of air punched out of the solid mass.
+    if depth_from_surface > 5.0 {
+        let cave_val = noises.cave.get([world.x * CAVE_SCALE, world.y * CAVE_SCALE, world.z * CAVE_SCALE]);
+        if cave_val > CAVE_THRESHOLD {
+            return BlockType::Air;
         }
     }
+
+    block
 }
 
-fn fill_water(chunks: &mut [Chunk], x: usize, z: usize, surface_y: usize) {
-    if surface_y >= SEA_LEVEL {
-        return;
-    }
-    for y in (surface_y + 1)..=SEA_LEVEL {
-        set_block(chunks, x, y, z, BlockType::Water);
-    }
-}
+/// Direction-only sample of all terrain parameters. Replaces the old
+/// `sample_params(face, u, v)` for the density-based pipeline. Two world
+/// points sharing a radial direction produce identical params, which is
+/// what makes the terrain seamless across cube faces.
+fn sample_params_at_world(noises: &WorldNoises, world: glam::DVec3, erosion_map: Option<&super::erosion::ErosionMap>) -> TerrainParams {
+    let p_warp = sphere::noise_pos_at_world(world);
+    let warp_x = noises.warp_x.get(p_warp) * WARP_STRENGTH;
+    let warp_z = noises.warp_z.get(p_warp) * WARP_STRENGTH;
+    // Apply warp by rotating the direction slightly along two tangent axes.
+    let dir = world.normalize_or(glam::DVec3::Y);
+    let tangent_a = if dir.y.abs() < 0.9 { dir.cross(glam::DVec3::Y).normalize_or(glam::DVec3::X) } else { dir.cross(glam::DVec3::X).normalize_or(glam::DVec3::Z) };
+    let tangent_b = dir.cross(tangent_a).normalize_or(glam::DVec3::Z);
+    let warped_dir = (dir + tangent_a * (warp_x / sphere::SURFACE_RADIUS_BLOCKS as f64) + tangent_b * (warp_z / sphere::SURFACE_RADIUS_BLOCKS as f64)).normalize_or(dir);
+    let p = [
+        warped_dir.x * sphere::SURFACE_RADIUS_BLOCKS as f64,
+        warped_dir.y * sphere::SURFACE_RADIUS_BLOCKS as f64,
+        warped_dir.z * sphere::SURFACE_RADIUS_BLOCKS as f64,
+    ];
 
-fn set_block(chunks: &mut [Chunk], x: usize, y: usize, z: usize, block: BlockType) {
-    let chunk_index = y / CHUNK_SIZE;
-    let local_y = y % CHUNK_SIZE;
-    if chunk_index < chunks.len() {
-        chunks[chunk_index].set(x, local_y, z, block);
+    let continentalness = noises.continentalness.get(p);
+    let erosion = noises.erosion_noise.get(p);
+    let weirdness = noises.weirdness.get(p);
+    let temperature = noises.temperature.get(p);
+    let humidity = noises.humidity.get(p);
+
+    let base = continental_curve(continentalness);
+    let erosion_factor = (0.3 + erosion * 0.7).clamp(0.3, 1.0);
+    let mountain = noises.mountain.get(p) * MOUNTAIN_AMPLITUDE * erosion_factor;
+    let detail = noises.detail.get(p) * DETAIL_AMPLITUDE * erosion_factor;
+    let weirdness_offset = weirdness * WEIRDNESS_AMPLITUDE;
+    let mut height = (SEA_LEVEL as f64 + base + mountain + detail + weirdness_offset)
+        .clamp(MIN_HEIGHT as f64, MAX_HEIGHT as f64) as usize;
+
+    if let Some(emap) = erosion_map {
+        // Erosion map is still indexed in face-local cube coords; sample with
+        // the dominant face's projection of the warped direction.
+        let face = sphere::face_for_cube_point(warped_dir);
+        let (tu, tv, _) = sphere::face_basis(face);
+        let cube_pt = warped_dir * sphere::CUBE_HALF_BLOCKS;
+        let u = cube_pt.dot(tu.as_dvec3());
+        let v = cube_pt.dot(tv.as_dvec3());
+        let delta = emap.sample(u, v);
+        height = (height as f64 + delta).clamp(MIN_HEIGHT as f64, MAX_HEIGHT as f64) as usize;
+    }
+
+    let biome = biome::determine_biome(continentalness, temperature, humidity, erosion, weirdness, height, SEA_LEVEL);
+    TerrainParams {
+        continentalness,
+        erosion,
+        weirdness,
+        temperature,
+        humidity,
+        height,
+        biome,
     }
 }
 

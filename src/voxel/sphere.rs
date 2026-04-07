@@ -14,7 +14,25 @@ use glam::{DVec3, Vec3};
 
 /// Tiny planet for testing — circumference ≈ 2π·48 ≈ 300 blocks. At a walking
 /// speed of ~5 blocks/s a player circles the equator in roughly one minute.
-pub const PLANET_RADIUS_BLOCKS: i32 = 96;
+/// Radius from the planet center to the cube face plane, in blocks. The
+/// projection formula is `world = unit_sphere * (PLANET_RADIUS + d)` where
+/// `d` is the radial offset above the cube face. Surface terrain lives at
+/// `d ≈ SEA_LEVEL`, so the *visual* surface radius is `PLANET_RADIUS + SEA_LEVEL`.
+///
+/// Tuned so blocks are visually square at the actual terrain surface:
+/// `(PLANET_RADIUS + SEA_LEVEL) / CUBE_HALF = √2`
+/// → `PLANET_RADIUS = √2·CUBE_HALF − SEA_LEVEL = √2·48 − 64 ≈ 4`.
+pub const PLANET_RADIUS_BLOCKS: i32 = 4;
+
+/// Approximate radius of the visible terrain surface (sea level), in blocks.
+/// Equals `PLANET_RADIUS_BLOCKS + SEA_LEVEL_BLOCKS`. Used as a stable scale
+/// for noise sampling so noise frequencies stay tuned regardless of how
+/// `PLANET_RADIUS_BLOCKS` is internally adjusted for block-aspect tuning.
+pub const SURFACE_RADIUS_BLOCKS: i32 = 68;
+
+/// Sea level in blocks above the cube face plane (== `d` in projection).
+/// Lives here so both terrain generation and the projection share one source.
+pub const SEA_LEVEL_BLOCKS: i32 = SURFACE_RADIUS_BLOCKS - PLANET_RADIUS_BLOCKS;
 
 /// Each cube face spans this many chunks along its u and v axes. With
 /// CHUNK_SIZE=16 this gives a 48×48 block face — matching the planet radius
@@ -258,8 +276,19 @@ fn project_uv(face: Face, cube_pt_blocks: DVec3) -> (f64, f64) {
 /// branch on out-of-face coordinates) since noise sampling doesn't need the
 /// area-preserving Catmull/Everitt mapping.
 pub fn noise_pos_on_posy(wx: f64, wz: f64) -> [f64; 3] {
-    let v = DVec3::new(wx, CUBE_HALF_BLOCKS, wz).normalize() * PLANET_RADIUS_BLOCKS as f64;
+    let v = DVec3::new(wx, CUBE_HALF_BLOCKS, wz).normalize() * SURFACE_RADIUS_BLOCKS as f64;
     [v.x, v.y, v.z]
+}
+
+/// Sample a noise position from a world-space cartesian point. Returns a
+/// 3D coordinate that depends only on the *direction* from the planet center,
+/// scaled to the surface radius. Two world points along the same radial
+/// produce the same noise sample, which is what makes density-based terrain
+/// seamless across cube face boundaries.
+pub fn noise_pos_at_world(world: DVec3) -> [f64; 3] {
+    let dir = world.normalize_or(DVec3::Y);
+    let p = dir * SURFACE_RADIUS_BLOCKS as f64;
+    [p.x, p.y, p.z]
 }
 
 /// Sample 3D noise at the sphere position corresponding to a face-local
@@ -269,7 +298,7 @@ pub fn noise_pos_on_posy(wx: f64, wz: f64) -> [f64; 3] {
 pub fn noise_pos_on_face(face: Face, u: f64, v: f64) -> [f64; 3] {
     let (tu, tv, n) = face_basis(face);
     let cube_pt = tu.as_dvec3() * u + tv.as_dvec3() * v + n.as_dvec3() * CUBE_HALF_BLOCKS;
-    let p = cube_pt.normalize() * PLANET_RADIUS_BLOCKS as f64;
+    let p = cube_pt.normalize() * SURFACE_RADIUS_BLOCKS as f64;
     [p.x, p.y, p.z]
 }
 
@@ -799,6 +828,24 @@ mod tests {
         assert_eq!(block_to_chunk(15, 15, 15), ChunkPos::posy(0, 0, 0));
         assert_eq!(block_to_chunk(16, 0, 0), ChunkPos::posy(1, 0, 0));
         assert_eq!(block_to_chunk(-1, -1, -1), ChunkPos::posy(-1, -1, -1));
+    }
+
+    #[test]
+    fn block_aspect_at_surface_face_center_is_square() {
+        // The aspect that matters is at the actual terrain surface, not at
+        // the cube face plane (d=0). Surface is around SEA_LEVEL blocks above
+        // the cube face. Tangent step should equal radial step there.
+        let mid = FACE_SIDE_CHUNKS / 2;
+        let surface_cy = 4; // ~4 chunks * 16 blocks = 64 blocks above the cube face
+        let cp = ChunkPos { face: Face::PosY, cx: mid, cy: surface_cy, cz: mid };
+        let center = chunk_to_world(cp, Vec3::new(0.0, 0.0, 0.0));
+        let tangent = chunk_to_world(cp, Vec3::new(1.0, 0.0, 0.0));
+        let radial = chunk_to_world(cp, Vec3::new(0.0, 1.0, 0.0));
+        let dt = (tangent - center).length();
+        let dr = (radial - center).length();
+        let ratio = dt / dr;
+        eprintln!("[surface] tangent={dt} radial={dr} ratio={ratio}");
+        assert!((ratio - 1.0).abs() < 0.1, "surface block aspect ratio is {}, expected ≈ 1.0", ratio);
     }
 
     #[test]

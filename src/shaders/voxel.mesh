@@ -195,16 +195,21 @@ void emit_face(uint slot, vec3 center, uint face, uint material_id, uint chunk_f
     vec3 b = FACE_BITANGENTS[face];
     vec3 face_center = center + n * 0.5;
 
-    // World-space normal at the face center: map the block's local face
-    // direction through the cube face basis. Approximate (Jacobian-true
-    // normals would vary across the curved face) but stable per block.
-    vec3 world_normal;
-    if (face == 0u) world_normal = FACE_TU[chunk_face];
-    else if (face == 1u) world_normal = -FACE_TU[chunk_face];
-    else if (face == 2u) world_normal = FACE_N[chunk_face];
-    else if (face == 3u) world_normal = -FACE_N[chunk_face];
-    else if (face == 4u) world_normal = FACE_TV[chunk_face];
-    else world_normal = -FACE_TV[chunk_face];
+    // World-space normal via finite-difference Jacobian of the cube-to-sphere
+    // projection at the face center. Two tiny offsets along the face's local
+    // tangent and bitangent project through the same cube_to_sphere map; the
+    // cross of their world-space deltas is the true sphere-surface normal at
+    // that point. Far more accurate than the per-face cube basis vector at
+    // off-center positions where the surface noticeably tilts.
+    const float EPS = 0.05;
+    vec3 world_center = project_chunk_local(chunk_face, chunk_pos, face_center);
+    vec3 world_t = project_chunk_local(chunk_face, chunk_pos, face_center + t * EPS) - world_center;
+    vec3 world_b = project_chunk_local(chunk_face, chunk_pos, face_center + b * EPS) - world_center;
+    vec3 world_normal = normalize(cross(world_t, world_b));
+    // Choose the sign that points outward (away from the planet center).
+    if (dot(world_normal, world_center) < 0.0) {
+        world_normal = -world_normal;
+    }
 
     // Stable per-block cell id for stochastic tiling: chunk_pos * 16 + block.
     ivec3 block_cell = chunk_pos * 16 + ivec3(int(center.x), int(center.y), int(center.z));
