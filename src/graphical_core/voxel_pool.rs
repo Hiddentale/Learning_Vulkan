@@ -275,12 +275,15 @@ impl VoxelPool {
         if in_range {
             self.write_boundary_face(base, face, world.get_chunk_at(neighbor), read_block);
         } else {
-            // Cross-face: mark every cell solid (= Stone, id 2). Mesh
-            // shader will treat these positions as opaque and skip face
-            // emission. Phase C3 will replace this with the rotated slice
-            // from the actual neighbor face.
+            // Cross-face: fill with Air so the chunk emits its boundary
+            // face into the seam. The neighbor face's chunk will do the
+            // same on its own edge, and both vertices project to the
+            // same cube-edge point on the sphere — so the two faces meet
+            // visually with no gap. Phase C3 will replace this with the
+            // properly rotated neighbor slice (eliminates a few extra
+            // hidden-face emissions but currently looks correct).
             let offset = base + face * BOUNDARY_FACE_BYTES;
-            std::ptr::write_bytes(self.boundary_ptr.add(offset), crate::voxel::block::BlockType::Stone as u8, BOUNDARY_FACE_BYTES);
+            std::ptr::write_bytes(self.boundary_ptr.add(offset), 0u8, BOUNDARY_FACE_BYTES);
         }
     }
 
