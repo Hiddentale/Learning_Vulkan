@@ -1,1 +1,1 @@
-[startup] timestamp_period=1 ns
+[perf avg over 60f] cpu_total=8.4ms acquire=0.0 record=0.0 submit=0.0 present=0.1 update=4.3 | gpu_total=3.9ms sky=0.1 phase1=1.9 pyramid=0.0 phase2=2.0 svdag=0.0 ui=0.0 | resident=25810

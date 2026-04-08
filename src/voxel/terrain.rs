@@ -276,7 +276,16 @@ fn fill_density_column(
 }
 
 /// Per-block density evaluation. Direction-dependent values are passed in.
-/// Only the 3D overhang/cave noises are sampled here.
+///
+/// **Surface contract**: a block is solid iff `r <= surface_radius`. There is
+/// no 3D overhang noise carving the surface — that would create a per-block
+/// height field that diverges from the analytical `surface_radius_at_world`,
+/// breaking LOD parity with the heightmap tile path. Caves are still allowed
+/// strictly below the surface (`depth_from_surface > CAVE_MIN_DEPTH`) so they
+/// never punch through the visible top.
+///
+/// Pinned by `heightmap_top_matches_chunked_top_within_one_block` in
+/// `voxel::heightmap_generator::tests`.
 fn sample_density_block(
     world: glam::DVec3,
     r: f64,
@@ -286,19 +295,8 @@ fn sample_density_block(
     subsurface: BlockType,
     noises: &WorldNoises,
 ) -> BlockType {
-
-    if r > surface_radius + OVERHANG_BAND as f64 {
+    if r > surface_radius {
         return if r < sea_radius { BlockType::Water } else { BlockType::Air };
-    }
-
-    // Inside the overhang band: smoothly fade between solid and air via 3D noise.
-    if r > surface_radius - OVERHANG_BAND as f64 {
-        let base_density = (surface_radius - r) / OVERHANG_BAND as f64;
-        let noise_val = noises.overhang.get([world.x * OVERHANG_SCALE, world.y * OVERHANG_SCALE, world.z * OVERHANG_SCALE]);
-        let density = base_density + noise_val * (OVERHANG_STRENGTH / OVERHANG_BAND as f64);
-        if density <= 0.0 {
-            return if r < sea_radius { BlockType::Water } else { BlockType::Air };
-        }
     }
 
     // Below the surface — pick stone / subsurface / surface based on depth.

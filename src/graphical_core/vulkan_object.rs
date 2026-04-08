@@ -91,13 +91,23 @@ const LOD2_DISTANCE: i32 = 96; // 1536m
 const LOD3_DISTANCE: i32 = 192; // 3072m
 const LOD4_DISTANCE: i32 = 384; // 6144m (>5km)
 /// World generates terrain out to this distance (raw chunks for LOD-0 super-chunk building).
-const WORLD_DISTANCE: i32 = LOD0_DISTANCE + 8 + 4;
+pub const WORLD_DISTANCE: i32 = LOD0_DISTANCE + 8 + 4;
+/// Angular margin (radians) by which the heightmap reaches *inside* the
+/// mesh-chunk arc. Lets the heightmap cover the load-in frontier while the
+/// outermost mesh chunks are still being generated. Sized at ~4 chunks of
+/// arc at the current planet radius — large enough to absorb generator
+/// latency, small enough that the resulting overlap ring is sub-pixel
+/// when the player is high enough to notice it at all.
+const HEIGHTMAP_OVERLAP_ARC: f32 =
+    (4.0 * crate::voxel::chunk::CHUNK_SIZE as f32) / crate::voxel::sphere::PLANET_RADIUS_BLOCKS as f32;
 /// Maximum SVDAG render distance across all LOD levels.
 const SVDAG_DISTANCE: i32 = LOD4_DISTANCE;
-/// Sized to hold the entire planet chunk set. With FACE_SIDE_CHUNKS=12
-/// and FACE_RADIAL_CHUNKS=96 the worst-case total is 6·12·12·96 = 82944
-/// chunk slots; only the surface band is actually uploaded but we allocate
-/// the upper bound so the pool never overflows mid-load.
+/// Sized to hold the working set: a `(2·WORLD_DISTANCE+1)²` column window
+/// around the player times the radial column height, with generous slack.
+/// Independent of `FACE_SIDE_CHUNKS` — the planet can be arbitrarily large.
+/// At `WORLD_DISTANCE=36` and 48-chunk-tall columns the bound is
+/// `73² × 48 ≈ 256k` worst case; we round to a power of two for slot
+/// arithmetic. Pinned by `world_resident_set_is_bounded_by_render_distance`.
 const MAX_MESH_CHUNKS: usize = 262144;
 const MAX_SVDAG_CHUNKS: u32 = 32768;
 const SUPER_CHUNK_VOXELS: u32 = 64;
@@ -332,7 +342,10 @@ impl VulkanApplication {
     /// Calls unsafe Vulkan APIs.
     pub unsafe fn enter_world(&mut self, world_dir: &std::path::Path, seed: u32, erosion_map: Option<Arc<ErosionMap>>) -> anyhow::Result<()> {
         let mut world = World::new(WORLD_DISTANCE, seed, erosion_map.clone());
-        world.update(0, 5, 0); // Initial camera Y ≈ 90 blocks → chunk 5
+        // Spawn point is just above the +Y pole; the streamer needs a real
+        // world position so it knows which face neighborhood to load.
+        let spawn = glam::DVec3::new(0.0, crate::voxel::sphere::SURFACE_RADIUS_BLOCKS as f64, 0.0);
+        world.update(spawn);
 
         let mut voxel_pool = VoxelPool::new(
             MAX_MESH_CHUNKS as u32,
@@ -753,11 +766,11 @@ impl VulkanApplication {
 
     /// Loads/unloads chunks. Routes to mesh pool, SVDAG pool, and LOD merging.
     unsafe fn update_chunks_inner(wr: &mut WorldResources, camera: &Camera) -> anyhow::Result<()> {
+        let player_world = camera.position.as_dvec3();
         let player_cx = (camera.position.x / CHUNK_SIZE as f32).floor() as i32;
         let player_cy = (camera.position.y / CHUNK_SIZE as f32).floor() as i32;
         let player_cz = (camera.position.z / CHUNK_SIZE as f32).floor() as i32;
-
-        let delta = wr.world.update(player_cx, player_cy, player_cz);
+        let delta = wr.world.update(player_world);
 
         wr.svdag_pool.tick();
 
@@ -781,9 +794,10 @@ impl VulkanApplication {
             }
         }
 
-        // Phase C: tiny planet — every chunk is mesh-resident. Upload any
-        // newly loaded chunk; never evict; no SVDAG far-field path.
-        let _ = (player_cx, player_cy, player_cz);
+        // Working-set streaming: World::update bounds delta.loaded /
+        // delta.unloaded to a (2·WORLD_DISTANCE+1)² × radial column window
+        // around the player. Everything outside that window is rendered by
+        // the heightmap LOD path, not the mesh pool.
         for pos in &delta.unloaded {
             wr.voxel_pool.invalidate_neighbor_boundaries(*pos, &wr.world);
             wr.voxel_pool.remove_chunk(pos);
@@ -941,10 +955,37 @@ impl VulkanApplication {
             wr.heightmap_in_flight.remove(&mesh.key);
             wr.heightmap_pool.upload_tile(&mesh, player_world_d);
         }
-        // Evict tiles beyond the outermost heightmap band (angular radians).
-        let hm_max_angle = chunked_arc_radians() + HEIGHTMAP_BANDS.last().map(|b| b.4).unwrap_or(0.0) + 0.05;
-        wr.heightmap_pool.evict_out_of_range(player_world_d, hm_max_angle);
-        schedule_heightmap_generation(wr, player_world_d);
+        // The heightmap covers regions the mesh-chunk working set does not
+        // cover. When the player is in the terrain altitude band, mesh
+        // chunks reach `chunked_arc` radians around the player; the
+        // heightmap stays outside that. When the player is above terrain,
+        // mesh chunks vanish (3D Chebyshev cube above the band) and the
+        // heightmap fills from angular distance 0.
+        let chunked_arc = chunked_arc_radians();
+        // Heightmap shadow uses the same altitude cutoff as the mesh
+        // streamer: when the player is below `ORBITAL_CUTOFF_BLOCKS`, mesh
+        // chunks cover the inner area around the player and the heightmap
+        // is excluded from that arc. Above the cutoff there are no mesh
+        // chunks, so the heightmap fills from angle 0.
+        //
+        // The shadow is shrunk by `HEIGHTMAP_OVERLAP_ARC` so the heightmap
+        // keeps rendering in a thin ring just inside the mesh frontier.
+        // This hides the load-in strip during descent: while the outermost
+        // mesh chunks are still being generated, the heightmap is already
+        // there covering the same angular region. At any altitude where
+        // the strip would be visible, the two layers agree on the surface
+        // to within sub-pixel, so the overlap doesn't z-fight noticeably.
+        let altitude_blocks =
+            player_world_d.length() - crate::voxel::sphere::PLANET_RADIUS_BLOCKS as f64;
+        let mesh_shadow_arc = if altitude_blocks <= crate::voxel::world::ORBITAL_CUTOFF_BLOCKS {
+            (chunked_arc - HEIGHTMAP_OVERLAP_ARC).max(0.0)
+        } else {
+            0.0
+        };
+        let hm_max_angle = chunked_arc + HEIGHTMAP_BANDS.last().map(|b| b.4).unwrap_or(0.0) + 0.05;
+        wr.heightmap_pool
+            .evict_outside_band(player_world_d, mesh_shadow_arc, hm_max_angle);
+        schedule_heightmap_generation(wr, player_world_d, mesh_shadow_arc);
 
         wr.last_player_chunk = [player_cx, player_cy, player_cz];
         Ok(())
@@ -1078,8 +1119,18 @@ unsafe fn try_load_cached_lod(wr: &mut WorldResources, pos: [i32; 3], lod_level:
 /// exactly where chunks stop. On a small planet where the chunk reach
 /// already covers > π radians, no tile renders at all (correct — the planet
 /// is fully chunked).
+/// Bands are interpreted as `(tile_chunks, grid_posts, coarse_grid_posts,
+/// extra_min, extra_max)`. The angular range of a band is
+/// `[max(0, chunked_arc + extra_min), chunked_arc + extra_max]`. Negative
+/// `extra_min` allows a band to start before mesh-shader reach so the
+/// heightmap covers directly-below the player even when the mesh chunks have
+/// been evicted (e.g. at altitude where the 3D Chebyshev cube no longer
+/// intersects the surface band). Mesh chunks and the inner heightmap tiles
+/// are coincident in world position (both derive from the same canonical
+/// `surface_radius_at_world` after the parity fix), so where mesh chunks do
+/// exist they win the depth test cleanly without z-fighting in practice.
 const HEIGHTMAP_BANDS: &[(i32, usize, usize, f32, f32)] = &[
-    (8, 65, 17, 0.0, 0.50),
+    (8, 65, 17, -10.0, 0.50),
     (16, 65, 17, 0.50, 1.50),
 ];
 
@@ -1095,63 +1146,43 @@ const HEIGHTMAP_SUBMISSIONS_PER_FRAME: usize = 8;
 /// chunk-grid coordinate of the tile's lower corner; tiles on a face never
 /// straddle the seam — neighboring face tiles cover the seam from the other
 /// side, and the curved meshes meet at the projected cube edge.
-fn schedule_heightmap_generation(wr: &mut WorldResources, player_world: glam::DVec3) {
-    use crate::voxel::heightmap_generator::{angular_distance, HeightmapRequest, TileKey};
-    use crate::voxel::sphere::{ChunkPos, Face, FACE_SIDE_CHUNKS};
+fn schedule_heightmap_generation(
+    wr: &mut WorldResources,
+    player_world: glam::DVec3,
+    mesh_shadow_arc: f32,
+) {
+    use crate::voxel::heightmap_generator::{schedule_candidates, HeightmapRequest};
+    use crate::voxel::sphere::FACE_SIDE_CHUNKS;
     if wr.heightmap_in_flight.len() >= MAX_HEIGHTMAP_IN_FLIGHT {
         return;
     }
-    let mut submitted = 0usize;
     let chunked_arc = chunked_arc_radians();
-    let faces = [Face::PosX, Face::NegX, Face::PosY, Face::NegY, Face::PosZ, Face::NegZ];
-    for (band_idx, &(tile_chunks, grid_posts, coarse_grid_posts, extra_min, extra_max)) in HEIGHTMAP_BANDS.iter().enumerate() {
-        let min_angle = chunked_arc + extra_min;
-        let max_angle = chunked_arc + extra_max;
-        if min_angle > std::f32::consts::PI {
-            // Chunks already cover the whole visible hemisphere — no tiles needed.
-            continue;
-        }
-        for &face in &faces {
-            let mut cz = 0;
-            while cz + tile_chunks <= FACE_SIDE_CHUNKS {
-                let mut cx = 0;
-                while cx + tile_chunks <= FACE_SIDE_CHUNKS {
-                    if submitted >= HEIGHTMAP_SUBMISSIONS_PER_FRAME {
-                        return;
-                    }
-                    let key = TileKey { face, cx, cz };
-                    if wr.heightmap_pool.has_tile(&key) || wr.heightmap_in_flight.contains(&key) {
-                        cx += tile_chunks;
-                        continue;
-                    }
-                    // Tile center in world cartesian (probe the cube surface
-                    // at the tile midpoint).
-                    let cs = CHUNK_SIZE as f32;
-                    let half_span = (tile_chunks as f32 * cs) * 0.5;
-                    let center_w = crate::voxel::sphere::chunk_to_world(
-                        ChunkPos { face, cx, cy: 0, cz },
-                        glam::Vec3::new(half_span, 0.0, half_span),
-                    );
-                    let dist = angular_distance(player_world, center_w);
-                    if dist < min_angle || dist > max_angle {
-                        cx += tile_chunks;
-                        continue;
-                    }
-                    wr.heightmap_generator.request(HeightmapRequest {
-                        key,
-                        lod: band_idx as u8,
-                        tile_chunks_per_side: tile_chunks,
-                        grid_posts,
-                        coarse_grid_posts,
-                        seed: wr.seed,
-                    });
-                    wr.heightmap_in_flight.insert(key);
-                    submitted += 1;
-                    cx += tile_chunks;
-                }
-                cz += tile_chunks;
-            }
-        }
+    let pool = &wr.heightmap_pool;
+    let in_flight = &wr.heightmap_in_flight;
+    let is_loaded_or_in_flight = |key| pool.has_tile(&key) || in_flight.contains(&key);
+
+    let picks = schedule_candidates(
+        player_world,
+        HEIGHTMAP_BANDS,
+        chunked_arc,
+        mesh_shadow_arc,
+        FACE_SIDE_CHUNKS,
+        &is_loaded_or_in_flight,
+        HEIGHTMAP_SUBMISSIONS_PER_FRAME,
+    );
+
+    for cand in picks {
+        // Pull the per-band geometry config from HEIGHTMAP_BANDS.
+        let (_, grid_posts, coarse_grid_posts, _, _) = HEIGHTMAP_BANDS[cand.band_idx as usize];
+        wr.heightmap_generator.request(HeightmapRequest {
+            key: cand.key,
+            lod: cand.band_idx,
+            tile_chunks_per_side: cand.tile_chunks,
+            grid_posts,
+            coarse_grid_posts,
+            seed: wr.seed,
+        });
+        wr.heightmap_in_flight.insert(cand.key);
     }
 }
 
@@ -1337,5 +1368,65 @@ impl VulkanApplication {
                 .destroy_debug_utils_messenger_ext(self.vulkan_application_data.debug_messenger, None);
         }
         self.vulkan_instance.destroy_instance(None);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::graphical_core::heightmap_pool;
+
+    /// Estimate the steady-state working set of heightmap tiles for the
+    /// current band layout. Pure geometry — no GPU, no allocation.
+    ///
+    /// Each band covers an angular annulus `[θ_min, θ_max]` on the sphere.
+    /// The annulus area in steradians is `2π · ∫ sin(θ) dθ` from θ_min to
+    /// θ_max, which equals `2π · (cos(θ_min) − cos(θ_max))`. Each tile
+    /// occupies a square patch of side `tile_arc = tile_chunks · CHUNK_SIZE
+    /// / PLANET_RADIUS` radians, so its area is `tile_arc²`. Tile count is
+    /// the ratio, ceilinged.
+    fn working_set_estimate() -> usize {
+        let r = crate::voxel::sphere::PLANET_RADIUS_BLOCKS as f32;
+        let chunked_arc = chunked_arc_radians();
+        let mut total = 0usize;
+        for &(tile_chunks, _grid, _coarse, extra_min, extra_max) in HEIGHTMAP_BANDS {
+            // Must mirror the runtime clamp in `schedule_heightmap_generation`
+            // exactly: bands may have negative `extra_min` to start the inner
+            // ring at the player's directly-below position.
+            let theta_min = (chunked_arc + extra_min).max(0.0).min(std::f32::consts::PI);
+            let theta_max = (chunked_arc + extra_max).max(0.0).min(std::f32::consts::PI);
+            if theta_max <= theta_min {
+                continue;
+            }
+            let ring_area =
+                2.0 * std::f32::consts::PI * (theta_min.cos() - theta_max.cos());
+            let tile_arc = (tile_chunks as f32 * CHUNK_SIZE as f32) / r;
+            let tile_area = tile_arc * tile_arc;
+            total += (ring_area / tile_area).ceil() as usize;
+        }
+        total
+    }
+
+    /// The heightmap tile pool must be large enough to hold the steady-state
+    /// working set of every band, with headroom for eviction lag during
+    /// player movement. If a future band-config change pushes the bound
+    /// above `MAX_TILES`, this test fails — bump `MAX_TILES` (or coarsen a
+    /// band) and update its derivation comment.
+    #[test]
+    fn heightmap_band_working_set_fits_pool() {
+        let bound = working_set_estimate();
+        // 1.4× headroom for transient overshoot during fast player motion.
+        let with_headroom = (bound as f32 * 1.4) as usize;
+        assert!(
+            with_headroom <= heightmap_pool::MAX_TILES as usize,
+            "heightmap working set {} (×1.4 = {}) exceeds MAX_TILES={} \
+             at PLANET_RADIUS_BLOCKS={}, chunked_arc={:.3} rad. \
+             Bands need to be coarsened or MAX_TILES bumped (with derivation).",
+            bound,
+            with_headroom,
+            heightmap_pool::MAX_TILES,
+            crate::voxel::sphere::PLANET_RADIUS_BLOCKS,
+            chunked_arc_radians(),
+        );
     }
 }

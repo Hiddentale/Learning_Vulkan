@@ -13,12 +13,14 @@ pub enum BlockType {
 
 impl BlockType {
     pub fn is_opaque(self) -> bool {
-        !matches!(self, BlockType::Air | BlockType::Water)
+        // Water is rendered as a solid opaque block for now (its own texture,
+        // no transparency). Real water shading is a separate followup.
+        !matches!(self, BlockType::Air)
     }
 
     #[allow(dead_code)] // needed for block placement
     pub fn is_transparent(self) -> bool {
-        self == BlockType::Water
+        false
     }
 
     #[allow(dead_code)] // needed for block placement

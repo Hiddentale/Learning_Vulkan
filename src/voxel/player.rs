@@ -643,29 +643,31 @@ mod tests {
         World::new(2, 0, None)
     }
 
-    /// Fill every chunk on the planet with stone — a uniform sphere.
+    /// A solid planet. `World::block_solid` already returns `true` for any
+    /// unloaded chunk inside the terrain `cy` band, so an empty world *is*
+    /// a solid planet for collision purposes — without allocating 6·N²·24
+    /// chunks. This makes the fixture O(1) regardless of `FACE_SIDE_CHUNKS`.
     fn solid_planet() -> World {
-        let mut w = empty_world();
-        for face in sphere::ALL_FACES {
-            for cx in 0..sphere::FACE_SIDE_CHUNKS {
-                for cz in 0..sphere::FACE_SIDE_CHUNKS {
-                    for cy in 0..sphere::FACE_RADIAL_CHUNKS / 4 {
-                        // Just enough radial layers to bound the planet.
-                        w.insert_solid_chunk(ChunkPos { face, cx, cy, cz });
-                    }
-                }
-            }
-        }
-        w
+        empty_world()
     }
+
+    /// Footprint (in chunks, half-extent) of fixture planets that need
+    /// concrete chunk data around the player. Tests using `floor_planet`
+    /// only walk a few chunks; bounding the footprint keeps the fixture
+    /// O(1) at any planet scale.
+    const FIXTURE_HALF_EXTENT: i32 = 4;
 
     fn floor_planet() -> World {
         // A planet whose ly=8 plane (in cy=2) is solid stone, everything
-        // else is air. Useful for testing standing on a flat surface.
+        // else is air. Inserted in a small footprint around each face's
+        // center — large enough for the walking tests, independent of
+        // `FACE_SIDE_CHUNKS`.
         let mut w = empty_world();
+        let h = FIXTURE_HALF_EXTENT;
         for face in sphere::ALL_FACES {
-            for cx in 0..sphere::FACE_SIDE_CHUNKS {
-                for cz in 0..sphere::FACE_SIDE_CHUNKS {
+            let mid = sphere::FACE_SIDE_CHUNKS / 2;
+            for cx in (mid - h)..=(mid + h) {
+                for cz in (mid - h)..=(mid + h) {
                     let cp = ChunkPos { face, cx, cy: 2, cz };
                     let mut chunk = Chunk::new(BlockType::Air);
                     for lx in 0..CHUNK_SIZE {
@@ -676,8 +678,6 @@ mod tests {
                         }
                     }
                     w.chunks_mut_for_test().insert(cp, chunk);
-                    // Also load the chunks above so apply_physics doesn't
-                    // see "out of terrain range" => solid.
                     w.insert_empty_chunk_at(ChunkPos { face, cx, cy: 3, cz });
                     w.insert_empty_chunk_at(ChunkPos { face, cx, cy: 4, cz });
                 }

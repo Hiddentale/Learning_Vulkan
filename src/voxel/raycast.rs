@@ -59,7 +59,7 @@ pub fn raycast(origin: Vec3, direction: Vec3, world: &World) -> Option<RaycastHi
             continue;
         }
         let block = world.block_at(cp, here.lx, here.ly, here.lz);
-        if block != BlockType::Air && block != BlockType::Water {
+        if block != BlockType::Air {
             return Some(RaycastHit {
                 hit: here,
                 adjacent: prev.unwrap_or(here),

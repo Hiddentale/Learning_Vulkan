@@ -216,7 +216,15 @@ unsafe fn create_graphics_pipeline(
         .polygon_mode(vk::PolygonMode::FILL)
         .line_width(1.0)
         .cull_mode(vk::CullModeFlags::BACK)
-        .front_face(vk::FrontFace::CLOCKWISE);
+        // Heightmap tile vertices live in world cartesian (no cube-to-sphere
+        // projection). Triangles `(tl, tr, bl)` in `generate_tile_mesh` have
+        // a 3D world-space normal pointing OUTWARD from the planet (right-hand
+        // rule on the index order, since face_basis is right-handed). For an
+        // outside viewer that normal points toward the camera, which is
+        // counter-clockwise in screen space — so CCW must be the front face,
+        // unlike the mesh-chunk pipeline which uses CW because the cube
+        // projection inverts winding.
+        .front_face(vk::FrontFace::COUNTER_CLOCKWISE);
 
     let multisample_state = vk::PipelineMultisampleStateCreateInfo::builder().rasterization_samples(vk::SampleCountFlags::_1);
 

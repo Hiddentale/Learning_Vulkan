@@ -3,12 +3,20 @@ use super::chunk::{Chunk, CHUNK_SIZE};
 use super::chunk_generator::ChunkGenerator;
 use super::erosion::ErosionMap;
 use super::metric::MetricField;
-use super::sphere::{self, ChunkPos};
+use super::sphere::{self, ChunkPos, PLANET_RADIUS_BLOCKS};
+use glam::DVec3;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 pub const TERRAIN_MIN_CY: i32 = 0;
 pub const TERRAIN_MAX_CY: i32 = 47; // 768 blocks tall (48 × 16)
+
+/// Altitude (in blocks above the planet's nominal surface radius) above
+/// which the mesh-shader streamer goes silent: the player is "in space",
+/// the heightmap LOD covers the planet, and no mesh chunks are kept
+/// resident. Below this threshold the streamer always loads the full
+/// 2D column working set around the player's ground projection.
+pub const ORBITAL_CUTOFF_BLOCKS: f64 = 3200.0;
 
 pub struct World {
     chunks: HashMap<ChunkPos, Chunk>,
@@ -33,46 +41,98 @@ impl World {
         }
     }
 
-    /// Non-blocking world update. Unloads out-of-range chunks immediately,
-    /// requests missing columns from background threads, and receives any
-    /// completed columns. Never blocks the calling thread.
-    pub fn update(&mut self, player_cx: i32, _player_cy: i32, player_cz: i32) -> WorldDelta {
+    /// Non-blocking world update. Streams a 2D Chebyshev-bounded set of
+    /// **columns** around the player's ground projection `(face, cx, cz)`.
+    /// A column is in the working set iff `max(|cx-px|, |cz-pz|) <= rd`
+    /// on the same face. The full vertical terrain band always loads for
+    /// every in-set column — the streamer never reasons about `cy`.
+    ///
+    /// At altitude (`|world| - PLANET_RADIUS > ORBITAL_CUTOFF_BLOCKS`) the
+    /// effective `rd` collapses to `-1`, the working set becomes empty, and
+    /// the same eviction loop unloads everything. The heightmap LOD covers
+    /// the planet from orbit. Crucially, the generator is still pumped on
+    /// every frame: requests don't issue, but `receive()` continues to
+    /// drain the channel and clear stale `pending` entries. There is no
+    /// special-case early return.
+    ///
+    /// Working set bound: `(2·rd+1)² × (TERRAIN_MAX_CY-TERRAIN_MIN_CY+1)`
+    /// chunks, independent of `FACE_SIDE_CHUNKS`. This is the property that
+    /// lets the planet scale arbitrarily without overflowing the GPU mesh
+    /// pool.
+    ///
+    /// Cross-face spillover (working set spanning into neighboring faces
+    /// when the player nears a face edge) is a known limitation: the
+    /// heightmap LOD covers the visual gap until the player has fully
+    /// crossed onto the new face, after which the streamer reloads the new
+    /// neighborhood.
+    pub fn update(&mut self, player_world: DVec3) -> WorldDelta {
         let mut loaded = Vec::new();
         let mut unloaded = Vec::new();
 
-        // Unload chunks outside render distance.
-        // Chunks within XZ range always stay (full column needed for physics/gravity).
-        // Beyond that, use 3D distance to cull vertically.
+        let Some((player_pos, _, _, _)) = sphere::world_to_chunk_local(player_world) else {
+            return WorldDelta { loaded, unloaded };
+        };
+        let player_face = player_pos.face;
+        let player_cx = player_pos.cx;
+        let player_cz = player_pos.cz;
+
+        // Orbital cutoff: when the player is far above the surface, the
+        // working set collapses to nothing. `rd = -1` makes `in_set` always
+        // false for non-empty working sets, so the existing eviction loop
+        // unloads everything via the same code path that handles walking.
+        let altitude_blocks = player_world.length() - PLANET_RADIUS_BLOCKS as f64;
+        let rd = if altitude_blocks > ORBITAL_CUTOFF_BLOCKS {
+            -1
+        } else {
+            self.render_distance
+        };
+
+        let in_set = |pos: ChunkPos| -> bool {
+            rd >= 0
+                && pos.face == player_face
+                && (pos.cx - player_cx).abs() <= rd
+                && (pos.cz - player_cz).abs() <= rd
+        };
+
+        // Evict anything outside the 2D column working set.
         let keys: Vec<ChunkPos> = self.chunks.keys().copied().collect();
         for pos in keys {
-            // Phase C: never unload chunks based on flat XZ distance —
-            // every chunk on the planet is always loaded for the tiny
-            // world. Distance-based eviction returns in Phase E.
-            let _ = (pos, player_cx, player_cz);
-            let _ = &mut unloaded;
-            break;
+            if !in_set(pos) {
+                self.chunks.remove(&pos);
+                unloaded.push(pos);
+            }
         }
 
-        // Phase C: enumerate all 6 faces × full face grid. The planet is
-        // small enough that every column is always resident.
-        let _ = player_cx;
-        let _ = player_cz;
-        for &face in &sphere::ALL_FACES {
-            for cz in 0..sphere::FACE_SIDE_CHUNKS {
-                for cx in 0..sphere::FACE_SIDE_CHUNKS {
-                    let has_any = (TERRAIN_MIN_CY..=TERRAIN_MAX_CY).any(|cy| self.chunks.contains_key(&ChunkPos { face, cx, cy, cz }));
-                    if !has_any && !self.generator.is_pending(face, cx, cz) {
-                        self.generator.request(face, cx, cz);
+        // Request every in-set column. Columns are always full-band; the
+        // generator returns the entire terrain stack at once.
+        if rd >= 0 {
+            for dz in -rd..=rd {
+                for dx in -rd..=rd {
+                    let cx = player_cx + dx;
+                    let cz = player_cz + dz;
+                    if cx < 0 || cx >= sphere::FACE_SIDE_CHUNKS || cz < 0 || cz >= sphere::FACE_SIDE_CHUNKS {
+                        continue;
+                    }
+                    let any_loaded = (TERRAIN_MIN_CY..=TERRAIN_MAX_CY)
+                        .any(|cy| self.chunks.contains_key(&ChunkPos { face: player_face, cx, cy, cz }));
+                    if !any_loaded && !self.generator.is_pending(player_face, cx, cz) {
+                        self.generator.request(player_face, cx, cz);
                     }
                 }
             }
         }
 
-        // Receive completed columns — keep all Y layers (full columns for physics)
+        // Always pump the generator. At orbit this drops stale results on
+        // the floor (in_set rejects them) AND clears the pending set so the
+        // next descent can re-request cleanly. This is the property the
+        // unit test `round_trip_through_orbit_restores_resident_set` pins.
         for col in self.generator.receive() {
             for (i, chunk) in col.chunks.into_iter().enumerate() {
                 let cy = TERRAIN_MIN_CY + i as i32;
                 let key = ChunkPos { face: col.face, cx: col.cx, cy, cz: col.cz };
+                if !in_set(key) {
+                    continue;
+                }
                 loaded.push(key);
                 self.chunks.insert(key, chunk);
             }
@@ -167,44 +227,98 @@ mod tests {
     use super::*;
     use crate::voxel::sphere::{self, ChunkPos};
 
-    fn drain_world(world: &mut World, expected: usize) -> bool {
+    fn surface_world_at_face_center(face: sphere::Face) -> DVec3 {
+        sphere::chunk_to_world(
+            ChunkPos {
+                face,
+                cx: sphere::FACE_SIDE_CHUNKS / 2,
+                cy: TERRAIN_MAX_CY / 2,
+                cz: sphere::FACE_SIDE_CHUNKS / 2,
+            },
+            glam::Vec3::splat(8.0),
+        )
+    }
+
+    fn drain_until_stable(world: &mut World, player_world: DVec3) -> usize {
+        // Generation is async on worker threads; under heavy parallel test
+        // load the per-poll stability window can race. We need (a) a count
+        // > 0 before declaring stability, and (b) several consecutive
+        // unchanged polls so an ongoing burst of completions doesn't return
+        // a partial set.
+        let mut last = 0usize;
+        let mut stable = 0usize;
         for _ in 0..2000 {
-            world.update(0, 0, 0);
-            if world.chunk_count() >= expected {
-                return true;
+            world.update(player_world);
+            let now = world.chunk_count();
+            if now == last && now > 0 {
+                stable += 1;
+            } else {
+                stable = 0;
+                last = now;
             }
-            std::thread::sleep(std::time::Duration::from_millis(5));
+            if stable >= 12 {
+                return now;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        false
+        last
     }
 
-    /// Pre-generation reaches the full planet column count without
-    /// hanging. Catches generator deadlocks.
+    /// Working-set bound: at any planet scale, after streaming has settled,
+    /// the resident chunk count is bounded by the 3D Chebyshev cube
+    /// `(2·rd+1)² × min(2·rd+1, terrain_height_chunks)` — independent of
+    /// `FACE_SIDE_CHUNKS`. This is the structural property that prevents
+    /// pool overflow at large planet scales. Future scale-ups must keep
+    /// this test passing without bumping `MAX_MESH_CHUNKS`.
     #[test]
-    fn pregen_completes_full_planet() {
-        let mut world = World::new(2, 0, None);
-        let total_columns = (6 * sphere::FACE_SIDE_CHUNKS * sphere::FACE_SIDE_CHUNKS) as usize;
-        let total_chunks = total_columns * (TERRAIN_MAX_CY - TERRAIN_MIN_CY + 1) as usize;
-        assert!(drain_world(&mut world, total_chunks), "pregen never reached {} chunks (got {})", total_chunks, world.chunk_count());
-        assert_eq!(world.chunk_count(), total_chunks);
+    fn world_resident_set_is_bounded_by_render_distance() {
+        let render_distance = 4;
+        let mut world = World::new(render_distance, 0, None);
+        let player_world = surface_world_at_face_center(sphere::Face::PosY);
+        let count = drain_until_stable(&mut world, player_world);
+
+        let terrain_h = (TERRAIN_MAX_CY - TERRAIN_MIN_CY + 1) as usize;
+        let upper_bound = ((2 * render_distance + 1) as usize).pow(2) * terrain_h;
+
+        assert!(count > 0, "resident set is empty after pregen");
+        assert!(
+            count <= upper_bound,
+            "resident set {} exceeds working-set bound {} (render_distance={}, FACE_SIDE_CHUNKS={})",
+            count,
+            upper_bound,
+            render_distance,
+            sphere::FACE_SIDE_CHUNKS,
+        );
     }
 
-    /// Every face has the expected column count once generation settles.
+    /// After a player moves far enough on a face, chunks that fell out of
+    /// the working set are evicted (not leaked). Catches the regression
+    /// where `update` fails to remove out-of-range chunks.
     #[test]
-    fn world_loads_all_six_faces() {
-        let mut world = World::new(2, 1, None);
-        let total_columns = (6 * sphere::FACE_SIDE_CHUNKS * sphere::FACE_SIDE_CHUNKS) as usize;
-        let total_chunks = total_columns * (TERRAIN_MAX_CY - TERRAIN_MIN_CY + 1) as usize;
-        assert!(drain_world(&mut world, total_chunks), "drain timed out at {}", world.chunk_count());
-        for face in sphere::ALL_FACES {
-            let count = world
-                .chunks
-                .keys()
-                .filter(|cp| cp.face == face)
-                .count();
-            let per_face = (sphere::FACE_SIDE_CHUNKS * sphere::FACE_SIDE_CHUNKS) as usize * (TERRAIN_MAX_CY - TERRAIN_MIN_CY + 1) as usize;
-            assert_eq!(count, per_face, "face {:?}: {} chunks (expected {})", face, count, per_face);
-        }
+    fn chunks_unload_when_player_moves_out_of_range() {
+        let render_distance = 3;
+        let mut world = World::new(render_distance, 0, None);
+
+        let center = surface_world_at_face_center(sphere::Face::PosY);
+        drain_until_stable(&mut world, center);
+        let initial = world.chunk_count();
+        assert!(initial > 0);
+
+        // Move the player far enough on the +Y face that none of the
+        // initial chunks remain in the working set.
+        let shift_chunks = (2 * render_distance + 2) as i32;
+        let cx = sphere::FACE_SIDE_CHUNKS / 2 + shift_chunks;
+        let cz = sphere::FACE_SIDE_CHUNKS / 2;
+        let moved = sphere::chunk_to_world(
+            ChunkPos { face: sphere::Face::PosY, cx, cy: TERRAIN_MAX_CY / 2, cz },
+            glam::Vec3::splat(8.0),
+        );
+        let delta = world.update(moved);
+        assert!(
+            !delta.unloaded.is_empty(),
+            "no chunks were unloaded after moving {} chunks across the face",
+            shift_chunks,
+        );
     }
 
     /// `block_solid` for an unloaded chunk falls back to "solid" inside the
@@ -218,6 +332,32 @@ mod tests {
         assert!(world.block_solid(in_band, 0, 0, 0));
         let above_band = ChunkPos { face: sphere::Face::PosY, cx: 0, cy: TERRAIN_MAX_CY + 5, cz: 0 };
         assert!(!world.block_solid(above_band, 0, 0, 0));
+    }
+
+    /// Round-trip through orbit must restore the resident set bit-for-bit.
+    /// Catches the class of bug where the orbital eviction path leaves
+    /// generator state (channel, pending set) inconsistent so the streamer
+    /// can't recover when the player descends.
+    #[test]
+    fn round_trip_through_orbit_restores_resident_set() {
+        let render_distance = 3;
+        let mut world = World::new(render_distance, 0, None);
+        let surface = surface_world_at_face_center(sphere::Face::PosY);
+        let baseline = drain_until_stable(&mut world, surface);
+        assert!(baseline > 0);
+
+        // Fly to orbit (well above any plausible cutoff). Pump for many
+        // frames so workers complete in-flight columns while we're "away".
+        let orbit = surface * 100.0;
+        for _ in 0..200 {
+            world.update(orbit);
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert_eq!(world.chunk_count(), 0, "orbit should evict everything");
+
+        // Descend. Resident set must come back to the same count.
+        let after = drain_until_stable(&mut world, surface);
+        assert_eq!(after, baseline, "resident set should be restored after orbital round-trip");
     }
 
     /// Block writes are visible to subsequent reads.

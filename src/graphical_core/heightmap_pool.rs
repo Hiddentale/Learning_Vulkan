@@ -6,8 +6,29 @@ use glam::{DVec3, Vec3};
 use std::collections::HashMap;
 use vulkan_rust::{vk, Device, Instance};
 
-/// Maximum number of heightmap tiles in the pool.
-const MAX_TILES: u32 = 350;
+/// Maximum number of heightmap tiles resident in the pool.
+///
+/// Sized to fit the steady-state working set of LOD tiles around the player,
+/// derived from the band geometry in `HEIGHTMAP_BANDS` (vulkan_object.rs):
+///
+/// ```text
+/// tiles_per_band ≈ (2π · sin(θ_mid) · arc_thickness) / tile_arc²
+/// tile_arc = tile_chunks · CHUNK_SIZE / PLANET_RADIUS
+/// ```
+///
+/// The `R = PLANET_RADIUS` factor cancels: ring area and tile area both
+/// scale like `1/R²`, so the working-set count is **independent of planet
+/// size**. Determined by the band layout alone.
+///
+/// Current 2-band design after the inner band was extended to start at
+/// angular distance 0 (so the heightmap covers directly-below the player
+/// when mesh chunks have been evicted): bound ≈ 462 tiles. With 1.4×
+/// transient-overshoot headroom: ~646. Round to 800.
+///
+/// Pinned by `heightmap_band_working_set_fits_pool` in vulkan_object.rs —
+/// any future band-config change that pushes the working set above this
+/// constant must update both the constant and the test.
+pub const MAX_TILES: u32 = 800;
 /// Max vertices per tile (129x129 grid posts for HM-A).
 const MAX_VERTICES_PER_TILE: usize = 129 * 129;
 /// Max indices per tile (128x128 quads * 6 indices).
@@ -185,15 +206,27 @@ impl HeightmapPool {
         }
     }
 
-    /// Remove all tiles beyond `max_angle` (radians) from the player.
-    pub unsafe fn evict_out_of_range(&mut self, player_world: DVec3, max_angle: f32) {
+    /// Evict any tile whose angular distance from the player is **outside**
+    /// `[min_angle, max_angle]`. The lower bound is the mesh shadow: when
+    /// the player is on the surface, mesh chunks cover an inner cap that
+    /// the heightmap must not overlap (otherwise the smooth shell occludes
+    /// the floored mesh-block surface and the player visually lands on the
+    /// heightmap instead of the blocks). When the player is at altitude
+    /// the caller passes `min_angle = 0`.
+    pub unsafe fn evict_outside_band(
+        &mut self,
+        player_world: DVec3,
+        min_angle: f32,
+        max_angle: f32,
+    ) {
         let to_remove: Vec<TileKey> = self
             .tiles
             .iter()
             .filter_map(|(&key, &slot)| {
                 let info = self.tile_info[slot as usize].as_ref()?;
                 let center_w = DVec3::new(info.center[0] as f64, info.center[1] as f64, info.center[2] as f64);
-                if angular_distance(player_world, center_w) > max_angle {
+                let dist = angular_distance(player_world, center_w);
+                if dist > max_angle || dist < min_angle {
                     Some(key)
                 } else {
                     None

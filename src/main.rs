@@ -34,7 +34,6 @@ const DEVICE_EXTENSIONS: &[&std::ffi::CStr] = &[
     vk::extension_names::EXT_MESH_SHADER_EXTENSION_NAME,
 ];
 
-const WORLD_DISTANCE: i32 = 24;
 const BUTTON_W: f32 = 300.0;
 const BUTTON_H: f32 = 40.0;
 const TEXT_SIZE: f32 = 20.0;
@@ -141,12 +140,14 @@ fn main() -> Result<()> {
                                     let seed: u32 = seed_text.parse().unwrap_or_else(|_| rand_seed());
                                     match storage::world_meta::create_world(name, seed) {
                                         Ok(dir) => {
-                                            let side = 2 * WORLD_DISTANCE + 1;
-                                            // Phase B2c: clamp pregen total to the actual face column count.
-                                            // Phase C: 6 faces × FACE_SIDE_CHUNKS² columns each.
-                                            let face_cols = (6 * voxel::sphere::FACE_SIDE_CHUNKS * voxel::sphere::FACE_SIDE_CHUNKS) as usize;
-                                            let total = face_cols;
-                                            let _ = side;
+                                            // Pregen is "ready to play" when the player's working
+                                            // set is filled — not when the entire planet is in RAM.
+                                            // Working set = (2·WORLD_DISTANCE+1)² columns on the
+                                            // player's spawn face. The heightmap LOD covers everything
+                                            // outside this neighborhood from the moment world entry.
+                                            let stream_rd = graphical_core::vulkan_object::WORLD_DISTANCE;
+                                            let side = (2 * stream_rd + 1) as usize;
+                                            let total = side * side;
                                             let erosion_path = dir.join("erosion_map.bin");
                                             let ew = voxel::erosion_worker::ErosionWorker::start(seed, erosion_path);
                                             game_state = GameState::PreGenerating {
@@ -429,10 +430,9 @@ fn draw_menu(ui: &mut UiPipeline, state: &mut GameState, sw: f32, sh: f32, curso
                     let seed: u32 = seed_text.parse().unwrap_or_else(|_| rand_seed());
                     match storage::world_meta::create_world(name, seed) {
                         Ok(dir) => {
-                            let side = 2 * WORLD_DISTANCE + 1;
-                            let face_cols = (6 * voxel::sphere::FACE_SIDE_CHUNKS * voxel::sphere::FACE_SIDE_CHUNKS) as usize;
-                            let total = face_cols;
-                            let _ = side;
+                            let stream_rd = graphical_core::vulkan_object::WORLD_DISTANCE;
+                            let side = (2 * stream_rd + 1) as usize;
+                            let total = side * side;
                             let erosion_path = dir.join("erosion_map.bin");
                             let ew = voxel::erosion_worker::ErosionWorker::start(seed, erosion_path);
                             *state = GameState::PreGenerating {
