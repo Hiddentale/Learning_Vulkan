@@ -1,0 +1,82 @@
+#version 450
+
+// Per-tile cull pass for the SSE quadtree heightmap path. One thread per
+// resident tile. Frustum + horizon culls and atomically appends survivors
+// to a packed `visible_tiles[]` list. The indirect args buffer is laid out
+// as `VkDrawMeshTasksIndirectCommandEXT` (groupCountX/Y/Z); only X is
+// touched per frame, Y/Z are pre-initialised to 1 at buffer creation.
+
+layout(local_size_x = 64) in;
+
+// Mirrors `GpuTileDesc` in src/voxel/heightmap_quadtree.rs. std430.
+struct TileDesc {
+    vec3 center;
+    float bounding_radius;
+    uvec4 neighbor_levels;
+    uint face;
+    uint level;
+    uint ix;
+    uint iy;
+    float geometric_error;
+    float morph_factor;
+    uint height_page;
+    uint _pad;
+};
+
+layout(std430, set = 0, binding = 0) readonly buffer TileDescBuffer {
+    TileDesc tiles[];
+};
+
+layout(std430, set = 0, binding = 1) writeonly buffer VisibleTiles {
+    uint visible_tiles[];
+};
+
+layout(std430, set = 0, binding = 2) buffer IndirectArgs {
+    uint group_count_x;
+    uint group_count_y;
+    uint group_count_z;
+};
+
+layout(push_constant) uniform PushConstants {
+    vec4 planes[6];
+    vec3 camera_pos;
+    uint tile_count;
+    float planet_radius;
+    float _pad0;
+    float _pad1;
+    float _pad2;
+};
+
+bool frustum_visible(vec3 center, float radius) {
+    for (int i = 0; i < 6; i++) {
+        if (dot(planes[i].xyz, center) + planes[i].w < -radius) return false;
+    }
+    return true;
+}
+
+bool horizon_visible(vec3 sphere_center, float sphere_radius) {
+    float cam_dist = length(camera_pos);
+    if (cam_dist <= planet_radius) return true;
+    float c_dist = length(sphere_center);
+    if (c_dist < 1e-4) return true;
+    vec3 cam_dir = camera_pos / cam_dist;
+    vec3 chunk_dir = sphere_center / c_dist;
+    float cos_a = clamp(planet_radius / cam_dist, -1.0, 1.0);
+    float sin_a = sqrt(max(0.0, 1.0 - cos_a * cos_a));
+    float sin_alpha = clamp(sphere_radius / c_dist, 0.0, 1.0);
+    float cos_alpha = sqrt(max(0.0, 1.0 - sin_alpha * sin_alpha));
+    float threshold = cos_a * cos_alpha - sin_a * sin_alpha;
+    return dot(chunk_dir, cam_dir) >= threshold;
+}
+
+void main() {
+    uint tile_idx = gl_GlobalInvocationID.x;
+    if (tile_idx >= tile_count) return;
+
+    TileDesc tile = tiles[tile_idx];
+    if (!horizon_visible(tile.center, tile.bounding_radius)) return;
+    if (!frustum_visible(tile.center, tile.bounding_radius)) return;
+
+    uint slot = atomicAdd(group_count_x, 1u);
+    visible_tiles[slot] = tile_idx;
+}

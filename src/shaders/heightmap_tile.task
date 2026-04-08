@@ -1,0 +1,48 @@
+#version 450
+#extension GL_EXT_mesh_shader : require
+
+// One workgroup per visible tile (dispatched indirectly with X = visible
+// tile count from heightmap_cull.comp). The task shader emits 64 meshlets
+// per tile, one per 8x8 quadrant of the 65x65 vertex grid.
+
+layout(local_size_x = 64) in;
+
+struct TileDesc {
+    vec3 center;
+    float bounding_radius;
+    uvec4 neighbor_levels;
+    uint face;
+    uint level;
+    uint ix;
+    uint iy;
+    float geometric_error;
+    float morph_factor;
+    uint height_page;
+    uint _pad;
+};
+
+layout(std430, set = 0, binding = 0) readonly buffer TileDescBuffer {
+    TileDesc tiles[];
+};
+
+layout(std430, set = 0, binding = 1) readonly buffer VisibleTiles {
+    uint visible_tiles[];
+};
+
+struct MeshPayload {
+    uint tile_index;
+    uint quadrant_x;
+    uint quadrant_y;
+};
+
+taskPayloadSharedEXT MeshPayload payloads[64];
+
+void main() {
+    uint tile_index = visible_tiles[gl_WorkGroupID.x];
+    uint local = gl_LocalInvocationID.x;
+    payloads[local].tile_index = tile_index;
+    payloads[local].quadrant_x = local & 7u;
+    payloads[local].quadrant_y = (local >> 3u) & 7u;
+    barrier();
+    EmitMeshTasksEXT(64u, 1u, 1u);
+}

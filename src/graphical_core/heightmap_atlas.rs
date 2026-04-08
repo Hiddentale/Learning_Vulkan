@@ -1,54 +1,60 @@
-//! CPU page allocator and storage backing the heightmap atlas.
+//! GPU heightmap atlas: a single R32_SFLOAT 2D image holding one
+//! `HEIGHT_PAGE_SIZE × HEIGHT_PAGE_SIZE` page per resident quadtree leaf.
 //!
-//! Phase 2: a pure-Rust LRU page allocator that owns the height grid for
-//! every resident quadtree leaf. Each page is `HEIGHT_PAGE_SIZE²` floats
-//! encoding the surface offset above `PLANET_RADIUS_BLOCKS` (positive
-//! upward, clamped to `±MAX_TERRAIN_AMPLITUDE`).
-//!
-//! Phase 3 will wrap this with a `VkImage` and a staging buffer; the page
-//! index will become the (x, y) position in a single 2D texture atlas
-//! laid out as `ATLAS_COLS × ATLAS_ROWS` pages, so existing CPU code keeps
-//! the same `u32` page index API. The `Vec<f32>` per-page storage will
-//! disappear once the GPU image is the source of truth.
+//! Layout: `ATLAS_COLS × ATLAS_ROWS` pages packed into a single image. Page
+//! `p` lives at texel offset `(p % ATLAS_COLS, p / ATLAS_COLS) * HEIGHT_PAGE_SIZE`.
+//! The CPU side owns a host-visible staging buffer of the same byte size as
+//! the image; `insert` writes new heights into the staging slot and queues
+//! a copy. `record_uploads` records `cmd_copy_buffer_to_image` for every
+//! pending page, surrounded by the layout transitions needed to make the
+//! atlas sample-able again.
 
 #![allow(dead_code)] // Wired up incrementally across phases.
 
+use crate::graphical_core::buffers::allocate_buffer;
+use crate::graphical_core::memory::find_memory_type;
+use crate::graphical_core::vulkan_object::VulkanApplicationData;
 use crate::voxel::heightmap_quadtree::{HEIGHT_PAGE_SIZE, MAX_RESIDENT_TILES};
 use std::collections::HashMap;
+use vulkan_rust::{vk, Device, Instance};
 
 /// One height per post on a `HEIGHT_PAGE_SIZE × HEIGHT_PAGE_SIZE` grid.
 pub const FLOATS_PER_PAGE: usize = (HEIGHT_PAGE_SIZE as usize) * (HEIGHT_PAGE_SIZE as usize);
+pub const BYTES_PER_PAGE: usize = FLOATS_PER_PAGE * 4;
 
+/// Atlas grid: how many pages tile across one row of the image. The
+/// remainder lives in subsequent rows. Chosen as the ceiling square root
+/// of `MAX_RESIDENT_TILES` so the image stays roughly square.
+pub const ATLAS_COLS: u32 = 32;
+pub const ATLAS_ROWS: u32 = (MAX_RESIDENT_TILES as u32 + ATLAS_COLS - 1) / ATLAS_COLS;
 /// Number of pages addressable by the atlas. Sized to the quadtree's
-/// `MAX_RESIDENT_TILES` so a fully-populated working set always fits.
-pub const ATLAS_PAGE_COUNT: usize = MAX_RESIDENT_TILES;
+/// `MAX_RESIDENT_TILES` working set.
+pub const ATLAS_PAGE_COUNT: usize = (ATLAS_COLS * ATLAS_ROWS) as usize;
 
-/// Sentinel index meaning "no page assigned to this morton".
+const _: () = assert!(ATLAS_PAGE_COUNT >= MAX_RESIDENT_TILES);
+
+pub const ATLAS_WIDTH: u32 = ATLAS_COLS * HEIGHT_PAGE_SIZE;
+pub const ATLAS_HEIGHT: u32 = ATLAS_ROWS * HEIGHT_PAGE_SIZE;
+pub const ATLAS_FORMAT: vk::Format = vk::Format::R32_SFLOAT;
+
+/// Sentinel meaning "no page assigned to this morton".
 pub const NO_PAGE: u32 = u32::MAX;
 
-/// Pure-CPU heightmap atlas. Owns the height storage and an LRU page
-/// allocator. The Phase 3 Vulkan wrapper holds a `VkImage` whose contents
-/// mirror this struct's `pages` array.
-pub struct HeightmapAtlas {
-    /// Flat backing storage. Page `i` lives in `pages[i*FLOATS_PER_PAGE..(i+1)*FLOATS_PER_PAGE]`.
-    pages: Vec<f32>,
-    /// Free page indices, popped on alloc.
+/// Pure-CPU LRU page allocator. Owns the morton↔page mapping that the
+/// GPU atlas wraps. Lives in its own struct so it can be unit-tested
+/// without standing up Vulkan resources.
+pub struct PageAllocator {
     free_pages: Vec<u32>,
-    /// Morton ↔ page index. Both directions are needed: morton→page for
-    /// "where do I draw this tile from", page→morton for eviction lookup.
     morton_to_page: HashMap<u64, u32>,
     page_to_morton: Vec<Option<u64>>,
-    /// Most-recently-used queue, oldest at the front. Mortons get pushed
-    /// onto the back on every touch; eviction picks from the front.
     lru: std::collections::VecDeque<u64>,
 }
 
-impl HeightmapAtlas {
+impl PageAllocator {
     pub fn new() -> Self {
         let mut free_pages: Vec<u32> = (0..ATLAS_PAGE_COUNT as u32).rev().collect();
         free_pages.shrink_to_fit();
         Self {
-            pages: vec![0.0; ATLAS_PAGE_COUNT * FLOATS_PER_PAGE],
             free_pages,
             morton_to_page: HashMap::with_capacity(ATLAS_PAGE_COUNT),
             page_to_morton: vec![None; ATLAS_PAGE_COUNT],
@@ -56,59 +62,36 @@ impl HeightmapAtlas {
         }
     }
 
-    /// Number of pages currently holding tile data.
-    pub fn resident(&self) -> usize {
-        self.morton_to_page.len()
-    }
+    pub fn resident(&self) -> usize { self.morton_to_page.len() }
+    pub fn page_of(&self, morton: u64) -> Option<u32> { self.morton_to_page.get(&morton).copied() }
 
-    pub fn page_of(&self, morton: u64) -> Option<u32> {
-        self.morton_to_page.get(&morton).copied()
-    }
-
-    /// Insert a heights page for `morton`. If the morton is already
-    /// resident the existing page is overwritten in place. Otherwise a
-    /// page is allocated; if the atlas is full, the least-recently-used
-    /// resident page is evicted to make room.
-    ///
-    /// Panics if `heights.len() != FLOATS_PER_PAGE`.
-    pub fn insert(&mut self, morton: u64, heights: &[f32]) -> u32 {
-        assert_eq!(
-            heights.len(),
-            FLOATS_PER_PAGE,
-            "heights page must be exactly {} floats",
-            FLOATS_PER_PAGE
-        );
+    /// Returns `(page_index, evicted_morton)`. `evicted_morton` is `Some`
+    /// when an LRU eviction happened to make room for `morton`.
+    pub fn alloc(&mut self, morton: u64) -> (u32, Option<u64>) {
         if let Some(&page) = self.morton_to_page.get(&morton) {
-            self.write_page(page, heights);
-            self.touch_lru(morton);
-            return page;
+            self.touch(morton);
+            return (page, None);
         }
+        let mut evicted = None;
         let page = match self.free_pages.pop() {
             Some(p) => p,
             None => {
-                let evict = self.lru.pop_front().expect("LRU empty but no free pages");
-                let p = self
-                    .morton_to_page
-                    .remove(&evict)
-                    .expect("LRU referenced an unknown morton");
+                let m = self.lru.pop_front().expect("LRU empty but no free pages");
+                let p = self.morton_to_page.remove(&m).expect("LRU referenced unknown morton");
                 self.page_to_morton[p as usize] = None;
+                evicted = Some(m);
                 p
             }
         };
         self.morton_to_page.insert(morton, page);
         self.page_to_morton[page as usize] = Some(morton);
         self.lru.push_back(morton);
-        self.write_page(page, heights);
-        page
+        (page, evicted)
     }
 
-    /// Free the page belonging to `morton`, if any. Returns the freed
-    /// page index for the caller to log/track.
-    pub fn evict(&mut self, morton: u64) -> Option<u32> {
+    pub fn free(&mut self, morton: u64) -> Option<u32> {
         let page = self.morton_to_page.remove(&morton)?;
         self.page_to_morton[page as usize] = None;
-        // Remove from LRU. Linear scan is fine — the queue is bounded by
-        // ATLAS_PAGE_COUNT (~1024) and eviction is rare.
         if let Some(idx) = self.lru.iter().position(|&m| m == morton) {
             self.lru.remove(idx);
         }
@@ -116,18 +99,7 @@ impl HeightmapAtlas {
         Some(page)
     }
 
-    /// Read-only view of one page's heights.
-    pub fn page_heights(&self, page: u32) -> &[f32] {
-        let start = page as usize * FLOATS_PER_PAGE;
-        &self.pages[start..start + FLOATS_PER_PAGE]
-    }
-
-    fn write_page(&mut self, page: u32, heights: &[f32]) {
-        let start = page as usize * FLOATS_PER_PAGE;
-        self.pages[start..start + FLOATS_PER_PAGE].copy_from_slice(heights);
-    }
-
-    fn touch_lru(&mut self, morton: u64) {
+    fn touch(&mut self, morton: u64) {
         if let Some(idx) = self.lru.iter().position(|&m| m == morton) {
             self.lru.remove(idx);
         }
@@ -135,84 +107,292 @@ impl HeightmapAtlas {
     }
 }
 
-impl Default for HeightmapAtlas {
+impl Default for PageAllocator {
     fn default() -> Self { Self::new() }
+}
+
+pub struct HeightmapAtlas {
+    pub image: vk::Image,
+    pub image_view: vk::ImageView,
+    pub sampler: vk::Sampler,
+    image_memory: vk::DeviceMemory,
+    staging_buffer: vk::Buffer,
+    staging_memory: vk::DeviceMemory,
+    staging_ptr: *mut f32,
+    /// Pages with new contents written to staging since the last upload
+    /// flush. `record_uploads` drains this.
+    pending: Vec<u32>,
+    /// True before the first `record_uploads` call — the image starts in
+    /// `UNDEFINED` and the first transition must come from `UNDEFINED`
+    /// rather than `SHADER_READ_ONLY_OPTIMAL`.
+    initial_layout_done: bool,
+    allocator: PageAllocator,
+}
+
+unsafe impl Send for HeightmapAtlas {}
+unsafe impl Sync for HeightmapAtlas {}
+
+impl HeightmapAtlas {
+    pub unsafe fn new(device: &Device, instance: &Instance, data: &mut VulkanApplicationData) -> anyhow::Result<Self> {
+        let (image, image_memory) = create_atlas_image(device, instance, data)?;
+        let image_view = create_atlas_view(device, image)?;
+        let sampler = create_atlas_sampler(device)?;
+
+        let staging_size = ATLAS_PAGE_COUNT as u64 * BYTES_PER_PAGE as u64;
+        let (staging_buffer, staging_memory, staging_ptr) = allocate_buffer::<f32>(
+            staging_size,
+            vk::BufferUsageFlags::TRANSFER_SRC,
+            device,
+            instance,
+            data,
+            super::host_visible_coherent(),
+        )?;
+
+        Ok(Self {
+            image,
+            image_view,
+            sampler,
+            image_memory,
+            staging_buffer,
+            staging_memory,
+            staging_ptr,
+            pending: Vec::with_capacity(ATLAS_PAGE_COUNT),
+            initial_layout_done: false,
+            allocator: PageAllocator::new(),
+        })
+    }
+
+    pub unsafe fn destroy(&mut self, device: &Device) {
+        device.destroy_sampler(self.sampler, None);
+        device.destroy_image_view(self.image_view, None);
+        device.destroy_image(self.image, None);
+        device.free_memory(self.image_memory, None);
+        device.unmap_memory(self.staging_memory);
+        device.destroy_buffer(self.staging_buffer, None);
+        device.free_memory(self.staging_memory, None);
+    }
+
+    pub fn resident(&self) -> usize { self.allocator.resident() }
+    pub fn page_of(&self, morton: u64) -> Option<u32> { self.allocator.page_of(morton) }
+
+    /// Insert a heights page for `morton`. Allocates a page (evicting LRU
+    /// if full), writes into the staging buffer, and queues a GPU upload
+    /// for the next `record_uploads` call.
+    pub fn insert(&mut self, morton: u64, heights: &[f32]) -> u32 {
+        assert_eq!(heights.len(), FLOATS_PER_PAGE);
+        let (page, _evicted) = self.allocator.alloc(morton);
+        unsafe { self.write_staging(page, heights); }
+        self.pending.push(page);
+        page
+    }
+
+    pub fn evict(&mut self, morton: u64) -> Option<u32> {
+        self.allocator.free(morton)
+    }
+
+    /// Record `cmd_copy_buffer_to_image` for every page modified since the
+    /// last call. Brackets the copies with the layout transitions needed
+    /// to land the image back in `SHADER_READ_ONLY_OPTIMAL`.
+    pub unsafe fn record_uploads(&mut self, device: &Device, cmd: vk::CommandBuffer) {
+        if self.pending.is_empty() && self.initial_layout_done {
+            return;
+        }
+        let old_layout = if self.initial_layout_done {
+            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+        } else {
+            vk::ImageLayout::UNDEFINED
+        };
+        let (src_access, src_stage) = if self.initial_layout_done {
+            (vk::AccessFlags::SHADER_READ, vk::PipelineStageFlags::FRAGMENT_SHADER)
+        } else {
+            (vk::AccessFlags::empty(), vk::PipelineStageFlags::TOP_OF_PIPE)
+        };
+        transition_image(
+            device, cmd, self.image,
+            old_layout, vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            src_access, vk::AccessFlags::TRANSFER_WRITE,
+            src_stage, vk::PipelineStageFlags::TRANSFER,
+        );
+        for &page in &self.pending {
+            let (px, py) = page_origin_texels(page);
+            let region = *vk::BufferImageCopy::builder()
+                .buffer_offset(page as u64 * BYTES_PER_PAGE as u64)
+                .image_subresource(*vk::ImageSubresourceLayers::builder()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .layer_count(1))
+                .image_offset(vk::Offset3D { x: px as i32, y: py as i32, z: 0 })
+                .image_extent(vk::Extent3D { width: HEIGHT_PAGE_SIZE, height: HEIGHT_PAGE_SIZE, depth: 1 });
+            device.cmd_copy_buffer_to_image(cmd, self.staging_buffer, self.image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[region]);
+        }
+        transition_image(
+            device, cmd, self.image,
+            vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            vk::AccessFlags::TRANSFER_WRITE, vk::AccessFlags::SHADER_READ,
+            vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER,
+        );
+        self.pending.clear();
+        self.initial_layout_done = true;
+    }
+
+    unsafe fn write_staging(&mut self, page: u32, heights: &[f32]) {
+        let dst = self.staging_ptr.add(page as usize * FLOATS_PER_PAGE);
+        std::ptr::copy_nonoverlapping(heights.as_ptr(), dst, FLOATS_PER_PAGE);
+    }
+}
+
+fn page_origin_texels(page: u32) -> (u32, u32) {
+    let px = page % ATLAS_COLS;
+    let py = page / ATLAS_COLS;
+    (px * HEIGHT_PAGE_SIZE, py * HEIGHT_PAGE_SIZE)
+}
+
+unsafe fn create_atlas_image(device: &Device, instance: &Instance, data: &VulkanApplicationData) -> anyhow::Result<(vk::Image, vk::DeviceMemory)> {
+    let info = vk::ImageCreateInfo::builder()
+        .image_type(vk::ImageType::_2D)
+        .format(ATLAS_FORMAT)
+        .extent(vk::Extent3D { width: ATLAS_WIDTH, height: ATLAS_HEIGHT, depth: 1 })
+        .mip_levels(1)
+        .array_layers(1)
+        .samples(vk::SampleCountFlags::_1)
+        .tiling(vk::ImageTiling::OPTIMAL)
+        .usage(vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED)
+        .sharing_mode(vk::SharingMode::EXCLUSIVE)
+        .initial_layout(vk::ImageLayout::UNDEFINED);
+    let image = device.create_image(&info, None)?;
+    let req = device.get_image_memory_requirements(image);
+    let props = instance.get_physical_device_memory_properties(data.physical_device);
+    let mem_type = find_memory_type(&props, req.memory_type_bits, vk::MemoryPropertyFlags::DEVICE_LOCAL)?;
+    let alloc = vk::MemoryAllocateInfo::builder().allocation_size(req.size).memory_type_index(mem_type);
+    let memory = device.allocate_memory(&alloc, None)?;
+    device.bind_image_memory(image, memory, 0)?;
+    Ok((image, memory))
+}
+
+unsafe fn create_atlas_view(device: &Device, image: vk::Image) -> anyhow::Result<vk::ImageView> {
+    let info = vk::ImageViewCreateInfo::builder()
+        .image(image)
+        .format(ATLAS_FORMAT)
+        .view_type(vk::ImageViewType::_2D)
+        .subresource_range(*vk::ImageSubresourceRange::builder()
+            .aspect_mask(vk::ImageAspectFlags::COLOR)
+            .level_count(1)
+            .layer_count(1));
+    Ok(device.create_image_view(&info, None)?)
+}
+
+unsafe fn create_atlas_sampler(device: &Device) -> anyhow::Result<vk::Sampler> {
+    // Bilinear filtering with clamp-to-edge so a stray sample at the page
+    // boundary reads the edge texel rather than wrapping into a neighbor
+    // page. Phase 4 may add a one-texel skirt to enable proper bilinear
+    // continuity across tile edges; for now, mesh shader samples are
+    // pinned to texel centers so the wrap mode rarely matters.
+    let info = vk::SamplerCreateInfo::builder()
+        .mag_filter(vk::Filter::LINEAR)
+        .min_filter(vk::Filter::LINEAR)
+        .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+        .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+        .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+        .anisotropy_enable(false)
+        .border_color(vk::BorderColor::FLOAT_OPAQUE_BLACK)
+        .compare_enable(false)
+        .mipmap_mode(vk::SamplerMipmapMode::NEAREST);
+    Ok(device.create_sampler(&info, None)?)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn fake_page(seed: f32) -> Vec<f32> {
-        (0..FLOATS_PER_PAGE).map(|i| seed + i as f32 * 0.1).collect()
-    }
-
     #[test]
-    fn empty_atlas_has_no_residents() {
-        let a = HeightmapAtlas::new();
+    fn empty_allocator_has_no_residents() {
+        let a = PageAllocator::new();
         assert_eq!(a.resident(), 0);
         assert_eq!(a.page_of(42), None);
     }
 
     #[test]
-    fn insert_and_lookup_round_trip() {
-        let mut a = HeightmapAtlas::new();
-        let p = fake_page(7.0);
-        let idx = a.insert(123, &p);
+    fn alloc_and_lookup_round_trip() {
+        let mut a = PageAllocator::new();
+        let (idx, evicted) = a.alloc(123);
+        assert_eq!(evicted, None);
         assert_eq!(a.page_of(123), Some(idx));
-        assert_eq!(a.page_heights(idx), p.as_slice());
         assert_eq!(a.resident(), 1);
     }
 
     #[test]
-    fn re_insert_overwrites_in_place() {
-        let mut a = HeightmapAtlas::new();
-        let idx1 = a.insert(7, &fake_page(1.0));
-        let idx2 = a.insert(7, &fake_page(2.0));
+    fn re_alloc_existing_morton_returns_same_page() {
+        let mut a = PageAllocator::new();
+        let (idx1, _) = a.alloc(7);
+        let (idx2, evicted) = a.alloc(7);
         assert_eq!(idx1, idx2);
-        assert_eq!(a.page_heights(idx1)[0], 2.0);
+        assert_eq!(evicted, None);
         assert_eq!(a.resident(), 1);
     }
 
     #[test]
-    fn evict_returns_page_to_free_list() {
-        let mut a = HeightmapAtlas::new();
-        let idx = a.insert(99, &fake_page(0.0));
-        let freed = a.evict(99).unwrap();
+    fn free_returns_page_for_reuse() {
+        let mut a = PageAllocator::new();
+        let (idx, _) = a.alloc(99);
+        let freed = a.free(99).unwrap();
         assert_eq!(freed, idx);
         assert_eq!(a.page_of(99), None);
-        // Next insert should reuse the freed page.
-        let idx2 = a.insert(100, &fake_page(0.0));
+        let (idx2, _) = a.alloc(100);
         assert_eq!(idx2, freed);
     }
 
     #[test]
-    fn full_atlas_evicts_lru_on_insert() {
-        let mut a = HeightmapAtlas::new();
-        // Fill it up.
+    fn full_allocator_evicts_lru_on_alloc() {
+        let mut a = PageAllocator::new();
         for i in 0..ATLAS_PAGE_COUNT as u64 {
-            a.insert(i, &fake_page(i as f32));
+            a.alloc(i);
         }
         assert_eq!(a.resident(), ATLAS_PAGE_COUNT);
         // Touch morton 5 to bump it to MRU.
-        a.insert(5, &fake_page(5.0));
-        // Insert a new morton — the LRU (morton 0, since 5 was just touched) gets evicted.
-        a.insert(9999, &fake_page(0.0));
-        assert_eq!(a.resident(), ATLAS_PAGE_COUNT);
-        assert!(a.page_of(0).is_none(), "expected morton 0 to be evicted");
-        assert!(a.page_of(5).is_some(), "expected morton 5 to survive (was touched)");
+        a.alloc(5);
+        // Insert a new morton — the LRU (morton 0) gets evicted.
+        let (_, evicted) = a.alloc(9999);
+        assert_eq!(evicted, Some(0));
+        assert!(a.page_of(0).is_none());
+        assert!(a.page_of(5).is_some());
         assert!(a.page_of(9999).is_some());
     }
 
     #[test]
-    fn pages_are_independent() {
-        let mut a = HeightmapAtlas::new();
-        let p1 = fake_page(1.0);
-        let p2 = fake_page(2.0);
-        let i1 = a.insert(1, &p1);
-        let i2 = a.insert(2, &p2);
+    fn pages_are_independent_indices() {
+        let mut a = PageAllocator::new();
+        let (i1, _) = a.alloc(1);
+        let (i2, _) = a.alloc(2);
         assert_ne!(i1, i2);
-        assert_eq!(a.page_heights(i1), p1.as_slice());
-        assert_eq!(a.page_heights(i2), p2.as_slice());
     }
+}
+
+unsafe fn transition_image(
+    device: &Device,
+    cmd: vk::CommandBuffer,
+    image: vk::Image,
+    old_layout: vk::ImageLayout,
+    new_layout: vk::ImageLayout,
+    src_access: vk::AccessFlags,
+    dst_access: vk::AccessFlags,
+    src_stage: vk::PipelineStageFlags,
+    dst_stage: vk::PipelineStageFlags,
+) {
+    let barrier = vk::ImageMemoryBarrier::builder()
+        .src_access_mask(src_access)
+        .dst_access_mask(dst_access)
+        .old_layout(old_layout)
+        .new_layout(new_layout)
+        .image(image)
+        .subresource_range(*vk::ImageSubresourceRange::builder()
+            .aspect_mask(vk::ImageAspectFlags::COLOR)
+            .level_count(1)
+            .layer_count(1))
+        .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED);
+    device.cmd_pipeline_barrier(
+        cmd, src_stage, dst_stage, vk::DependencyFlags::empty(),
+        &[] as &[vk::MemoryBarrier],
+        &[] as &[vk::BufferMemoryBarrier],
+        &[*barrier],
+    );
 }

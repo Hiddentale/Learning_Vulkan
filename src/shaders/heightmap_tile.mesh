@@ -1,0 +1,154 @@
+#version 450
+#extension GL_EXT_mesh_shader : require
+#extension GL_EXT_multiview : enable
+
+// Mesh shader for one 8x8-quadrant of one heightmap tile. 9x9 = 81 verts,
+// 8x8x2 = 128 prims per workgroup. Within Vulkan's portable mesh shader
+// limits (256 verts / 256 prims minimum guarantee).
+
+layout(local_size_x = 32) in;
+layout(triangles, max_vertices = 81, max_primitives = 128) out;
+
+struct TileDesc {
+    vec3 center;
+    float bounding_radius;
+    uvec4 neighbor_levels;
+    uint face;
+    uint level;
+    uint ix;
+    uint iy;
+    float geometric_error;
+    float morph_factor;
+    uint height_page;
+    uint _pad;
+};
+
+layout(std430, set = 0, binding = 0) readonly buffer TileDescBuffer {
+    TileDesc tiles[];
+};
+
+layout(set = 0, binding = 3) uniform CameraUBO {
+    mat4 view_projection[2];
+    mat4 inverse_view_projection[2];
+    vec3 light_direction;
+    float ambient_strength;
+    float planet_radius;
+    float cube_half;
+} camera;
+
+layout(set = 0, binding = 4) uniform sampler2D height_atlas;
+
+layout(push_constant) uniform PushConstants {
+    vec3 camera_pos;
+    uint atlas_cols;
+    float face_side_blocks;
+    float _pad0;
+    float _pad1;
+    float _pad2;
+};
+
+struct MeshPayload {
+    uint tile_index;
+    uint quadrant_x;
+    uint quadrant_y;
+};
+
+taskPayloadSharedEXT MeshPayload payloads[64];
+
+// Face basis (mirrors sphere::face_basis). Indexed by face_id 0..5.
+const vec3 FACE_TU[6] = vec3[6](
+    vec3(0, 1, 0), vec3(0, 0, 1), vec3(0, 0, 1),
+    vec3(1, 0, 0), vec3(1, 0, 0), vec3(0, 1, 0)
+);
+const vec3 FACE_TV[6] = vec3[6](
+    vec3(0, 0, 1), vec3(0, 1, 0), vec3(1, 0, 0),
+    vec3(0, 0, 1), vec3(0, 1, 0), vec3(1, 0, 0)
+);
+const vec3 FACE_N[6] = vec3[6](
+    vec3( 1, 0, 0), vec3(-1, 0, 0), vec3(0,  1, 0),
+    vec3( 0,-1, 0), vec3( 0, 0, 1), vec3(0,  0,-1)
+);
+
+vec3 cube_to_sphere_unit(vec3 v) {
+    float x = v.x, y = v.y, z = v.z;
+    return vec3(
+        x * sqrt(max(1.0 - y*y*0.5 - z*z*0.5 + y*y*z*z/3.0, 0.0)),
+        y * sqrt(max(1.0 - z*z*0.5 - x*x*0.5 + z*z*x*x/3.0, 0.0)),
+        z * sqrt(max(1.0 - x*x*0.5 - y*y*0.5 + x*x*y*y/3.0, 0.0))
+    );
+}
+
+const uint POSTS_PER_TILE = 65u;     // matches HEIGHT_PAGE_SIZE
+const uint POSTS_PER_QUAD = 9u;      // 8 quads + 1 vert
+const uint QUADS_PER_QUAD = 8u;      // 8x8 quads per quadrant
+
+vec2 atlas_uv(uint page, uint local_x, uint local_y) {
+    uint page_x = page % atlas_cols;
+    uint page_y = page / atlas_cols;
+    float texel_x = float(page_x * POSTS_PER_TILE + local_x) + 0.5;
+    float texel_y = float(page_y * POSTS_PER_TILE + local_y) + 0.5;
+    vec2 size = vec2(textureSize(height_atlas, 0));
+    return vec2(texel_x / size.x, texel_y / size.y);
+}
+
+float sample_height(uint page, uint local_x, uint local_y) {
+    return texture(height_atlas, atlas_uv(page, local_x, local_y)).r;
+}
+
+// Project face-local (u, v) blocks + height offset to world space.
+vec3 project(uint face, float u, float v, float h) {
+    vec3 cube_pt = FACE_TU[face] * u + FACE_TV[face] * v + FACE_N[face] * camera.cube_half;
+    vec3 unit = cube_to_sphere_unit(cube_pt / camera.cube_half);
+    return unit * (camera.planet_radius + h);
+}
+
+// Fragment shader outputs.
+layout(location = 0) out vec3 fragWorldPos[];
+layout(location = 1) out float fragHeight[];
+
+void main() {
+    MeshPayload p = payloads[gl_WorkGroupID.x];
+    TileDesc tile = tiles[p.tile_index];
+
+    SetMeshOutputsEXT(81u, 128u);
+
+    // Tile origin in face-local block coords.
+    float tile_side = face_side_blocks / float(1u << tile.level);
+    float u0 = float(tile.ix) * tile_side - camera.cube_half;
+    float v0 = float(tile.iy) * tile_side - camera.cube_half;
+    float post_step = tile_side / float(POSTS_PER_TILE - 1u);
+
+    // Quadrant origin within the tile in post indices [0..64].
+    uint base_x = p.quadrant_x * QUADS_PER_QUAD;
+    uint base_y = p.quadrant_y * QUADS_PER_QUAD;
+
+    uint tid = gl_LocalInvocationID.x;
+    // Emit 81 vertices, ~3 per thread.
+    for (uint i = tid; i < 81u; i += 32u) {
+        uint lx = i % POSTS_PER_QUAD;
+        uint ly = i / POSTS_PER_QUAD;
+        uint post_x = base_x + lx;
+        uint post_y = base_y + ly;
+        float u = u0 + float(post_x) * post_step;
+        float v = v0 + float(post_y) * post_step;
+        float h = sample_height(tile.height_page, post_x, post_y);
+        vec3 world = project(tile.face, u, v, h);
+        gl_MeshVerticesEXT[i].gl_Position = camera.view_projection[gl_ViewIndex] * vec4(world, 1.0);
+        fragWorldPos[i] = world;
+        fragHeight[i] = h;
+    }
+
+    // Emit 128 triangles, ~4 per thread.
+    for (uint q = tid; q < 64u; q += 32u) {
+        uint qx = q % QUADS_PER_QUAD;
+        uint qy = q / QUADS_PER_QUAD;
+        uint tl = qx + qy * POSTS_PER_QUAD;
+        uint tr = tl + 1u;
+        uint bl = tl + POSTS_PER_QUAD;
+        uint br = bl + 1u;
+        uint t0 = q * 2u;
+        uint t1 = t0 + 1u;
+        gl_PrimitiveTriangleIndicesEXT[t0] = uvec3(tl, bl, tr);
+        gl_PrimitiveTriangleIndicesEXT[t1] = uvec3(tr, bl, br);
+    }
+}

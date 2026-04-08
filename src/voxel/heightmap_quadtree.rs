@@ -205,6 +205,54 @@ pub const MAX_RESIDENT_TILES: usize = 1024;
 /// error above this split; below merge.
 pub const SSE_PIXEL_THRESHOLD: f32 = 4.0;
 
+/// GPU-side tile descriptor row. Mirrored exactly by the `TileDesc` struct
+/// in `heightmap_cull.comp`, `heightmap_tile.task`, and `heightmap_tile.mesh`.
+/// std430 layout: 64 bytes.
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+pub struct GpuTileDesc {
+    pub center: [f32; 3],
+    pub bounding_radius: f32,
+    /// `[NegU, PosU, NegV, PosV]` neighbor levels.
+    pub neighbor_levels: [u32; 4],
+    pub face: u32,
+    pub level: u32,
+    pub ix: u32,
+    pub iy: u32,
+    pub geometric_error: f32,
+    pub morph_factor: f32,
+    pub height_page: u32,
+    pub _pad: u32,
+}
+
+const _: () = assert!(std::mem::size_of::<GpuTileDesc>() == 64);
+
+impl TileDesc {
+    /// Pack into the GPU layout. `height_page` is supplied externally
+    /// (looked up in the atlas after streaming).
+    pub fn to_gpu(&self, height_page: u32) -> GpuTileDesc {
+        let c = self.center_world;
+        GpuTileDesc {
+            center: [c.x as f32, c.y as f32, c.z as f32],
+            bounding_radius: self.bounding_radius,
+            neighbor_levels: [
+                self.neighbor_levels[0] as u32,
+                self.neighbor_levels[1] as u32,
+                self.neighbor_levels[2] as u32,
+                self.neighbor_levels[3] as u32,
+            ],
+            face: self.node.face as u32,
+            level: self.node.level as u32,
+            ix: self.node.ix,
+            iy: self.node.iy,
+            geometric_error: self.geometric_error,
+            morph_factor: self.morph_factor,
+            height_page,
+            _pad: 0,
+        }
+    }
+}
+
 pub struct Quadtree {
     active: Vec<TileDesc>,
     /// Cached frame inputs so `restrict` and `compute_morph_factors` don't
