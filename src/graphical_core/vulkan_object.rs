@@ -6,8 +6,10 @@ use crate::graphical_core::{
     descriptors,
     frustum::Frustum,
     gpu::choose_gpu,
+    heightmap_atlas::HeightmapAtlas,
     heightmap_pipeline::HeightmapPipeline,
     heightmap_pool::HeightmapPool,
+    heightmap_tile_pipeline::{CullPush as HmCullPush, HeightmapTilePipeline, TilePush as HmTilePush},
     instance::{create_instance, create_logical_device},
     mesh_pipeline::MeshShaderPipeline,
     palette_buffer::{create_palette_buffer, destroy_palette_buffer},
@@ -24,7 +26,8 @@ use crate::graphical_core::{
 use crate::storage::region::RegionStore;
 use crate::voxel::chunk::{Chunk, CHUNK_SIZE};
 use crate::voxel::erosion::ErosionMap;
-use crate::voxel::heightmap_generator::{HeightmapGenerator, HeightmapRequest};
+use crate::voxel::heightmap_generator::{HeightmapGenerator, HeightmapRequest, HeightsGenerator, HeightsRequest};
+use crate::voxel::heightmap_quadtree::{GpuTileDesc, Quadtree, MAX_RESIDENT_TILES};
 use crate::voxel::svdag_compressor::SvdagCompressor;
 use crate::voxel::world::World;
 use crate::vr::{VrContext, VrSession, VrSwapchain};
@@ -137,6 +140,16 @@ pub struct WorldResources {
     heightmap_pipeline: HeightmapPipeline,
     heightmap_generator: HeightmapGenerator,
     heightmap_in_flight: std::collections::HashSet<crate::voxel::heightmap_generator::TileKey>,
+    // SSE quadtree heightmap path (Phase 4 onward).
+    heightmap_atlas: HeightmapAtlas,
+    heightmap_tile_pipeline: HeightmapTilePipeline,
+    heightmap_quadtree: Quadtree,
+    heights_generator: HeightsGenerator,
+    heights_in_flight: std::collections::HashSet<u64>,
+    /// Number of valid `GpuTileDesc` rows packed into the TileDesc buffer
+    /// this frame. Used as `tile_count` in the cull push constants and to
+    /// derive the cull workgroup count.
+    heightmap_tile_pipeline_active_count: u32,
     #[allow(dead_code)] // retained for future access (shadow rays, re-erosion)
     erosion_map: Option<Arc<ErosionMap>>,
 }
@@ -371,6 +384,16 @@ impl VulkanApplication {
         let heightmap_pipeline = HeightmapPipeline::create(&self.device, &self.vulkan_application_data)?;
         let heightmap_generator = HeightmapGenerator::new(erosion_map.clone());
 
+        let heightmap_atlas = HeightmapAtlas::new(&self.device, &self.vulkan_instance, &mut self.vulkan_application_data)?;
+        let heightmap_tile_pipeline = HeightmapTilePipeline::create(
+            &self.device,
+            &self.vulkan_instance,
+            &mut self.vulkan_application_data,
+            &heightmap_atlas,
+        )?;
+        let heightmap_quadtree = Quadtree::new();
+        let heights_generator = HeightsGenerator::new(erosion_map.clone());
+
         self.wr = Some(WorldResources {
             world,
             voxel_pool,
@@ -391,6 +414,12 @@ impl VulkanApplication {
             heightmap_pipeline,
             heightmap_generator,
             heightmap_in_flight: std::collections::HashSet::new(),
+            heightmap_atlas,
+            heightmap_tile_pipeline,
+            heightmap_quadtree,
+            heights_generator,
+            heights_in_flight: std::collections::HashSet::new(),
+            heightmap_tile_pipeline_active_count: 0,
             erosion_map,
         });
         self.depth_pyramid_needs_init = true;
@@ -404,6 +433,8 @@ impl VulkanApplication {
     pub unsafe fn exit_world(&mut self) {
         self.device.device_wait_idle().unwrap();
         if let Some(mut wr) = self.wr.take() {
+            wr.heightmap_tile_pipeline.destroy(&self.device);
+            wr.heightmap_atlas.destroy(&self.device);
             wr.heightmap_pipeline.destroy(&self.device);
             wr.heightmap_pool.destroy(&self.device);
             wr.svdag_pipeline.destroy(&self.device);
@@ -568,46 +599,68 @@ impl VulkanApplication {
             _pad: [0.0; 2],
         };
         let svdag_chunk_count = wr.svdag_pool.chunk_count();
+        let svdag_tile_count_xy = wr.svdag_pipeline.tile_count;
         let extent = self.vulkan_application_data.swapchain_extent;
-        let svdag_args = if svdag_chunk_count > 0 {
-            let svdag_cull = CullPush {
-                planes: [
-                    frustum.plane(0),
-                    frustum.plane(1),
-                    frustum.plane(2),
-                    frustum.plane(3),
-                    frustum.plane(4),
-                    frustum.plane(5),
-                ],
-                total_chunks: svdag_chunk_count,
-                _padding: [0; 3],
-            };
-            let svdag_tile = TileAssignPush {
-                view_projection: eyes.primary_vp().to_cols_array_2d(),
-                screen_size: [extent.width, extent.height],
-                tile_count: wr.svdag_pipeline.tile_count,
-                camera_pos: camera.position.to_array(),
-                _padding: 0,
-            };
-            let svdag_march = RaymarchPush {
-                camera_pos: camera.position.to_array(),
-                _padding: 0,
-                screen_size: [extent.width, extent.height],
-                tile_count: wr.svdag_pipeline.tile_count,
-            };
-            Some((&wr.svdag_pipeline, svdag_cull, svdag_tile, svdag_march))
+        // Owned-data-only push structs (no `&wr` references inside) so we can
+        // re-borrow `wr` mutably below for the heightmap atlas without
+        // conflicting with svdag's pipeline reference.
+        let svdag_pushes = if svdag_chunk_count > 0 {
+            Some((
+                CullPush {
+                    planes: [
+                        frustum.plane(0), frustum.plane(1), frustum.plane(2),
+                        frustum.plane(3), frustum.plane(4), frustum.plane(5),
+                    ],
+                    total_chunks: svdag_chunk_count,
+                    _padding: [0; 3],
+                },
+                TileAssignPush {
+                    view_projection: eyes.primary_vp().to_cols_array_2d(),
+                    screen_size: [extent.width, extent.height],
+                    tile_count: svdag_tile_count_xy,
+                    camera_pos: camera.position.to_array(),
+                    _padding: 0,
+                },
+                RaymarchPush {
+                    camera_pos: camera.position.to_array(),
+                    _padding: 0,
+                    screen_size: [extent.width, extent.height],
+                    tile_count: svdag_tile_count_xy,
+                },
+            ))
         } else {
             None
         };
-        let chunked_arc = chunked_arc_radians();
-        let hm_bands: Vec<(f32, f32)> = HEIGHTMAP_BANDS.iter().map(|b| (chunked_arc + b.3, chunked_arc + b.4)).collect();
-        let player_world_d = glam::DVec3::new(camera.position.x as f64, camera.position.y as f64, camera.position.z as f64);
-        let heightmap_visible = wr.heightmap_pool.visible_tiles(&frustum, player_world_d, &hm_bands);
-        let heightmap_push = crate::graphical_core::heightmap_pipeline::HeightmapPush {
+        let _ = HEIGHTMAP_BANDS; // legacy path retained for Phase 5 deletion
+        let _ = chunked_arc_radians;
+        let hm_cull_push = HmCullPush {
+            planes: [
+                frustum.plane(0),
+                frustum.plane(1),
+                frustum.plane(2),
+                frustum.plane(3),
+                frustum.plane(4),
+                frustum.plane(5),
+            ],
             camera_pos: camera.position.to_array(),
-            morph_factor: 0.0,
+            tile_count: wr.heightmap_tile_pipeline_active_count,
+            planet_radius: crate::voxel::sphere::PLANET_RADIUS_BLOCKS as f32,
+            _pad0: 0.0, _pad1: 0.0, _pad2: 0.0,
+        };
+        let hm_tile_push = HmTilePush {
+            camera_pos: camera.position.to_array(),
+            atlas_cols: crate::graphical_core::heightmap_atlas::ATLAS_COLS,
+            face_side_blocks: crate::voxel::sphere::FACE_SIDE_BLOCKS as f32,
+            _pad0: 0.0, _pad1: 0.0, _pad2: 0.0,
         };
         let t2 = std::time::Instant::now();
+        // Drop the immutable borrow on `wr` and re-take it mutably so the
+        // heightmap atlas can be passed as `&mut`. The svdag pipeline ref
+        // is constructed from the freshly mut-borrowed `wr` at the call
+        // site, so disjoint field borrows let it coexist with `&mut wr.heightmap_atlas`.
+        drop(wr);
+        let wr = self.wr.as_mut().unwrap();
+        let svdag_arg = svdag_pushes.as_ref().map(|(c, t, m)| (&wr.svdag_pipeline, c, t, m));
         record_mesh_shader_command_buffer(
             &self.device,
             &self.vulkan_application_data,
@@ -618,9 +671,12 @@ impl VulkanApplication {
             &self.depth_pyramid_pipeline,
             &cull_push,
             self.depth_pyramid_needs_init,
-            svdag_args.as_ref().map(|(sp, c, t, m)| (*sp, c, t, m)),
+            svdag_arg,
             &self.ui,
-            Some((&wr.heightmap_pipeline, &wr.heightmap_pool, &heightmap_visible, &heightmap_push)),
+            &wr.heightmap_tile_pipeline,
+            &mut wr.heightmap_atlas,
+            &hm_cull_push,
+            &hm_tile_push,
             self.timing_query_pool,
         )?;
         self.depth_pyramid_needs_init = false;
@@ -948,44 +1004,8 @@ impl VulkanApplication {
             wr.lod_idle_frames = wr.lod_idle_frames.saturating_add(1);
         }
 
-        // --- Heightmap tile generation (replaces LOD-3 and LOD-4) ---
-        wr.heightmap_pool.tick();
-        let player_world_d = glam::DVec3::new(camera.position.x as f64, camera.position.y as f64, camera.position.z as f64);
-        for mesh in wr.heightmap_generator.receive() {
-            wr.heightmap_in_flight.remove(&mesh.key);
-            wr.heightmap_pool.upload_tile(&mesh, player_world_d);
-        }
-        // The heightmap covers regions the mesh-chunk working set does not
-        // cover. When the player is in the terrain altitude band, mesh
-        // chunks reach `chunked_arc` radians around the player; the
-        // heightmap stays outside that. When the player is above terrain,
-        // mesh chunks vanish (3D Chebyshev cube above the band) and the
-        // heightmap fills from angular distance 0.
-        let chunked_arc = chunked_arc_radians();
-        // Heightmap shadow uses the same altitude cutoff as the mesh
-        // streamer: when the player is below `ORBITAL_CUTOFF_BLOCKS`, mesh
-        // chunks cover the inner area around the player and the heightmap
-        // is excluded from that arc. Above the cutoff there are no mesh
-        // chunks, so the heightmap fills from angle 0.
-        //
-        // The shadow is shrunk by `HEIGHTMAP_OVERLAP_ARC` so the heightmap
-        // keeps rendering in a thin ring just inside the mesh frontier.
-        // This hides the load-in strip during descent: while the outermost
-        // mesh chunks are still being generated, the heightmap is already
-        // there covering the same angular region. At any altitude where
-        // the strip would be visible, the two layers agree on the surface
-        // to within sub-pixel, so the overlap doesn't z-fight noticeably.
-        let altitude_blocks =
-            player_world_d.length() - crate::voxel::sphere::PLANET_RADIUS_BLOCKS as f64;
-        let mesh_shadow_arc = if altitude_blocks <= crate::voxel::world::ORBITAL_CUTOFF_BLOCKS {
-            (chunked_arc - HEIGHTMAP_OVERLAP_ARC).max(0.0)
-        } else {
-            0.0
-        };
-        let hm_max_angle = chunked_arc + HEIGHTMAP_BANDS.last().map(|b| b.4).unwrap_or(0.0) + 0.05;
-        wr.heightmap_pool
-            .evict_outside_band(player_world_d, mesh_shadow_arc, hm_max_angle);
-        schedule_heightmap_generation(wr, player_world_d, mesh_shadow_arc);
+        // --- SSE quadtree heightmap path ---
+        update_heightmap_quadtree(wr, camera);
 
         wr.last_player_chunk = [player_cx, player_cy, player_cz];
         Ok(())
@@ -1139,6 +1159,69 @@ fn chunked_arc_radians() -> f32 {
 }
 const MAX_HEIGHTMAP_IN_FLIGHT: usize = 16;
 const HEIGHTMAP_SUBMISSIONS_PER_FRAME: usize = 8;
+
+/// Per-frame update for the SSE quadtree heightmap path. Drains finished
+/// heights pages from the worker pool, runs the quadtree's SSE descent +
+/// restrict + morph, streams loads/evicts against the GPU atlas, and packs
+/// the active set into the host-visible TileDesc buffer.
+unsafe fn update_heightmap_quadtree(wr: &mut WorldResources, camera: &crate::graphical_core::camera::Camera) {
+    use crate::voxel::heightmap_quadtree::HEIGHT_PAGE_SIZE;
+    let _ = HEIGHT_PAGE_SIZE; // pin import for future use
+
+    // 1. Receive completed pages and insert into the atlas.
+    for result in wr.heights_generator.receive() {
+        let morton = result.node.morton();
+        wr.heights_in_flight.remove(&morton);
+        wr.heightmap_atlas.insert(morton, &result.heights);
+    }
+
+    // 2. Drive the SSE descent at the current camera pose.
+    let camera_world = glam::DVec3::new(
+        camera.position.x as f64,
+        camera.position.y as f64,
+        camera.position.z as f64,
+    );
+    // Phase 4: hard-code 1080p / 60° fov_y. Phase 4.5 will pull these
+    // from the actual swapchain extent and projection params.
+    const SCREEN_HEIGHT: f32 = 1080.0;
+    const FOV_Y_RAD: f32 = 1.047; // 60°
+    wr.heightmap_quadtree.update(camera_world, SCREEN_HEIGHT, FOV_Y_RAD);
+
+    // 3. Stream loads/evicts.
+    let delta = wr.heightmap_quadtree.stream();
+    for &morton in &delta.to_evict {
+        wr.heightmap_atlas.evict(morton);
+    }
+    for node in &delta.to_load {
+        let morton = node.morton();
+        if wr.heights_in_flight.contains(&morton) {
+            continue;
+        }
+        wr.heights_generator.request(HeightsRequest { node: *node, seed: wr.seed });
+        wr.heights_in_flight.insert(morton);
+    }
+    wr.heightmap_quadtree.commit_stream(&delta);
+
+    // 4. Pack the active set into the GPU TileDesc buffer. Tiles whose
+    //    heights aren't yet resident in the atlas use page=0; the cull
+    //    pass would still emit them but the mesh shader would sample
+    //    stale data — skip them entirely by writing them as last in the
+    //    array and clamping `tile_count` to those with valid pages.
+    let mut count: u32 = 0;
+    for tile in wr.heightmap_quadtree.active() {
+        if let Some(page) = wr.heightmap_atlas.page_of(tile.node.morton()) {
+            if (count as usize) < MAX_RESIDENT_TILES {
+                let gpu = tile.to_gpu(page);
+                std::ptr::write(
+                    wr.heightmap_tile_pipeline.buffers.tile_desc_ptr.add(count as usize),
+                    gpu,
+                );
+                count += 1;
+            }
+        }
+    }
+    wr.heightmap_tile_pipeline_active_count = count;
+}
 
 /// Walk every (face, cx, cz) tile in the world, classify by angular distance
 /// to the player, and submit any that fall inside a heightmap band and are

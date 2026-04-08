@@ -1,8 +1,10 @@
 use crate::graphical_core::compute_cull::{CullPushConstants, DepthPyramidResources, DepthReducePush};
 use crate::graphical_core::cull_compact::CullCompactPipeline;
-use crate::graphical_core::heightmap_pipeline::{HeightmapPipeline, HeightmapPush};
+use crate::graphical_core::heightmap_atlas::HeightmapAtlas;
+use crate::graphical_core::heightmap_tile_pipeline::{
+    CullPush as HmCullPush, HeightmapTilePipeline, TilePush as HmTilePush,
+};
 use crate::graphical_core::voxel_pool::VoxelPool;
-use crate::graphical_core::heightmap_pool::{HeightmapPool, TileDrawInfo};
 use crate::graphical_core::svdag_pipeline::{CullPush, RaymarchPush, SvdagPipeline, TileAssignPush};
 use crate::graphical_core::vulkan_object::VulkanApplicationData;
 use crate::graphical_core::{self, MAX_FRAMES_IN_FLIGHT};
@@ -238,7 +240,10 @@ pub unsafe fn record_mesh_shader_command_buffer(
     pyramid_needs_init: bool,
     svdag: Option<(&SvdagPipeline, &CullPush, &TileAssignPush, &RaymarchPush)>,
     ui: &crate::graphical_core::ui_pipeline::UiPipeline,
-    heightmap: Option<(&HeightmapPipeline, &HeightmapPool, &[TileDrawInfo], &HeightmapPush)>,
+    heightmap_pipeline: &HeightmapTilePipeline,
+    heightmap_atlas: &mut HeightmapAtlas,
+    heightmap_cull_push: &HmCullPush,
+    heightmap_tile_push: &HmTilePush,
     timing_query_pool: vk::QueryPool,
 ) -> anyhow::Result<()> {
     let cmd = data.command_buffers[image_index];
@@ -278,6 +283,14 @@ pub unsafe fn record_mesh_shader_command_buffer(
     // === Phase 2 cull compact ===
     record_cull_compact_pass(device, cmd, cull_compact, voxel_pool, cull_push, 2);
 
+    // === Heightmap quadtree pre-pass (atlas uploads + per-tile cull) ===
+    // Runs OUTSIDE the render pass: image transitions and the cull compute
+    // dispatch both need to be at top-level. The result feeds the indirect
+    // mesh task draw below.
+    record_heightmap_quadtree_prepass(
+        device, cmd, heightmap_pipeline, heightmap_atlas, heightmap_cull_push,
+    );
+
     // === Phase 2 mesh draw: previously invisible chunks (with occlusion test) ===
     begin_render_pass_no_clear(device, cmd, data, image_index);
 
@@ -285,11 +298,11 @@ pub unsafe fn record_mesh_shader_command_buffer(
         device, cmd, mesh_pipeline, voxel_pool, cull_push, 2, task_mesh_flags,
     );
 
-    // === Heightmap tiles (rasterized far terrain) ===
-    if let Some((hm_pipeline, hm_pool, visible_tiles, hm_push)) = heightmap {
-        if !visible_tiles.is_empty() {
-            record_heightmap_draws(device, cmd, hm_pipeline, hm_pool, visible_tiles, hm_push);
-        }
+    // === Heightmap quadtree mesh shader draw ===
+    if heightmap_cull_push.tile_count > 0 {
+        record_heightmap_quadtree_draw(
+            device, cmd, heightmap_pipeline, heightmap_tile_push, task_mesh_flags,
+        );
     }
 
     device.cmd_end_render_pass(cmd);
@@ -420,36 +433,113 @@ pub(crate) unsafe fn bind_mesh_pipeline_and_draw_indirect(
     device.cmd_draw_mesh_tasks_indirect_ext(cmd, args_buf, 0, 1, 12);
 }
 
-unsafe fn record_heightmap_draws(
+/// Pre-pass for the SSE quadtree heightmap path. Records:
+/// 1. Atlas page uploads (with image-layout transitions)
+/// 2. Indirect args clear + cull compute dispatch
+/// 3. Barriers chaining cull writes → indirect-fetch + task-shader read
+///
+/// Runs OUTSIDE any render pass. Always called per frame so the atlas's
+/// initial UNDEFINED → SHADER_READ_ONLY transition happens on frame 1.
+unsafe fn record_heightmap_quadtree_prepass(
     device: &Device,
     cmd: vk::CommandBuffer,
-    pipeline: &HeightmapPipeline,
-    pool: &HeightmapPool,
-    visible_tiles: &[TileDrawInfo],
-    push: &HeightmapPush,
+    pipeline: &HeightmapTilePipeline,
+    atlas: &mut HeightmapAtlas,
+    cull_push: &HmCullPush,
 ) {
-    device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline.pipeline);
+    // 1. Stream pending atlas pages.
+    atlas.record_uploads(device, cmd);
+
+    if cull_push.tile_count == 0 {
+        return; // nothing to cull this frame
+    }
+
+    let args_buf = pipeline.buffers.indirect_args_buffer;
+    let visible_buf = pipeline.buffers.visible_tiles_buffer;
+
+    // 2. Clear groupCountX (offset 0, 4 bytes); Y/Z stay at 1 from init.
+    device.cmd_fill_buffer(cmd, args_buf, 0, 4, 0);
+    let fill_barrier = *vk::BufferMemoryBarrier::builder()
+        .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+        .dst_access_mask(vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE)
+        .buffer(args_buf)
+        .size(vk::WHOLE_SIZE);
+    device.cmd_pipeline_barrier(
+        cmd,
+        vk::PipelineStageFlags::TRANSFER,
+        vk::PipelineStageFlags::COMPUTE_SHADER,
+        vk::DependencyFlags::empty(),
+        &[] as &[vk::MemoryBarrier],
+        &[fill_barrier],
+        &[] as &[vk::ImageMemoryBarrier],
+    );
+
+    // 3. Dispatch heightmap_cull.comp, one thread per resident tile.
+    device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pipeline.cull_pipeline);
     device.cmd_bind_descriptor_sets(
         cmd,
-        vk::PipelineBindPoint::GRAPHICS,
-        pipeline.pipeline_layout,
+        vk::PipelineBindPoint::COMPUTE,
+        pipeline.cull_pipeline_layout,
         0,
         &[pipeline.descriptor_set],
         &[],
     );
+    let push_bytes: &[u8] = std::slice::from_raw_parts(
+        cull_push as *const HmCullPush as *const u8,
+        std::mem::size_of::<HmCullPush>(),
+    );
+    device.cmd_push_constants(cmd, pipeline.cull_pipeline_layout, vk::ShaderStageFlags::COMPUTE, 0, push_bytes);
+    let workgroups = cull_push.tile_count.div_ceil(64);
+    device.cmd_dispatch(cmd, workgroups, 1, 1);
 
-    device.cmd_bind_vertex_buffers(cmd, 0, &[pool.vertex_buffer], &[0]);
-    device.cmd_bind_index_buffer(cmd, pool.index_buffer, 0, vk::IndexType::UINT16);
+    // 4. Cull writes → indirect args fetch + task-shader visible-list read.
+    let args_after = *vk::BufferMemoryBarrier::builder()
+        .src_access_mask(vk::AccessFlags::SHADER_WRITE)
+        .dst_access_mask(vk::AccessFlags::INDIRECT_COMMAND_READ)
+        .buffer(args_buf)
+        .size(vk::WHOLE_SIZE);
+    let visible_after = *vk::BufferMemoryBarrier::builder()
+        .src_access_mask(vk::AccessFlags::SHADER_WRITE)
+        .dst_access_mask(vk::AccessFlags::SHADER_READ)
+        .buffer(visible_buf)
+        .size(vk::WHOLE_SIZE);
+    device.cmd_pipeline_barrier(
+        cmd,
+        vk::PipelineStageFlags::COMPUTE_SHADER,
+        vk::PipelineStageFlags::DRAW_INDIRECT | vk::PipelineStageFlags::ALL_GRAPHICS,
+        vk::DependencyFlags::empty(),
+        &[] as &[vk::MemoryBarrier],
+        &[args_after, visible_after],
+        &[] as &[vk::ImageMemoryBarrier],
+    );
+}
 
-    for tile in visible_tiles {
-        let tile_push = HeightmapPush {
-            camera_pos: push.camera_pos,
-            morph_factor: tile.morph_factor,
-        };
-        let bytes: &[u8] = std::slice::from_raw_parts(&tile_push as *const HeightmapPush as *const u8, std::mem::size_of::<HeightmapPush>());
-        device.cmd_push_constants(cmd, pipeline.pipeline_layout, vk::ShaderStageFlags::VERTEX, 0, bytes);
-        device.cmd_draw_indexed(cmd, tile.index_count, 1, tile.index_offset, tile.vertex_offset as i32, 0);
-    }
+/// Inside-render-pass draw of the heightmap quadtree. Caller is responsible
+/// for the surrounding `begin_render_pass_no_clear` / `end_render_pass`.
+unsafe fn record_heightmap_quadtree_draw(
+    device: &Device,
+    cmd: vk::CommandBuffer,
+    pipeline: &HeightmapTilePipeline,
+    tile_push: &HmTilePush,
+    task_mesh_flags: vk::ShaderStageFlags,
+) {
+    device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline.tile_pipeline);
+    device.cmd_bind_descriptor_sets(
+        cmd,
+        vk::PipelineBindPoint::GRAPHICS,
+        pipeline.tile_pipeline_layout,
+        0,
+        &[pipeline.descriptor_set],
+        &[],
+    );
+    let push_bytes: &[u8] = std::slice::from_raw_parts(
+        tile_push as *const HmTilePush as *const u8,
+        std::mem::size_of::<HmTilePush>(),
+    );
+    device.cmd_push_constants(cmd, pipeline.tile_pipeline_layout, task_mesh_flags, 0, push_bytes);
+    // One workgroup per visible tile; group_count_x is the count written by
+    // the cull compute pass.
+    device.cmd_draw_mesh_tasks_indirect_ext(cmd, pipeline.buffers.indirect_args_buffer, 0, 1, 12);
 }
 
 unsafe fn push_bytes<T>(val: &T) -> &[u8] {
