@@ -122,16 +122,33 @@ void main() {
     uint base_x = p.quadrant_x * QUADS_PER_QUAD;
     uint base_y = p.quadrant_y * QUADS_PER_QUAD;
 
+    float morph = tile.morph_factor;
     uint tid = gl_LocalInvocationID.x;
-    // Emit 81 vertices, ~3 per thread.
+    // Emit 81 vertices, ~3 per thread. CDLOD morph is applied in face-local
+    // (u, v) space *before* the cube_to_sphere projection: each vertex
+    // blends toward its parent-grid position (snap each post index down
+    // to the nearest even value) so the mesh smoothly approaches the
+    // coarser parent tile as the camera retreats. Doing this pre-projection
+    // is the correctness fix vs morphing post-projection along the radial.
     for (uint i = tid; i < 81u; i += 32u) {
         uint lx = i % POSTS_PER_QUAD;
         uint ly = i / POSTS_PER_QUAD;
         uint post_x = base_x + lx;
         uint post_y = base_y + ly;
-        float u = u0 + float(post_x) * post_step;
-        float v = v0 + float(post_y) * post_step;
-        float h = sample_height(tile.height_page, post_x, post_y);
+        // Fine sample (this tile's grid).
+        float u_fine = u0 + float(post_x) * post_step;
+        float v_fine = v0 + float(post_y) * post_step;
+        float h_fine = sample_height(tile.height_page, post_x, post_y);
+        // Coarse sample (parent grid: same atlas, snapped to even posts).
+        uint post_x_c = post_x & ~1u;
+        uint post_y_c = post_y & ~1u;
+        float u_coarse = u0 + float(post_x_c) * post_step;
+        float v_coarse = v0 + float(post_y_c) * post_step;
+        float h_coarse = sample_height(tile.height_page, post_x_c, post_y_c);
+        // Blend in face-local space.
+        float u = mix(u_fine, u_coarse, morph);
+        float v = mix(v_fine, v_coarse, morph);
+        float h = mix(h_fine, h_coarse, morph);
         vec3 world = project(tile.face, u, v, h);
         gl_MeshVerticesEXT[i].gl_Position = camera.view_projection[gl_ViewIndex] * vec4(world, 1.0);
         fragWorldPos[i] = world;

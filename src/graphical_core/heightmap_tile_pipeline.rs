@@ -323,11 +323,15 @@ unsafe fn create_tile_graphics_pipeline(
     let rasterization_state = vk::PipelineRasterizationStateCreateInfo::builder()
         .polygon_mode(vk::PolygonMode::FILL)
         .line_width(1.0)
-        // The mesh shader projects vertices through cube_to_sphere, so the
-        // emitted triangles share the voxel mesh shader's winding inversion:
-        // cull FRONT faces, front_face = CW (matches mesh_pipeline.rs).
-        .cull_mode(vk::CullModeFlags::FRONT)
-        .front_face(vk::FrontFace::CLOCKWISE);
+        // The mesh shader emits a regular CCW grid in world space (post
+        // index `(tl, bl, tr)` is CCW when viewed from outside the
+        // planet). Same winding as the legacy CPU-curved heightmap path,
+        // so use the same rule: BACK cull, CCW front-face. The voxel
+        // mesh pipeline's FRONT/CW rule does NOT apply here because the
+        // voxel mesh shader emits per-cube-face quads with face-local
+        // winding that the cube_to_sphere projection ends up inverting.
+        .cull_mode(vk::CullModeFlags::BACK)
+        .front_face(vk::FrontFace::COUNTER_CLOCKWISE);
 
     let multisample_state = vk::PipelineMultisampleStateCreateInfo::builder().rasterization_samples(vk::SampleCountFlags::_1);
 

@@ -4,7 +4,7 @@ use crate::voxel::player::Player;
 use glam::{Mat4, Vec3};
 use vulkan_rust::{vk, Device, Instance};
 
-const FOV_DEGREES: f32 = 90.0;
+pub const FOV_DEGREES: f32 = 90.0;
 /// Reverse-Z near plane. With infinite-far reverse-Z this is the *only* depth
 /// constant that affects precision: smaller near = more precision near the
 /// camera, no penalty far away.

@@ -329,30 +329,76 @@ impl Quadtree {
         // pixels-per-radian for SSE projection: rho = err * pix_per_rad / dist.
         self.last_pixel_per_radian = screen_height_px / (2.0 * (fov_y_rad * 0.5).tan());
         self.active.clear();
-        for face in ALL_FACES {
-            self.descend_recursive(QuadNode::root(face));
-        }
+        self.descend_bfs();
         self.restrict();
         self.compute_morph_factors();
     }
 
-    fn descend_recursive(&mut self, node: QuadNode) {
-        if self.active.len() >= MAX_RESIDENT_TILES {
-            return;
+    /// BFS / priority-queue descent. Starts with the 6 face roots in a
+    /// max-heap keyed by projected pixel error, repeatedly popping the
+    /// highest-priority node and either splitting it (push 4 children) or
+    /// emitting it as a leaf. Stops when the heap is empty or the active
+    /// set hits `MAX_RESIDENT_TILES`. Distributes the tile budget by
+    /// importance instead of by face iteration order, so a near face can't
+    /// starve the far ones.
+    fn descend_bfs(&mut self) {
+        use std::cmp::Ordering;
+        use std::collections::BinaryHeap;
+
+        #[derive(Copy, Clone)]
+        struct Pending {
+            node: QuadNode,
+            // Projected pixel error. Wrapped so we can `Ord` it as a max-heap.
+            projected_px: f32,
         }
+        impl PartialEq for Pending {
+            fn eq(&self, other: &Self) -> bool { self.projected_px == other.projected_px }
+        }
+        impl Eq for Pending {}
+        impl PartialOrd for Pending {
+            fn partial_cmp(&self, other: &Self) -> Option<Ordering> { Some(self.cmp(other)) }
+        }
+        impl Ord for Pending {
+            fn cmp(&self, other: &Self) -> Ordering {
+                self.projected_px
+                    .partial_cmp(&other.projected_px)
+                    .unwrap_or(Ordering::Equal)
+            }
+        }
+
+        let mut heap: BinaryHeap<Pending> = BinaryHeap::with_capacity(MAX_RESIDENT_TILES * 4);
+        for face in ALL_FACES {
+            let root = QuadNode::root(face);
+            heap.push(Pending { node: root, projected_px: self.projected_pixel_error(root) });
+        }
+
+        while let Some(Pending { node, projected_px }) = heap.pop() {
+            if self.active.len() >= MAX_RESIDENT_TILES {
+                break;
+            }
+            let should_split = projected_px > SSE_PIXEL_THRESHOLD && node.level < MAX_LEVEL;
+            if should_split {
+                if let Some(children) = node.children() {
+                    for child in children {
+                        heap.push(Pending { node: child, projected_px: self.projected_pixel_error(child) });
+                    }
+                    continue;
+                }
+            }
+            self.emit_leaf(node);
+        }
+    }
+
+    fn projected_pixel_error(&self, node: QuadNode) -> f32 {
         let center = node.center_world();
         let geo_err = tile_geometric_error(node.side_blocks());
         let dist = ((center - self.last_camera).length() as f32).max(1.0);
-        let projected_px = geo_err * self.last_pixel_per_radian / dist;
-        let should_split = projected_px > SSE_PIXEL_THRESHOLD && node.level < MAX_LEVEL;
-        if should_split {
-            if let Some(children) = node.children() {
-                for child in children {
-                    self.descend_recursive(child);
-                }
-                return;
-            }
-        }
+        geo_err * self.last_pixel_per_radian / dist
+    }
+
+    fn emit_leaf(&mut self, node: QuadNode) {
+        let center = node.center_world();
+        let geo_err = tile_geometric_error(node.side_blocks());
         let radius = node.bounding_radius(MAX_TERRAIN_AMPLITUDE);
         self.active.push(TileDesc {
             node,

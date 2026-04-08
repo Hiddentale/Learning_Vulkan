@@ -8,7 +8,7 @@ use glam::{DVec3, Vec3};
 use std::sync::Arc;
 use std::thread;
 
-const WORKER_COUNT: usize = 2;
+const WORKER_COUNT: usize = 8;
 
 /// Vertex for heightmap tile mesh. 32 bytes, matches shader layout.
 /// `position` is in world cartesian (relative to planet center) — the tile

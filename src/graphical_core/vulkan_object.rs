@@ -560,6 +560,11 @@ impl VulkanApplication {
         let t0 = std::time::Instant::now();
         let wr = self.wr.as_mut().expect("render_frame called without a loaded world");
         Self::update_chunks_inner(wr, camera)?;
+        // Quadtree heightmap update needs swapchain height for SSE — runs
+        // here rather than in update_chunks_inner because pre-generation's
+        // update_world() has no swapchain.
+        let screen_height_px = self.vulkan_application_data.swapchain_extent.height as f32;
+        update_heightmap_quadtree(wr, camera, screen_height_px);
         let dt_update_chunks = t0.elapsed();
         let resident_count = wr.voxel_pool.chunk_count();
 
@@ -1004,8 +1009,10 @@ impl VulkanApplication {
             wr.lod_idle_frames = wr.lod_idle_frames.saturating_add(1);
         }
 
-        // --- SSE quadtree heightmap path ---
-        update_heightmap_quadtree(wr, camera);
+        // SSE quadtree heightmap is updated from `render_frame` rather than
+        // here, because it needs the swapchain extent + FOV which aren't
+        // accessible from this function. Pre-generation skips it (no
+        // renderer running yet).
 
         wr.last_player_chunk = [player_cx, player_cy, player_cz];
         Ok(())
@@ -1164,10 +1171,11 @@ const HEIGHTMAP_SUBMISSIONS_PER_FRAME: usize = 8;
 /// heights pages from the worker pool, runs the quadtree's SSE descent +
 /// restrict + morph, streams loads/evicts against the GPU atlas, and packs
 /// the active set into the host-visible TileDesc buffer.
-unsafe fn update_heightmap_quadtree(wr: &mut WorldResources, camera: &crate::graphical_core::camera::Camera) {
-    use crate::voxel::heightmap_quadtree::HEIGHT_PAGE_SIZE;
-    let _ = HEIGHT_PAGE_SIZE; // pin import for future use
-
+unsafe fn update_heightmap_quadtree(
+    wr: &mut WorldResources,
+    camera: &crate::graphical_core::camera::Camera,
+    screen_height_px: f32,
+) {
     // 1. Receive completed pages and insert into the atlas.
     for result in wr.heights_generator.receive() {
         let morton = result.node.morton();
@@ -1181,24 +1189,27 @@ unsafe fn update_heightmap_quadtree(wr: &mut WorldResources, camera: &crate::gra
         camera.position.y as f64,
         camera.position.z as f64,
     );
-    // Phase 4: hard-code 1080p / 60° fov_y. Phase 4.5 will pull these
-    // from the actual swapchain extent and projection params.
-    const SCREEN_HEIGHT: f32 = 1080.0;
-    const FOV_Y_RAD: f32 = 1.047; // 60°
-    wr.heightmap_quadtree.update(camera_world, SCREEN_HEIGHT, FOV_Y_RAD);
+    let fov_y_rad = crate::graphical_core::camera::FOV_DEGREES.to_radians();
+    wr.heightmap_quadtree.update(camera_world, screen_height_px, fov_y_rad);
 
-    // 3. Stream loads/evicts.
+    // 3. Stream loads/evicts. Each new tile gets an immediate zero-filled
+    //    placeholder page in the atlas so the GPU has coverage on the very
+    //    next frame; the worker pool overwrites it in place when real
+    //    heights arrive. Without this, freshly-descended tiles would be
+    //    skipped from the TileDesc buffer until their heights arrive,
+    //    leaving hard rectangular gaps at the descent frontier.
     let delta = wr.heightmap_quadtree.stream();
     for &morton in &delta.to_evict {
         wr.heightmap_atlas.evict(morton);
     }
+    let placeholder = vec![0.0_f32; crate::graphical_core::heightmap_atlas::FLOATS_PER_PAGE];
     for node in &delta.to_load {
         let morton = node.morton();
-        if wr.heights_in_flight.contains(&morton) {
-            continue;
+        wr.heightmap_atlas.insert(morton, &placeholder);
+        if !wr.heights_in_flight.contains(&morton) {
+            wr.heights_generator.request(HeightsRequest { node: *node, seed: wr.seed });
+            wr.heights_in_flight.insert(morton);
         }
-        wr.heights_generator.request(HeightsRequest { node: *node, seed: wr.seed });
-        wr.heights_in_flight.insert(morton);
     }
     wr.heightmap_quadtree.commit_stream(&delta);
 
