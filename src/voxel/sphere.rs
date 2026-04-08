@@ -21,14 +21,14 @@ use glam::{DVec3, Vec3};
 ///
 /// Tuned so blocks are visually square at the actual terrain surface:
 /// `(PLANET_RADIUS + SEA_LEVEL) / CUBE_HALF = √2`
-/// → `PLANET_RADIUS = √2·CUBE_HALF − SEA_LEVEL = √2·1024 − 64 ≈ 1384`.
-pub const PLANET_RADIUS_BLOCKS: i32 = 1384;
+/// → `PLANET_RADIUS = √2·CUBE_HALF − SEA_LEVEL = √2·11360 − 64 ≈ 16001`.
+pub const PLANET_RADIUS_BLOCKS: i32 = 16001;
 
 /// Approximate radius of the visible terrain surface (sea level), in blocks.
 /// Equals `PLANET_RADIUS_BLOCKS + SEA_LEVEL_BLOCKS`. Used as a stable scale
 /// for noise sampling so noise frequencies stay tuned regardless of how
 /// `PLANET_RADIUS_BLOCKS` is internally adjusted for block-aspect tuning.
-pub const SURFACE_RADIUS_BLOCKS: i32 = 1448;
+pub const SURFACE_RADIUS_BLOCKS: i32 = 16065;
 
 /// Sea level in blocks above the cube face plane (== `d` in projection).
 /// Lives here so both terrain generation and the projection share one source.
@@ -39,7 +39,7 @@ pub const SEA_LEVEL_BLOCKS: i32 = SURFACE_RADIUS_BLOCKS - PLANET_RADIUS_BLOCKS;
 /// ~9100 blocks. Bumped from 24 to 128 to exercise the heightmap tile path
 /// (`chunked_arc` falls below π so the inner band activates) and unlock the
 /// mesh-shader perf headroom from the GPU compaction work.
-pub const FACE_SIDE_CHUNKS: i32 = 128;
+pub const FACE_SIDE_CHUNKS: i32 = 1420;
 
 /// Vertical (radial) chunk extent above the cube surface. Currently mirrors
 /// the legacy flat terrain range; Phase D will remap this to radial depth.
@@ -975,6 +975,6 @@ mod tests {
     #[test]
     fn planet_circumference_is_finite_and_positive() {
         let circumference = (2.0 * std::f32::consts::PI * PLANET_RADIUS_BLOCKS as f32) as i32;
-        assert!(circumference > 0 && circumference < 100_000);
+        assert!(circumference > 0 && circumference < 1_000_000);
     }
 }

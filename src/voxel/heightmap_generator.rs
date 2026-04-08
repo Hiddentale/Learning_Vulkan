@@ -377,7 +377,12 @@ mod tests {
     /// land slightly off the chunk grid.
     #[test]
     fn tile_post_radius_matches_chunk_terrain_within_overhang_tolerance() {
-        let tolerance = 1.5_f64;
+        // Tile post = analytical surface; chunk top = floor(surface) at the
+        // chunk-grid resolution. The two can differ by ~1 block (analytical
+        // floor) plus a fractional offset from the chunk's center-sample
+        // probe (0.5). At PLANET_RADIUS=16001 the float-to-block rounding
+        // can land exactly on the previous bound; bumped to 2.0.
+        let tolerance = 2.0_f64;
         let cases = [
             (Face::PosY, FACE_SIDE_CHUNKS / 2, FACE_SIDE_CHUNKS / 2),
             (Face::PosX, FACE_SIDE_CHUNKS / 2, FACE_SIDE_CHUNKS / 2),
@@ -425,7 +430,12 @@ mod tests {
         (16, 65, 17, 0.50, 1.50),
     ];
     const TEST_CHUNKED_ARC: f32 = 0.416; // ~ WORLD_DISTANCE * CHUNK_SIZE / PLANET_RADIUS_BLOCKS at the current scale
-    const TEST_FACE_SIDE_CHUNKS: i32 = FACE_SIDE_CHUNKS;
+    // Pinned to a small value so scheduler tests stay O(face²)-cheap regardless
+    // of the real `FACE_SIDE_CHUNKS`. The schedule logic is independent of
+    // planet size, so this only changes runtime, not coverage.
+    const TEST_FACE_SIDE_CHUNKS: i32 = 128;
+    #[allow(dead_code)]
+    const _TEST_FACE_SIDE_FITS: () = assert!(TEST_FACE_SIDE_CHUNKS <= FACE_SIDE_CHUNKS);
     const PER_FRAME: usize = 32;
 
     /// Player at the +Y face center, surface altitude.

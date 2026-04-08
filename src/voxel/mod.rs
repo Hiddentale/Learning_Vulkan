@@ -5,6 +5,7 @@ pub mod chunk_generator;
 pub mod erosion;
 pub mod erosion_worker;
 pub mod heightmap_generator;
+pub mod heightmap_quadtree;
 pub mod material;
 pub mod metric;
 pub mod player;

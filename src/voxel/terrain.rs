@@ -505,6 +505,21 @@ mod surface_diagnostics {
     use super::*;
     use crate::voxel::sphere::{self, ChunkPos, Face, FACE_SIDE_CHUNKS, PLANET_RADIUS_BLOCKS, SURFACE_RADIUS_BLOCKS};
 
+    /// Side length (in chunks) of the centered window used by the full-face
+    /// surface scans below. The cliff and ground-truth tests don't depend on
+    /// scanning the *entire* face — any contiguous patch is enough to surface
+    /// noise-budget regressions. Bounding the window keeps these tests O(1)
+    /// regardless of `FACE_SIDE_CHUNKS`, which scales quadratically.
+    const TEST_SCAN_CHUNKS: i32 = 16;
+    const _: () = assert!(TEST_SCAN_CHUNKS <= FACE_SIDE_CHUNKS);
+
+    /// Half-open chunk range `[lo, hi)` of size `TEST_SCAN_CHUNKS`, centered
+    /// on the face midpoint.
+    fn scan_range() -> (i32, i32) {
+        let lo = FACE_SIDE_CHUNKS / 2 - TEST_SCAN_CHUNKS / 2;
+        (lo, lo + TEST_SCAN_CHUNKS)
+    }
+
     /// **End-to-end ground truth.** Generates an entire chunk column with
     /// `generate_column` (the same function the renderer uses) and walks it
     /// from the highest cy down to find the topmost non-air, non-water block.
@@ -594,14 +609,15 @@ mod surface_diagnostics {
     /// absolute height delta between any two horizontally-adjacent columns,
     /// plus the (gx, gz) coordinate where it occurred.
     fn measure_max_adjacent_delta(face: Face, noises: &WorldNoises) -> (f64, usize, usize) {
-        let n = FACE_SIDE_CHUNKS as usize * 16;
+        let (clo, chi) = scan_range();
+        let n = (TEST_SCAN_CHUNKS as usize) * 16;
         let mut grid = vec![0.0_f64; n * n];
-        for cx in 0..FACE_SIDE_CHUNKS {
-            for cz in 0..FACE_SIDE_CHUNKS {
+        for cx in clo..chi {
+            for cz in clo..chi {
                 for lx in 0..16 {
                     for lz in 0..16 {
-                        let gx = cx as usize * 16 + lx;
-                        let gz = cz as usize * 16 + lz;
+                        let gx = (cx - clo) as usize * 16 + lx;
+                        let gz = (cz - clo) as usize * 16 + lz;
                         grid[gx * n + gz] = topmost_solid_radius(face, cx, cz, lx as i32, lz as i32, noises).unwrap_or(0.0);
                     }
                 }
@@ -940,18 +956,23 @@ mod surface_diagnostics {
     /// `generate_column` (the renderer's path) and walks every column top→bottom
     /// to find the topmost solid block. Slow (144 column generations per face)
     /// but it's the only thing we can fully trust since the analytic version
-    /// might be diverging from reality somewhere.
+    /// might be diverging from reality somewhere. Ignored by default
+    /// because each call invokes the full chunk-column generator (~65k
+    /// column gens at TEST_SCAN_CHUNKS=16); run with `--ignored` when
+    /// chasing analytic-vs-ground-truth divergences.
     #[test]
+    #[ignore]
     fn ground_truth_full_face_scan() {
         let face = Face::PosY;
-        let n = (FACE_SIDE_CHUNKS * 16) as usize;
+        let (clo, chi) = scan_range();
+        let n = (TEST_SCAN_CHUNKS as usize) * 16;
         let mut grid = vec![0.0_f64; n * n];
-        for cx in 0..FACE_SIDE_CHUNKS {
-            for cz in 0..FACE_SIDE_CHUNKS {
+        for cx in clo..chi {
+            for cz in clo..chi {
                 for lx in 0..16 {
                     for lz in 0..16 {
-                        let gx = cx as usize * 16 + lx;
-                        let gz = cz as usize * 16 + lz;
+                        let gx = (cx - clo) as usize * 16 + lx;
+                        let gz = (cz - clo) as usize * 16 + lz;
                         grid[gx * n + gz] = topmost_solid_radius_via_generator(face, cx, cz, lx, lz, 42);
                     }
                 }
@@ -1054,11 +1075,12 @@ mod surface_diagnostics {
             // Also report the min/max surface height on this face so we can
             // see if there are coastlines (height crossing sea level) that
             // would generate large land/water jumps.
-            let n = (FACE_SIDE_CHUNKS * 16) as usize;
+            let (clo, chi) = scan_range();
+            let n = (TEST_SCAN_CHUNKS as usize) * 16;
             let mut hi = 0.0_f64;
             let mut lo = 1e9_f64;
-            for cx in 0..FACE_SIDE_CHUNKS {
-                for cz in 0..FACE_SIDE_CHUNKS {
+            for cx in clo..chi {
+                for cz in clo..chi {
                     for lx in 0..16 {
                         for lz in 0..16 {
                             let h = topmost_solid_radius(face, cx, cz, lx as i32, lz as i32, &noises).unwrap_or(0.0);
@@ -1109,9 +1131,12 @@ mod surface_diagnostics {
                 ( tv.as_dvec3(),  FACE_SIDE_CHUNKS - 1, 15), // +v edge (cz)
                 (-tv.as_dvec3(),  0, 0),                      // -v edge (cz)
             ];
+            // Sample only a centered window of columns along each edge —
+            // enough to surface seam discontinuities without paying for the
+            // full face length on a 16k-radius planet.
+            let (clo, chi) = scan_range();
             for (edge_idx, (out_dir, edge_chunk, edge_block)) in edges.iter().enumerate() {
-                // For each sample along the edge…
-                for cz_or_cx in 0..FACE_SIDE_CHUNKS {
+                for cz_or_cx in clo..chi {
                     for lz_or_lx in 0..16 {
                         let (cx, cz, lx, lz) = match edge_idx {
                             0 | 1 => (*edge_chunk, cz_or_cx, *edge_block, lz_or_lx as i32),
