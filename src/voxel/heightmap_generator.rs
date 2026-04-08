@@ -1,6 +1,7 @@
 use super::block::BlockType;
 use super::erosion::ErosionMap;
-use super::sphere::{self, ChunkPos, Face};
+use super::heightmap_quadtree::{QuadNode, HEIGHT_PAGE_SIZE};
+use super::sphere::{self, ChunkPos, Face, CUBE_HALF_BLOCKS, PLANET_RADIUS_BLOCKS};
 use super::terrain::{self, WorldNoises, SEA_LEVEL};
 use crossbeam_channel::{Receiver, Sender};
 use glam::{DVec3, Vec3};
@@ -255,11 +256,160 @@ pub fn generate_tile_mesh(req: &HeightmapRequest, erosion_map: Option<&ErosionMa
     }
 }
 
+// ---------------------------------------------------------------------------
+// Phase 2: heights-only generator for the SSE quadtree path.
+//
+// The new heightmap pipeline uploads a flat `Vec<f32>` of heights per tile
+// (one per post on a `HEIGHT_PAGE_SIZE × HEIGHT_PAGE_SIZE` grid). The mesh
+// shader does cube_to_sphere projection and normal computation itself, so
+// this generator only sources the radial offset above the cube face plane:
+// `offset = surface_radius_at_world(probe) − PLANET_RADIUS_BLOCKS`.
+//
+// Lives alongside `generate_tile_mesh` until Phase 5 deletes the legacy path.
+// ---------------------------------------------------------------------------
+
+/// Generate the height grid for one quadtree tile. Returns
+/// `HEIGHT_PAGE_SIZE²` floats laid out row-major (`heights[gx + gz * stride]`).
+/// Each value is in blocks above (positive) or below (negative) the planet
+/// radius, clamped to `±MAX_TERRAIN_AMPLITUDE` so the GPU encoding stays in
+/// a known range.
+pub fn generate_tile_heights(
+    node: QuadNode,
+    seed: u32,
+    erosion_map: Option<&ErosionMap>,
+) -> Vec<f32> {
+    let noises = WorldNoises::new(seed);
+    let stride = HEIGHT_PAGE_SIZE as usize;
+    let mut heights = vec![0.0_f32; stride * stride];
+    let side = node.side_blocks();
+    // Face-local (u, v) of the tile's lower-left corner, in blocks. Origin
+    // is the face center (range [-CUBE_HALF, +CUBE_HALF]) so this matches
+    // the convention used by `face_local_to_world`.
+    let u0 = node.ix as f64 * side - CUBE_HALF_BLOCKS;
+    let v0 = node.iy as f64 * side - CUBE_HALF_BLOCKS;
+    let denom = (stride - 1).max(1) as f64;
+    let sea_level_radius = SEA_LEVEL as f64 + PLANET_RADIUS_BLOCKS as f64;
+    for gz in 0..stride {
+        for gx in 0..stride {
+            let u = u0 + (gx as f64 / denom) * side;
+            let v = v0 + (gz as f64 / denom) * side;
+            // Probe the surface at this post; sea floors clamp upward to
+            // sea level so the heightmap shows water as the top surface.
+            let probe = sphere::face_local_to_world(node.face, u, v, 0.0);
+            let (seabed_radius, _) = terrain::surface_radius_at_world(&noises, probe, erosion_map);
+            let visible = seabed_radius.max(sea_level_radius);
+            let offset = (visible - PLANET_RADIUS_BLOCKS as f64) as f32;
+            heights[gx + gz * stride] = offset.clamp(
+                -super::heightmap_quadtree::MAX_TERRAIN_AMPLITUDE as f32,
+                super::heightmap_quadtree::MAX_TERRAIN_AMPLITUDE as f32,
+            );
+        }
+    }
+    heights
+}
+
+/// Worker request for the new path. Distinct type from `HeightmapRequest`
+/// so the legacy and new generators can coexist until Phase 5 deletes the
+/// old code.
+#[derive(Copy, Clone, Debug)]
+pub struct HeightsRequest {
+    pub node: QuadNode,
+    pub seed: u32,
+}
+
+/// Background thread pool for heights-only generation. Mirrors
+/// [`HeightmapGenerator`] but produces flat float pages.
+pub struct HeightsGenerator {
+    request_tx: Sender<HeightsRequest>,
+    result_rx: Receiver<HeightsResult>,
+    _workers: Vec<thread::JoinHandle<()>>,
+}
+
+pub struct HeightsResult {
+    pub node: QuadNode,
+    pub heights: Vec<f32>,
+}
+
+impl HeightsGenerator {
+    pub fn new(erosion_map: Option<Arc<ErosionMap>>) -> Self {
+        let (request_tx, request_rx) = crossbeam_channel::unbounded::<HeightsRequest>();
+        let (result_tx, result_rx) = crossbeam_channel::unbounded::<HeightsResult>();
+        let mut workers = Vec::with_capacity(WORKER_COUNT);
+        for _ in 0..WORKER_COUNT {
+            let rx = request_rx.clone();
+            let tx = result_tx.clone();
+            let emap = erosion_map.clone();
+            workers.push(thread::spawn(move || {
+                while let Ok(req) = rx.recv() {
+                    let heights = generate_tile_heights(req.node, req.seed, emap.as_deref());
+                    if tx.send(HeightsResult { node: req.node, heights }).is_err() {
+                        break;
+                    }
+                }
+            }));
+        }
+        Self { request_tx, result_rx, _workers: workers }
+    }
+
+    pub fn request(&self, req: HeightsRequest) {
+        let _ = self.request_tx.send(req);
+    }
+
+    pub fn receive(&self) -> Vec<HeightsResult> {
+        let mut out = Vec::new();
+        while let Ok(r) = self.result_rx.try_recv() {
+            out.push(r);
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::voxel::chunk::CHUNK_SIZE;
+    use crate::voxel::heightmap_quadtree::{QuadNode, HEIGHT_PAGE_SIZE, MAX_TERRAIN_AMPLITUDE};
     use crate::voxel::sphere::{FACE_SIDE_CHUNKS, PLANET_RADIUS_BLOCKS};
+
+    #[test]
+    fn generate_tile_heights_returns_full_page_within_bounds() {
+        // Root tile of +Y face, deterministic seed.
+        let node = QuadNode::root(Face::PosY);
+        let heights = generate_tile_heights(node, 42, None);
+        let expected = (HEIGHT_PAGE_SIZE as usize).pow(2);
+        assert_eq!(heights.len(), expected);
+        let amp = MAX_TERRAIN_AMPLITUDE as f32;
+        for &h in &heights {
+            assert!(h.is_finite(), "non-finite height: {}", h);
+            assert!(h >= -amp && h <= amp, "height {} out of bounds", h);
+        }
+    }
+
+    #[test]
+    fn generate_tile_heights_matches_surface_radius_at_world() {
+        // Sample the corner of a level-3 tile and confirm the offset
+        // matches what surface_radius_at_world would return for the
+        // same world point.
+        use crate::voxel::sphere::{face_local_to_world, CUBE_HALF_BLOCKS};
+        let node = QuadNode { face: Face::PosY, level: 3, ix: 2, iy: 5 };
+        let heights = generate_tile_heights(node, 99, None);
+        let noises = WorldNoises::new(99);
+        let stride = HEIGHT_PAGE_SIZE as usize;
+        let side = node.side_blocks();
+        let u0 = node.ix as f64 * side - CUBE_HALF_BLOCKS;
+        let v0 = node.iy as f64 * side - CUBE_HALF_BLOCKS;
+        // Pick the (gx=0, gz=0) corner.
+        let probe = face_local_to_world(node.face, u0, v0, 0.0);
+        let (r, _) = terrain::surface_radius_at_world(&noises, probe, None);
+        let sea = SEA_LEVEL as f64 + PLANET_RADIUS_BLOCKS as f64;
+        let expected = (r.max(sea) - PLANET_RADIUS_BLOCKS as f64) as f32;
+        let actual = heights[0 + 0 * stride];
+        assert!(
+            (actual - expected).abs() < 0.01,
+            "corner height mismatch: actual={} expected={}",
+            actual, expected
+        );
+    }
 
     const SEED: u32 = 42;
     const TILE_CHUNKS: i32 = 8;

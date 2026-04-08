@@ -7,6 +7,7 @@ pub mod depth;
 pub mod descriptors;
 pub mod frustum;
 pub mod gpu;
+pub mod heightmap_atlas;
 pub mod heightmap_pipeline;
 pub mod heightmap_pool;
 pub mod input;

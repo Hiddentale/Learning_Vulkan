@@ -19,7 +19,7 @@
 
 use super::sphere::{
     face_basis, face_for_cube_point, face_local_to_world, ALL_FACES, Face, EdgeDir,
-    CUBE_HALF_BLOCKS, FACE_SIDE_BLOCKS, PLANET_RADIUS_BLOCKS,
+    CUBE_HALF_BLOCKS, FACE_SIDE_BLOCKS,
 };
 use glam::DVec3;
 
@@ -30,6 +30,12 @@ pub const BASE_TILE_BLOCKS: i32 = 128;
 /// Vertex grid posts along one edge of a tile. 65 = 64 quads, splits cleanly
 /// into power-of-two meshlets in the mesh shader.
 pub const TILE_GRID_POSTS: u32 = 65;
+
+/// Side length, in texels, of one heightmap atlas page. Currently equals
+/// `TILE_GRID_POSTS` — one height value per geometric grid post, no skirt.
+/// Bumping this by 2 (for a 1-texel border on each side) is the way to
+/// enable hardware bilinear filtering across tile edges if Phase 3 needs it.
+pub const HEIGHT_PAGE_SIZE: u32 = TILE_GRID_POSTS;
 
 /// Maximum quadtree depth. With `FACE_SIDE_BLOCKS=22720` and `BASE=128` this
 /// is 8 (root face = level 0, finest leaf = level 8 covering ~88 blocks).
@@ -205,6 +211,19 @@ pub struct Quadtree {
     /// need them re-passed.
     last_camera: DVec3,
     last_pixel_per_radian: f32,
+    /// Mortons of every tile resident in the GPU height atlas. Updated by
+    /// `commit_stream` after the streamer has applied a `StreamDelta`.
+    resident: std::collections::HashSet<u64>,
+}
+
+/// Diff between this frame's `active` set and the prior `resident` set.
+/// `to_load` are tiles whose heights need to be generated and uploaded;
+/// `to_evict` are pages the streamer should free. The streamer is expected
+/// to call [`Quadtree::commit_stream`] once it has acted on the delta.
+#[derive(Default, Debug)]
+pub struct StreamDelta {
+    pub to_load: Vec<QuadNode>,
+    pub to_evict: Vec<u64>,
 }
 
 impl Quadtree {
@@ -213,10 +232,47 @@ impl Quadtree {
             active: Vec::with_capacity(MAX_RESIDENT_TILES),
             last_camera: DVec3::ZERO,
             last_pixel_per_radian: 0.0,
+            resident: std::collections::HashSet::with_capacity(MAX_RESIDENT_TILES),
         }
     }
 
     pub fn active(&self) -> &[TileDesc] { &self.active }
+
+    /// Diff this frame's active set against the resident GPU set. The
+    /// streamer should pass `to_load` to the heights generator and free
+    /// `to_evict` pages, then call [`Self::commit_stream`].
+    pub fn stream(&self) -> StreamDelta {
+        let active_set: std::collections::HashSet<u64> =
+            self.active.iter().map(|t| t.node.morton()).collect();
+        let mut to_load = Vec::new();
+        for tile in &self.active {
+            let m = tile.node.morton();
+            if !self.resident.contains(&m) {
+                to_load.push(tile.node);
+            }
+        }
+        let mut to_evict = Vec::new();
+        for &m in &self.resident {
+            if !active_set.contains(&m) {
+                to_evict.push(m);
+            }
+        }
+        StreamDelta { to_load, to_evict }
+    }
+
+    /// Apply the result of a `StreamDelta` to the resident set. Call after
+    /// the streamer has uploaded the loaded tiles and freed the evicted
+    /// pages.
+    pub fn commit_stream(&mut self, delta: &StreamDelta) {
+        for n in &delta.to_load {
+            self.resident.insert(n.morton());
+        }
+        for m in &delta.to_evict {
+            self.resident.remove(m);
+        }
+    }
+
+    pub fn resident_count(&self) -> usize { self.resident.len() }
 
     /// Drive one frame: SSE descent → restrict → morph. After this call,
     /// `active()` returns the leaf set ready for the GPU streamer.
@@ -471,6 +527,7 @@ fn cross_face_tile(node: QuadNode, dir: EdgeDir) -> Option<QuadNode> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::sphere::PLANET_RADIUS_BLOCKS;
 
     #[test]
     fn morton_is_unique() {
@@ -581,6 +638,49 @@ mod tests {
         let nb = neighbor_node(edge_tile, EdgeDir::PosU).expect("cross-face neighbor");
         assert_ne!(nb.face, Face::PosY);
         assert_eq!(nb.level, edge_tile.level);
+    }
+
+    #[test]
+    fn stream_initial_load_is_full_active_set() {
+        let mut qt = Quadtree::new();
+        let cam = DVec3::new(0.0, 10.0 * PLANET_RADIUS_BLOCKS as f64, 0.0);
+        qt.update(cam, 1080.0, 1.0);
+        let delta = qt.stream();
+        assert_eq!(delta.to_load.len(), qt.active().len());
+        assert!(delta.to_evict.is_empty());
+        qt.commit_stream(&delta);
+        assert_eq!(qt.resident_count(), qt.active().len());
+    }
+
+    #[test]
+    fn stream_steady_state_is_empty_diff() {
+        let mut qt = Quadtree::new();
+        let cam = DVec3::new(0.0, 10.0 * PLANET_RADIUS_BLOCKS as f64, 0.0);
+        qt.update(cam, 1080.0, 1.0);
+        let d1 = qt.stream();
+        qt.commit_stream(&d1);
+        // Same camera again — nothing should change.
+        qt.update(cam, 1080.0, 1.0);
+        let d2 = qt.stream();
+        assert!(d2.to_load.is_empty(), "expected no loads on steady state, got {}", d2.to_load.len());
+        assert!(d2.to_evict.is_empty(), "expected no evicts on steady state, got {}", d2.to_evict.len());
+    }
+
+    #[test]
+    fn stream_camera_move_evicts_and_loads() {
+        let mut qt = Quadtree::new();
+        let r = PLANET_RADIUS_BLOCKS as f64;
+        // First near-surface position on +Y face.
+        qt.update(DVec3::new(0.0, r + 50.0, 0.0), 1440.0, 1.0);
+        let d1 = qt.stream();
+        qt.commit_stream(&d1);
+        let initial_count = qt.resident_count();
+        assert!(initial_count > 6, "expected substantial subdivision, got {}", initial_count);
+        // Jump to the antipode (-Y face) — different leaf set.
+        qt.update(DVec3::new(0.0, -(r + 50.0), 0.0), 1440.0, 1.0);
+        let d2 = qt.stream();
+        assert!(!d2.to_load.is_empty(), "expected loads after antipode jump");
+        assert!(!d2.to_evict.is_empty(), "expected evicts after antipode jump");
     }
 
     #[test]
