@@ -29,6 +29,25 @@ impl Chunk {
         // Safety: BlockType is #[repr(u8)] so [BlockType; N] has the same layout as [u8; N]
         unsafe { &*(self.blocks.as_ptr() as *const [u8; CHUNK_VOLUME]) }
     }
+
+    /// True iff every block in this chunk is `BlockType::Air`. Used by the
+    /// upload pipeline to skip chunks that emit zero geometry.
+    pub fn is_uniform_air(&self) -> bool {
+        let bytes = self.as_bytes();
+        let first = bytes[0];
+        first == BlockType::Air as u8 && bytes.iter().all(|&b| b == first)
+    }
+
+    /// True iff every block in this chunk is the same opaque type — i.e. the
+    /// chunk is one solid material with no internal air. Combined with a
+    /// neighbor check this identifies "buried" chunks that emit no geometry.
+    pub fn is_uniform_opaque(&self) -> bool {
+        let bytes = self.as_bytes();
+        let first = bytes[0];
+        // SAFETY: BlockType is #[repr(u8)] with discriminants 0..=7
+        let kind: BlockType = unsafe { std::mem::transmute(first) };
+        kind.is_opaque() && bytes.iter().all(|&b| b == first)
+    }
 }
 
 /// Converts (x, y, z) to a flat index. Y is the vertical axis (outermost).

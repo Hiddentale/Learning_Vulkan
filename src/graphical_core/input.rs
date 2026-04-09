@@ -1,13 +1,13 @@
-use crate::graphical_core::camera::Camera;
 use crate::voxel::metric;
+use crate::voxel::player::Player;
+use crate::voxel::world::World;
 use std::collections::HashSet;
 use winit::event::MouseButton;
 use winit::keyboard::KeyCode;
 
-const MOVE_SPEED: f32 = 3.0;
+const MOVE_SPEED: f32 = 15.0;
 const SPRINT_MULTIPLIER: f32 = 100.0;
 const MOUSE_SENSITIVITY: f32 = 0.003;
-const MAX_PITCH: f32 = 89.0_f32 * (std::f32::consts::PI / 180.0);
 
 pub struct InputState {
     pressed_keys: HashSet<KeyCode>,
@@ -62,29 +62,36 @@ impl InputState {
         self.pressed_keys.contains(&key)
     }
 
-    pub fn update_camera(&mut self, camera: &mut Camera, delta_time: f32, fly_mode: bool, local_p: f32) {
-        self.apply_mouse_look(camera);
-        if fly_mode {
-            self.apply_fly_movement(camera, delta_time, local_p);
-        } else {
-            self.apply_walk_movement(camera, delta_time, local_p);
-        }
-    }
-
-    fn apply_mouse_look(&mut self, camera: &mut Camera) {
+    /// Mouse look — call every render frame for smoothness.
+    pub fn apply_mouse_look(&mut self, player: &mut Player) {
         let (dx, dy) = self.mouse_delta;
         self.mouse_delta = (0.0, 0.0);
-
-        camera.yaw += dx as f32 * MOUSE_SENSITIVITY;
-        camera.pitch -= dy as f32 * MOUSE_SENSITIVITY;
-        camera.pitch = camera.pitch.clamp(-MAX_PITCH, MAX_PITCH);
+        player.rotate_yaw(-dx as f32 * MOUSE_SENSITIVITY);
+        player.rotate_pitch(-dy as f32 * MOUSE_SENSITIVITY);
     }
 
-    fn apply_fly_movement(&self, camera: &mut Camera, delta_time: f32, local_p: f32) {
+    /// Per-physics-tick movement step. Reads pressed keys (which is fine
+    /// because key state is event-driven and stable across the tick) and
+    /// applies one fixed-dt move + physics integration.
+    pub fn tick_movement(&self, player: &mut Player, world: &World, dt: f32, local_p: f32) {
+        if player.fly_mode {
+            self.apply_fly_movement(player, dt, local_p);
+        } else {
+            self.apply_walk_movement(player, world, dt, local_p);
+        }
+        player.apply_physics(dt, world);
+    }
+
+    fn apply_fly_movement(&self, player: &mut Player, delta_time: f32, local_p: f32) {
         let multiplier = if self.is_pressed(KeyCode::ShiftLeft) { SPRINT_MULTIPLIER } else { 1.0 };
         let speed = MOVE_SPEED * multiplier * delta_time;
-        let front = camera.front();
-        let right = camera.right();
+        let front = player.forward;
+        let right = player.right();
+        // Camera-up: orthogonal to forward in the screen plane. Decouples
+        // E/Q from the planet's radial direction so "fly up" always means
+        // "up relative to where the camera is looking", not "away from the
+        // planet centre" (which on a side face is sideways on screen).
+        let up = right.cross(front).normalize_or(player.up());
 
         let mut move_dir = glam::Vec3::ZERO;
         if self.is_pressed(KeyCode::KeyW) {
@@ -100,24 +107,25 @@ impl InputState {
             move_dir -= right;
         }
         if self.is_pressed(KeyCode::KeyE) {
-            move_dir += glam::Vec3::Y;
+            move_dir += up;
         }
         if self.is_pressed(KeyCode::KeyQ) {
-            move_dir -= glam::Vec3::Y;
+            move_dir -= up;
         }
 
         if move_dir != glam::Vec3::ZERO {
             let scale = metric::metric_speed_scale(move_dir, local_p);
-            camera.position += move_dir.normalize() * speed * scale;
+            player.fly_move(move_dir.normalize() * speed * scale);
         }
     }
 
-    /// Walk movement: WASD moves horizontally (ignoring pitch), no Q/E vertical.
-    fn apply_walk_movement(&self, camera: &mut Camera, delta_time: f32, local_p: f32) {
+    /// Walk movement: WASD moves in the local tangent plane (ignoring pitch).
+    fn apply_walk_movement(&self, player: &mut Player, world: &World, delta_time: f32, local_p: f32) {
         let speed = MOVE_SPEED * delta_time;
-        let front = camera.front();
-        let right = camera.right();
-        let forward = glam::Vec3::new(front.x, 0.0, front.z).normalize_or_zero();
+        let up = player.up();
+        let front = player.forward;
+        let forward = (front - up * front.dot(up)).normalize_or(player.right());
+        let right = forward.cross(up).normalize_or(player.right());
 
         let mut move_dir = glam::Vec3::ZERO;
         if self.is_pressed(KeyCode::KeyW) {
@@ -135,7 +143,7 @@ impl InputState {
 
         if move_dir != glam::Vec3::ZERO {
             let scale = metric::metric_speed_scale(move_dir, local_p);
-            camera.position += move_dir.normalize() * speed * scale;
+            player.walk(move_dir.normalize() * speed * scale, world);
         }
     }
 }

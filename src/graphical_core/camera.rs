@@ -1,50 +1,52 @@
 use crate::graphical_core::buffers::allocate_buffer;
 use crate::graphical_core::vulkan_object::VulkanApplicationData;
+use crate::voxel::player::Player;
 use glam::{Mat4, Vec3};
 use vulkan_rust::{vk, Device, Instance};
 
-const FOV_DEGREES: f32 = 90.0;
+pub const FOV_DEGREES: f32 = 90.0;
+/// Reverse-Z near plane. With infinite-far reverse-Z this is the *only* depth
+/// constant that affects precision: smaller near = more precision near the
+/// camera, no penalty far away.
 const NEAR_PLANE: f32 = 0.1;
-const FAR_PLANE: f32 = 10000.0;
-const WORLD_UP: Vec3 = Vec3::Y;
-const MAX_PITCH: f32 = 89.0_f32 * (std::f32::consts::PI / 180.0);
 
-const DEFAULT_POSITION: Vec3 = Vec3::new(0.0, 90.0, 60.0);
-const DEFAULT_YAW_DEGREES: f32 = 0.0;
-const DEFAULT_PITCH_DEGREES: f32 = -30.0;
-
+/// Phase D': camera is a *derived* view of the player. `position` and
+/// `forward` are written from `Player` once per frame and never mutated
+/// independently. The player's cube-space coordinates are the source of
+/// truth; cartesian state lives here only because the rendering pipeline
+/// (UBO upload, frustum, push constants) expects `Vec3`.
 pub struct Camera {
     pub position: Vec3,
-    pub yaw: f32,
-    pub pitch: f32,
+    pub forward: Vec3,
+    pub right: Vec3,
 }
 
 impl Camera {
-    pub fn new(position: Vec3, yaw_degrees: f32, pitch_degrees: f32) -> Self {
+    pub fn from_player(player: &Player) -> Self {
         Self {
-            position,
-            yaw: yaw_degrees.to_radians(),
-            pitch: pitch_degrees.to_radians().clamp(-MAX_PITCH, MAX_PITCH),
+            position: player.eye_pos(),
+            forward: player.forward,
+            right: player.right,
         }
     }
 
-    pub fn front(&self) -> Vec3 {
-        Vec3::new(self.pitch.cos() * self.yaw.sin(), self.pitch.sin(), -self.pitch.cos() * self.yaw.cos()).normalize()
-    }
-
-    pub fn right(&self) -> Vec3 {
-        self.front().cross(WORLD_UP).normalize()
+    /// Re-derive view state from the player. Call once per frame after
+    /// physics has settled.
+    pub fn sync_from_player(&mut self, player: &Player) {
+        self.position = player.eye_pos();
+        self.forward = player.forward;
+        self.right = player.right;
     }
 
     pub fn view_matrix(&self) -> Mat4 {
-        let front = self.front();
-        Mat4::look_at_rh(self.position, self.position + front, WORLD_UP)
+        let view_up = self.right.cross(self.forward).normalize_or(Vec3::Y);
+        Mat4::look_at_rh(self.position, self.position + self.forward, view_up)
     }
 }
 
 impl Default for Camera {
     fn default() -> Self {
-        Self::new(DEFAULT_POSITION, DEFAULT_YAW_DEGREES, DEFAULT_PITCH_DEGREES)
+        Self::from_player(&Player::new())
     }
 }
 
@@ -98,6 +100,9 @@ pub struct UniformBufferObject {
     inverse_view_projection: [[[f32; 4]; 4]; MAX_VIEWS],
     light_direction: [f32; 3],
     ambient_strength: f32,
+    planet_radius: f32,
+    cube_half: f32,
+    _pad: [f32; 2],
 }
 
 /// Allocates a persistently mapped uniform buffer for camera matrices.
@@ -136,6 +141,9 @@ pub fn update_uniform_buffer(data: &VulkanApplicationData, eyes: &EyeMatrices) -
         ],
         light_direction: sun_direction.to_array(),
         ambient_strength: 0.15,
+        planet_radius: crate::voxel::sphere::PLANET_RADIUS_BLOCKS as f32,
+        cube_half: crate::voxel::sphere::CUBE_HALF_BLOCKS as f32,
+        _pad: [0.0; 2],
     };
 
     unsafe {
@@ -158,15 +166,68 @@ pub fn destroy_uniform_buffer(device: &Device, vulkan_application_data: &mut Vul
 pub fn view_projection_matrix(camera: &Camera, extent: vk::Extent2D) -> Mat4 {
     let width = extent.width as f32;
     let height = extent.height as f32;
-    let projection = compute_projection_matrix(FOV_DEGREES, NEAR_PLANE, FAR_PLANE, width, height);
+    let projection = reverse_z_infinite_perspective(FOV_DEGREES.to_radians(), width / height, NEAR_PLANE);
     projection * camera.view_matrix()
 }
 
-fn compute_projection_matrix(fov_degrees: f32, near: f32, far: f32, width: f32, height: f32) -> Mat4 {
-    let fov_radians = fov_degrees.to_radians();
-    let aspect_ratio = width / height;
-    let mut proj = Mat4::perspective_rh(fov_radians, aspect_ratio, near, far);
-    // Vulkan NDC has Y pointing down; glam's perspective_rh assumes Y up (OpenGL).
-    proj.y_axis.y *= -1.0;
-    proj
+/// Right-handed Vulkan projection with infinite-far and reverse-Z depth.
+/// Maps view-space `z = -near` → NDC `z = 1`, `z = -∞` → NDC `z = 0`. The
+/// reversed range puts depth precision where it matters (close to the camera)
+/// and the infinite far plane removes the second precision-eating divide.
+///
+/// Y axis is negated to match Vulkan's Y-down NDC.
+pub fn reverse_z_infinite_perspective(fov_y: f32, aspect: f32, near: f32) -> Mat4 {
+    let f = 1.0 / (fov_y * 0.5).tan();
+    let mut m = Mat4::ZERO;
+    m.x_axis.x = f / aspect;
+    m.y_axis.y = -f;
+    m.z_axis.z = 0.0;
+    m.z_axis.w = -1.0;
+    m.w_axis.z = near;
+    m
+}
+
+#[cfg(test)]
+mod reverse_z_tests {
+    use super::*;
+
+    fn project(m: &Mat4, view_z: f32) -> f32 {
+        let clip = *m * glam::Vec4::new(0.0, 0.0, view_z, 1.0);
+        clip.z / clip.w
+    }
+
+    #[test]
+    fn near_plane_maps_to_one() {
+        let m = reverse_z_infinite_perspective(90_f32.to_radians(), 16.0 / 9.0, 0.1);
+        let ndc_z = project(&m, -0.1);
+        assert!((ndc_z - 1.0).abs() < 1e-5, "ndc.z at near = {}, expected 1.0", ndc_z);
+    }
+
+    #[test]
+    fn far_point_maps_near_zero() {
+        let m = reverse_z_infinite_perspective(90_f32.to_radians(), 16.0 / 9.0, 0.1);
+        let ndc_z = project(&m, -1.0e6);
+        assert!(ndc_z.abs() < 1e-6, "ndc.z at ~infinity = {}, expected ~0", ndc_z);
+    }
+
+    #[test]
+    fn monotonic_farther_is_smaller_ndc_z() {
+        let m = reverse_z_infinite_perspective(90_f32.to_radians(), 1.0, 0.1);
+        let z1 = project(&m, -1.0);
+        let z10 = project(&m, -10.0);
+        let z100 = project(&m, -100.0);
+        assert!(z1 > z10 && z10 > z100, "expected monotonic decreasing, got {} {} {}", z1, z10, z100);
+        assert!(z1 > 0.0 && z100 > 0.0, "ndc.z should stay in (0, 1]");
+    }
+
+    #[test]
+    fn matrix_is_invertible() {
+        let m = reverse_z_infinite_perspective(90_f32.to_radians(), 16.0 / 9.0, 0.1);
+        let inv = m.inverse();
+        let p = inv * glam::Vec4::new(0.0, 0.0, 1.0, 1.0); // near plane at screen center
+        let w = p / p.w;
+        // Should land on the near plane (view z ≈ -near; since we have no view
+        // transform here, that's world z ≈ -0.1).
+        assert!((w.z + 0.1).abs() < 1e-4, "inverse * near = {:?}", w);
+    }
 }

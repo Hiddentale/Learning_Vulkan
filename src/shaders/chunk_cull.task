@@ -1,6 +1,14 @@
 #version 450
 #extension GL_EXT_mesh_shader : require
 
+// Per-chunk task shader. The cull/horizon/occlusion logic ran here in the
+// previous design but now lives in `chunk_cull_compact.comp`, which writes
+// a packed `visible_chunks[]` list and a 1-command indirect args buffer.
+// The host then issues `cmd_draw_mesh_tasks_indirect_ext` with x = visible
+// count, so each surviving chunk gets exactly one workgroup here. We just
+// look up our chunk index from the visible list and emit per-sub-chunk
+// meshlets — no early exits, no internal cull.
+
 layout(local_size_x = 64) in;
 
 struct MeshChunkInfo {
@@ -8,6 +16,8 @@ struct MeshChunkInfo {
     uint voxel_slot;
     vec3 aabb_max;
     uint boundary_slot;
+    ivec3 chunk_pos;
+    uint face_id;
 };
 
 layout(std430, set = 0, binding = 5) readonly buffer ChunkInfoBuffer {
@@ -18,18 +28,13 @@ layout(std430, set = 0, binding = 3) readonly buffer VoxelDataBuffer {
     uint voxel_data[];
 };
 
-layout(std430, set = 0, binding = 6) buffer VisibilityBuffer {
-    uint visibility[];
+layout(std430, set = 0, binding = 8) readonly buffer VisiblePhase1 {
+    uint visible_phase1[];
 };
 
-layout(set = 0, binding = 7) uniform sampler2D depth_pyramid;
-
-layout(set = 0, binding = 1) uniform CameraUBO {
-    mat4 view_projection[2];
-    mat4 inverse_view_projection[2];
-    vec3 light_direction;
-    float ambient_strength;
-} camera;
+layout(std430, set = 0, binding = 9) readonly buffer VisiblePhase2 {
+    uint visible_phase2[];
+};
 
 layout(push_constant) uniform PushConstants {
     vec4 planes[6];
@@ -38,6 +43,8 @@ layout(push_constant) uniform PushConstants {
     vec2 screen_size;
     uint phase;
     uint opaque_mask;
+    float planet_radius;
+    uint stereo;
 };
 
 struct MeshPayload {
@@ -47,63 +54,6 @@ struct MeshPayload {
 
 taskPayloadSharedEXT MeshPayload payloads[64];
 shared uint meshlet_count;
-shared bool chunk_visible;
-
-bool frustum_visible(vec3 aabb_min, vec3 aabb_max) {
-    for (int i = 0; i < 6; i++) {
-        vec3 normal = planes[i].xyz;
-        vec3 p = vec3(
-            normal.x >= 0.0 ? aabb_max.x : aabb_min.x,
-            normal.y >= 0.0 ? aabb_max.y : aabb_min.y,
-            normal.z >= 0.0 ? aabb_max.z : aabb_min.z
-        );
-        if (dot(normal, p) + planes[i].w < 0.0) return false;
-    }
-    return true;
-}
-
-bool occlusion_visible(vec3 aabb_min, vec3 aabb_max) {
-    vec3 corners[8] = vec3[8](
-        vec3(aabb_min.x, aabb_min.y, aabb_min.z),
-        vec3(aabb_max.x, aabb_min.y, aabb_min.z),
-        vec3(aabb_min.x, aabb_max.y, aabb_min.z),
-        vec3(aabb_max.x, aabb_max.y, aabb_min.z),
-        vec3(aabb_min.x, aabb_min.y, aabb_max.z),
-        vec3(aabb_max.x, aabb_min.y, aabb_max.z),
-        vec3(aabb_min.x, aabb_max.y, aabb_max.z),
-        vec3(aabb_max.x, aabb_max.y, aabb_max.z)
-    );
-
-    float min_z = 1.0;
-    vec2 ndc_min = vec2(1.0);
-    vec2 ndc_max = vec2(-1.0);
-
-    // Use eye 0 for occlusion (conservative for stereo)
-    for (int i = 0; i < 8; i++) {
-        vec4 clip = camera.view_projection[0] * vec4(corners[i], 1.0);
-        if (clip.w <= 0.0) return true;
-
-        vec3 ndc = clip.xyz / clip.w;
-        ndc_min = min(ndc_min, ndc.xy);
-        ndc_max = max(ndc_max, ndc.xy);
-        min_z = min(min_z, ndc.z);
-    }
-
-    ndc_min = clamp(ndc_min, vec2(-1.0), vec2(1.0));
-    ndc_max = clamp(ndc_max, vec2(-1.0), vec2(1.0));
-
-    vec2 uv_min = ndc_min * 0.5 + 0.5;
-    vec2 uv_max = ndc_max * 0.5 + 0.5;
-
-    vec2 size_pixels = (uv_max - uv_min) * screen_size;
-    float max_extent = max(size_pixels.x, size_pixels.y);
-
-    float mip = ceil(log2(max(max_extent, 1.0)));
-    float pyramid_depth = textureLod(depth_pyramid, (uv_min + uv_max) * 0.5, mip).r;
-
-    float chunk_depth = min_z * 0.5 + 0.5;
-    return chunk_depth <= pyramid_depth;
-}
 
 bool sub_chunk_occupied(uint voxel_slot, uint sub_idx) {
     uint sx = (sub_idx & 3u) * 4u;
@@ -122,54 +72,20 @@ bool sub_chunk_occupied(uint voxel_slot, uint sub_idx) {
 }
 
 void main() {
-    uint chunk_idx = gl_WorkGroupID.x;
-    if (chunk_idx >= chunk_count) {
-        EmitMeshTasksEXT(0u, 1u, 1u);
-        return;
-    }
+    uint slot = gl_WorkGroupID.x;
+    uint chunk_idx = (phase == 1u) ? visible_phase1[slot] : visible_phase2[slot];
 
     uint tid = gl_LocalInvocationID.x;
-
     if (tid == 0u) {
         meshlet_count = 0u;
-        chunk_visible = false;
     }
     barrier();
 
     MeshChunkInfo chunk = chunks[chunk_idx];
-
-    // Thread 0 performs chunk-level culling
-    if (tid == 0u) {
-        bool was_visible = visibility[chunk_idx] == 1u;
-
-        // Phase filtering
-        if (phase == 1u && !was_visible) { chunk_visible = false; }
-        else if (phase == 2u && was_visible) { chunk_visible = false; }
-        else if (!frustum_visible(chunk.aabb_min, chunk.aabb_max)) {
-            visibility[chunk_idx] = 0u;
-            chunk_visible = false;
-        }
-        else if (phase == 2u && !occlusion_visible(chunk.aabb_min, chunk.aabb_max)) {
-            visibility[chunk_idx] = 0u;
-            chunk_visible = false;
-        }
-        else {
-            visibility[chunk_idx] = 1u;
-            chunk_visible = true;
-        }
-    }
-    barrier();
-
-    if (!chunk_visible) {
-        EmitMeshTasksEXT(0u, 1u, 1u);
-        return;
-    }
-
-    // Each of 64 threads checks one 4x4x4 sub-chunk
     if (tid < 64u && sub_chunk_occupied(chunk.voxel_slot, tid)) {
-        uint slot = atomicAdd(meshlet_count, 1u);
-        payloads[slot].chunk_index = chunk_idx;
-        payloads[slot].sub_chunk_index = tid;
+        uint emit_slot = atomicAdd(meshlet_count, 1u);
+        payloads[emit_slot].chunk_index = chunk_idx;
+        payloads[emit_slot].sub_chunk_index = tid;
     }
 
     barrier();

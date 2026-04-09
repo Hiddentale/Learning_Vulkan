@@ -9,6 +9,17 @@ const BYTES_PER_PIXEL: u32 = 4;
 const ATLAS_WIDTH: u32 = 32;
 const ATLAS_HEIGHT: u32 = 16;
 
+/// Full mip chain: floor(log2(max(32,16))) + 1 = 6 levels.
+const MIP_LEVELS: u32 = {
+    let mut n = if ATLAS_WIDTH > ATLAS_HEIGHT { ATLAS_WIDTH } else { ATLAS_HEIGHT };
+    let mut levels = 1u32;
+    while n > 1 {
+        n /= 2;
+        levels += 1;
+    }
+    levels
+};
+
 /// Block textures in material_id order. None means no texture (use palette color).
 const TEXTURE_FILES: &[Option<&str>] = &[
     None,               // 0: Air
@@ -119,11 +130,12 @@ fn create_array_image(device: &Device, layer_count: u32) -> anyhow::Result<vk::I
             height: ATLAS_HEIGHT,
             depth: 1,
         })
-        .mip_levels(1)
+        .mip_levels(MIP_LEVELS)
         .array_layers(layer_count)
         .samples(vk::SampleCountFlags::_1)
         .tiling(vk::ImageTiling::OPTIMAL)
-        .usage(vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED)
+        // TRANSFER_SRC needed for cmd_blit_image mip generation.
+        .usage(vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::SAMPLED)
         .sharing_mode(vk::SharingMode::EXCLUSIVE)
         .initial_layout(vk::ImageLayout::UNDEFINED);
 
@@ -168,17 +180,23 @@ fn transfer_array_image(
             &vk::CommandBufferBeginInfo::builder().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
         )?;
 
-        // Transition all layers: UNDEFINED -> TRANSFER_DST
-        transition_image_layout(
+        // Transition ALL mip levels: UNDEFINED -> TRANSFER_DST
+        transition_mip_layout(
             device,
             cmd,
             image,
             vk::ImageLayout::UNDEFINED,
             vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            vk::AccessFlags::empty(),
+            vk::AccessFlags::TRANSFER_WRITE,
+            vk::PipelineStageFlags::TOP_OF_PIPE,
+            vk::PipelineStageFlags::TRANSFER,
+            0,
+            MIP_LEVELS,
             layer_count,
         );
 
-        // Copy each layer from staging buffer
+        // Copy each layer's mip 0 from staging buffer.
         let layer_size = (ATLAS_WIDTH * ATLAS_HEIGHT * BYTES_PER_PIXEL) as u64;
         let regions: Vec<vk::BufferImageCopy> = (0..layer_count)
             .map(|layer| {
@@ -197,13 +215,86 @@ fn transfer_array_image(
 
         device.cmd_copy_buffer_to_image(cmd, staging_buffer, image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &regions);
 
-        // Transition all layers: TRANSFER_DST -> SHADER_READ_ONLY
-        transition_image_layout(
+        // Generate mip chain via repeated blit. Each iteration reads from
+        // level N (TRANSFER_SRC) and writes to level N+1 (TRANSFER_DST).
+        let mut mip_w = ATLAS_WIDTH as i32;
+        let mut mip_h = ATLAS_HEIGHT as i32;
+        for level in 1..MIP_LEVELS {
+            // Transition level-1 from TRANSFER_DST to TRANSFER_SRC.
+            transition_mip_layout(
+                device,
+                cmd,
+                image,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                vk::AccessFlags::TRANSFER_WRITE,
+                vk::AccessFlags::TRANSFER_READ,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::TRANSFER,
+                level - 1,
+                1,
+                layer_count,
+            );
+
+            let next_w = (mip_w / 2).max(1);
+            let next_h = (mip_h / 2).max(1);
+            let blit = *vk::ImageBlit::builder()
+                .src_subresource(
+                    *vk::ImageSubresourceLayers::builder()
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .mip_level(level - 1)
+                        .layer_count(layer_count),
+                )
+                .src_offsets([vk::Offset3D { x: 0, y: 0, z: 0 }, vk::Offset3D { x: mip_w, y: mip_h, z: 1 }])
+                .dst_subresource(
+                    *vk::ImageSubresourceLayers::builder()
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .mip_level(level)
+                        .layer_count(layer_count),
+                )
+                .dst_offsets([vk::Offset3D { x: 0, y: 0, z: 0 }, vk::Offset3D { x: next_w, y: next_h, z: 1 }]);
+            device.cmd_blit_image(
+                cmd,
+                image,
+                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                image,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                &[blit],
+                vk::Filter::LINEAR,
+            );
+
+            mip_w = next_w;
+            mip_h = next_h;
+        }
+
+        // Transition remaining TRANSFER_DST (last mip) and all TRANSFER_SRC
+        // levels to SHADER_READ_ONLY.
+        transition_mip_layout(
+            device,
+            cmd,
+            image,
+            vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            vk::AccessFlags::TRANSFER_READ,
+            vk::AccessFlags::SHADER_READ,
+            vk::PipelineStageFlags::TRANSFER,
+            vk::PipelineStageFlags::FRAGMENT_SHADER,
+            0,
+            MIP_LEVELS - 1,
+            layer_count,
+        );
+        transition_mip_layout(
             device,
             cmd,
             image,
             vk::ImageLayout::TRANSFER_DST_OPTIMAL,
             vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            vk::AccessFlags::TRANSFER_WRITE,
+            vk::AccessFlags::SHADER_READ,
+            vk::PipelineStageFlags::TRANSFER,
+            vk::PipelineStageFlags::FRAGMENT_SHADER,
+            MIP_LEVELS - 1,
+            1,
             layer_count,
         );
 
@@ -225,33 +316,24 @@ fn transfer_array_image(
     Ok(())
 }
 
-unsafe fn transition_image_layout(
+unsafe fn transition_mip_layout(
     device: &Device,
     cmd: vk::CommandBuffer,
     image: vk::Image,
     old_layout: vk::ImageLayout,
     new_layout: vk::ImageLayout,
+    src_access: vk::AccessFlags,
+    dst_access: vk::AccessFlags,
+    src_stage: vk::PipelineStageFlags,
+    dst_stage: vk::PipelineStageFlags,
+    base_mip_level: u32,
+    level_count: u32,
     layer_count: u32,
 ) {
-    let (src_access, dst_access, src_stage, dst_stage) = match (old_layout, new_layout) {
-        (vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL) => (
-            vk::AccessFlags::empty(),
-            vk::AccessFlags::TRANSFER_WRITE,
-            vk::PipelineStageFlags::TOP_OF_PIPE,
-            vk::PipelineStageFlags::TRANSFER,
-        ),
-        (vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL) => (
-            vk::AccessFlags::TRANSFER_WRITE,
-            vk::AccessFlags::SHADER_READ,
-            vk::PipelineStageFlags::TRANSFER,
-            vk::PipelineStageFlags::FRAGMENT_SHADER,
-        ),
-        _ => panic!("Unsupported layout transition: {:?} -> {:?}", old_layout, new_layout),
-    };
-
     let subresource_range = *vk::ImageSubresourceRange::builder()
         .aspect_mask(vk::ImageAspectFlags::COLOR)
-        .level_count(1)
+        .base_mip_level(base_mip_level)
+        .level_count(level_count)
         .layer_count(layer_count);
 
     let barrier = vk::ImageMemoryBarrier::builder()
@@ -278,7 +360,7 @@ unsafe fn transition_image_layout(
 fn create_array_image_view(device: &Device, image: vk::Image, layer_count: u32) -> anyhow::Result<vk::ImageView> {
     let subresource_range = *vk::ImageSubresourceRange::builder()
         .aspect_mask(vk::ImageAspectFlags::COLOR)
-        .level_count(1)
+        .level_count(MIP_LEVELS)
         .layer_count(layer_count);
 
     let info = vk::ImageViewCreateInfo::builder()
@@ -291,17 +373,19 @@ fn create_array_image_view(device: &Device, image: vk::Image, layer_count: u32) 
 }
 
 fn create_sampler(device: &Device) -> anyhow::Result<vk::Sampler> {
+    // NEAREST mag (sharp blocks up close), LINEAR min + LINEAR mip
+    // (trilinear when minified, kills moire at distance).
     let info = vk::SamplerCreateInfo::builder()
         .mag_filter(vk::Filter::NEAREST)
-        .min_filter(vk::Filter::NEAREST)
+        .min_filter(vk::Filter::LINEAR)
         .address_mode_u(vk::SamplerAddressMode::REPEAT)
         .address_mode_v(vk::SamplerAddressMode::REPEAT)
         .address_mode_w(vk::SamplerAddressMode::REPEAT)
-        .mipmap_mode(vk::SamplerMipmapMode::NEAREST)
+        .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
         .anisotropy_enable(false)
         .max_anisotropy(1.0)
         .min_lod(0.0)
-        .max_lod(0.0)
+        .max_lod(MIP_LEVELS as f32)
         .mip_lod_bias(0.0);
 
     Ok(unsafe { device.create_sampler(&info, None)? })

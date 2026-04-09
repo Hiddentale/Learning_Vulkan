@@ -15,6 +15,11 @@ pub struct CullPushConstants {
     pub phase: u32,
     /// Opaque block mask (mesh shader path) or draw buffer offset (legacy path).
     pub draw_offset: u32,
+    /// Planet radius in blocks; used by the horizon culling early-out.
+    pub planet_radius: f32,
+    /// 1 = stereo (test both eye matrices for occlusion), 0 = mono (eye 0 only).
+    pub stereo: u32,
+    pub _pad: [f32; 2],
 }
 
 /// Resources for the depth pyramid generation compute pipeline.
@@ -145,8 +150,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cull_push_constants_size_is_128_bytes() {
-        assert_eq!(std::mem::size_of::<CullPushConstants>(), 128);
+    fn cull_push_constants_size_is_144_bytes() {
+        assert_eq!(std::mem::size_of::<CullPushConstants>(), 144);
     }
 
     #[test]
@@ -157,6 +162,8 @@ mod tests {
         assert_eq!(memoffset::offset_of!(CullPushConstants, screen_size), 112);
         assert_eq!(memoffset::offset_of!(CullPushConstants, phase), 120);
         assert_eq!(memoffset::offset_of!(CullPushConstants, draw_offset), 124);
+        assert_eq!(memoffset::offset_of!(CullPushConstants, planet_radius), 128);
+        assert_eq!(memoffset::offset_of!(CullPushConstants, stereo), 132);
     }
 
     #[test]

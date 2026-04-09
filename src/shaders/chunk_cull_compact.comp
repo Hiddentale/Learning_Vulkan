@@ -1,0 +1,185 @@
+#version 450
+
+// One thread per resident chunk. Runs frustum + horizon (+ phase 2 hi-Z)
+// culling and atomically appends surviving chunk indices to a visible list.
+// The visible-count buffer is laid out as a `VkDrawMeshTasksIndirectCommandEXT`
+// (groupCountX, groupCountY, groupCountZ) so it doubles as the indirect args
+// for the subsequent `cmd_draw_mesh_tasks_indirect_ext` call. groupCountY/Z
+// are pre-initialised to 1 at buffer creation; only groupCountX is touched
+// per frame (cleared to 0 by cmd_fill_buffer, atomically incremented here).
+
+layout(local_size_x = 64) in;
+
+struct MeshChunkInfo {
+    vec3 aabb_min;
+    uint voxel_slot;
+    vec3 aabb_max;
+    uint boundary_slot;
+    ivec3 chunk_pos;
+    uint face_id;
+};
+
+layout(std430, set = 0, binding = 0) readonly buffer ChunkInfoBuffer {
+    MeshChunkInfo chunks[];
+};
+
+layout(std430, set = 0, binding = 1) buffer VisibilityBuffer {
+    uint visibility[];
+};
+
+layout(std430, set = 0, binding = 2) writeonly buffer VisibleChunks {
+    uint visible_chunks[];
+};
+
+layout(std430, set = 0, binding = 3) buffer IndirectArgs {
+    uint group_count_x;
+    uint group_count_y;
+    uint group_count_z;
+};
+
+layout(set = 0, binding = 4) uniform sampler2D depth_pyramid;
+
+layout(set = 0, binding = 5) uniform CameraUBO {
+    mat4 view_projection[2];
+    mat4 inverse_view_projection[2];
+    vec3 light_direction;
+    float ambient_strength;
+} camera;
+
+layout(push_constant) uniform PushConstants {
+    vec4 planes[6];
+    vec3 camera_pos;
+    uint chunk_count;
+    vec2 screen_size;
+    uint phase;
+    uint opaque_mask;
+    float planet_radius;
+    uint stereo;
+};
+
+bool frustum_visible(vec3 aabb_min, vec3 aabb_max) {
+    for (int i = 0; i < 6; i++) {
+        vec3 normal = planes[i].xyz;
+        vec3 p = vec3(
+            normal.x >= 0.0 ? aabb_max.x : aabb_min.x,
+            normal.y >= 0.0 ? aabb_max.y : aabb_min.y,
+            normal.z >= 0.0 ? aabb_max.z : aabb_min.z
+        );
+        if (dot(normal, p) + planes[i].w < 0.0) return false;
+    }
+    return true;
+}
+
+bool horizon_visible(vec3 sphere_center, float sphere_radius) {
+    float cam_dist = length(camera_pos);
+    if (cam_dist <= planet_radius) return true;
+    float c_dist = length(sphere_center);
+    if (c_dist < 1e-4) return true;
+    vec3 cam_dir = camera_pos / cam_dist;
+    vec3 chunk_dir = sphere_center / c_dist;
+    float cos_a = clamp(planet_radius / cam_dist, -1.0, 1.0);
+    float sin_a = sqrt(max(0.0, 1.0 - cos_a * cos_a));
+    float sin_alpha = clamp(sphere_radius / c_dist, 0.0, 1.0);
+    float cos_alpha = sqrt(max(0.0, 1.0 - sin_alpha * sin_alpha));
+    float threshold = cos_a * cos_alpha - sin_a * sin_alpha;
+    return dot(chunk_dir, cam_dir) >= threshold;
+}
+
+bool project_aabb(mat4 vp, vec3 aabb_min, vec3 aabb_max, out vec2 uv_min, out vec2 uv_max, out float chunk_z) {
+    uv_min = vec2(1e9);
+    uv_max = vec2(-1e9);
+    chunk_z = 0.0;
+    bool any_in_front = false;
+    bool any_behind = false;
+
+    for (int i = 0; i < 8; i++) {
+        vec3 corner = vec3(
+            (i & 1) != 0 ? aabb_max.x : aabb_min.x,
+            (i & 2) != 0 ? aabb_max.y : aabb_min.y,
+            (i & 4) != 0 ? aabb_max.z : aabb_min.z
+        );
+        vec4 clip = vp * vec4(corner, 1.0);
+        if (clip.w <= 1e-4) {
+            any_behind = true;
+            continue;
+        }
+        any_in_front = true;
+        vec3 ndc = clip.xyz / clip.w;
+        vec2 uv = ndc.xy * 0.5 + 0.5;
+        uv_min = min(uv_min, uv);
+        uv_max = max(uv_max, uv);
+        chunk_z = max(chunk_z, ndc.z);
+    }
+
+    if (!any_in_front) {
+        return false;
+    }
+    if (any_behind) {
+        uv_min = vec2(0.0);
+        uv_max = vec2(1.0);
+        chunk_z = 1.0;
+    } else {
+        uv_min = clamp(uv_min, vec2(0.0), vec2(1.0));
+        uv_max = clamp(uv_max, vec2(0.0), vec2(1.0));
+    }
+    return true;
+}
+
+bool eye_occlusion_visible(mat4 vp, vec3 aabb_min, vec3 aabb_max) {
+    vec2 uv_min, uv_max;
+    float chunk_z;
+    if (!project_aabb(vp, aabb_min, aabb_max, uv_min, uv_max, chunk_z)) {
+        return false;
+    }
+    vec2 size_pixels = (uv_max - uv_min) * screen_size;
+    float max_extent = max(size_pixels.x, size_pixels.y);
+    float mip = max(0.0, ceil(log2(max(max_extent * 0.5, 1.0))));
+    vec2 center_uv = (uv_min + uv_max) * 0.5;
+    vec2 texel = 1.0 / vec2(textureSize(depth_pyramid, int(mip)));
+    float d0 = textureLod(depth_pyramid, center_uv + vec2(-0.5, -0.5) * texel, mip).r;
+    float d1 = textureLod(depth_pyramid, center_uv + vec2( 0.5, -0.5) * texel, mip).r;
+    float d2 = textureLod(depth_pyramid, center_uv + vec2(-0.5,  0.5) * texel, mip).r;
+    float d3 = textureLod(depth_pyramid, center_uv + vec2( 0.5,  0.5) * texel, mip).r;
+    float pyramid_depth = min(min(d0, d1), min(d2, d3));
+    return chunk_z >= pyramid_depth;
+}
+
+bool occlusion_visible(vec3 aabb_min, vec3 aabb_max) {
+    if (eye_occlusion_visible(camera.view_projection[0], aabb_min, aabb_max)) {
+        return true;
+    }
+    if (stereo == 1u) {
+        return eye_occlusion_visible(camera.view_projection[1], aabb_min, aabb_max);
+    }
+    return false;
+}
+
+void main() {
+    uint chunk_idx = gl_GlobalInvocationID.x;
+    if (chunk_idx >= chunk_count) return;
+
+    bool was_visible = visibility[chunk_idx] == 1u;
+    if (phase == 1u && !was_visible) return;
+    if (phase == 2u && was_visible) return;
+
+    MeshChunkInfo chunk = chunks[chunk_idx];
+    vec3 sphere_center = (chunk.aabb_min + chunk.aabb_max) * 0.5;
+    float sphere_radius = length((chunk.aabb_max - chunk.aabb_min) * 0.5);
+
+    if (!horizon_visible(sphere_center, sphere_radius)) {
+        visibility[chunk_idx] = 0u;
+        return;
+    }
+    if (!frustum_visible(chunk.aabb_min, chunk.aabb_max)) {
+        visibility[chunk_idx] = 0u;
+        return;
+    }
+    if (phase == 2u && !occlusion_visible(chunk.aabb_min, chunk.aabb_max)) {
+        visibility[chunk_idx] = 0u;
+        return;
+    }
+
+    visibility[chunk_idx] = 1u;
+    uint slot = atomicAdd(group_count_x, 1u);
+    visible_chunks[slot] = chunk_idx;
+}

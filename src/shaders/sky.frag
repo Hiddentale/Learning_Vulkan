@@ -22,9 +22,11 @@ const float SUN_RADIUS   = 0.995;
 const float SUN_GLOW     = 0.97;
 
 void main() {
-    // Convert pixel coords to NDC [-1, 1], z = 1.0 = far plane
+    // Convert pixel coords to NDC [-1, 1]. Reverse-Z: small ndc.z = far plane.
+    // Use a tiny non-zero value so the inverse-VP divide stays well-conditioned
+    // even with an infinite-far projection (where ndc.z=0 maps to w→0).
     vec2 ndc = (gl_FragCoord.xy / push.screen_size) * 2.0 - 1.0;
-    vec4 clip = vec4(ndc, 1.0, 1.0);
+    vec4 clip = vec4(ndc, 1e-5, 1.0);
 
     // Unproject to world space using this eye's inverse VP
     vec4 world_pos = ubo.inverse_view_projection[gl_ViewIndex] * clip;

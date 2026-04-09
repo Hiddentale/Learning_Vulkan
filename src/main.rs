@@ -12,7 +12,6 @@ use graphical_core::ui_pipeline::UiPipeline;
 use graphical_core::vulkan_object::VulkanApplication;
 use log::info;
 use std::time::Instant;
-use voxel::block::BlockType;
 use voxel::player::Player;
 use voxel::raycast;
 use vr::{VrContext, VrSupport};
@@ -34,7 +33,6 @@ const DEVICE_EXTENSIONS: &[&std::ffi::CStr] = &[
     vk::extension_names::EXT_MESH_SHADER_EXTENSION_NAME,
 ];
 
-const WORLD_DISTANCE: i32 = 24;
 const BUTTON_W: f32 = 300.0;
 const BUTTON_H: f32 = 40.0;
 const TEXT_SIZE: f32 = 20.0;
@@ -60,6 +58,12 @@ fn main() -> Result<()> {
     let mut camera = Camera::default();
     let mut input = InputState::new();
     let mut player = Player::new();
+    // Phase D': fixed-step physics at 60 Hz, decoupled from rendering.
+    // Mouse look stays per-frame (smoothness), movement + gravity tick at
+    // a constant rate so collision is deterministic regardless of FPS.
+    const PHYSICS_TICK: f32 = 1.0 / 60.0;
+    const MAX_PHYSICS_CATCHUP: f32 = 0.25;
+    let mut physics_accumulator: f32 = 0.0;
     let mut last_frame = Instant::now();
     let mut fps_counter = FpsCounter::new();
     let mut game_state = GameState::TitleScreen;
@@ -135,14 +139,21 @@ fn main() -> Result<()> {
                                     let seed: u32 = seed_text.parse().unwrap_or_else(|_| rand_seed());
                                     match storage::world_meta::create_world(name, seed) {
                                         Ok(dir) => {
-                                            let side = 2 * WORLD_DISTANCE + 1;
+                                            // Pregen is "ready to play" when the player's working
+                                            // set is filled — not when the entire planet is in RAM.
+                                            // Working set = (2·WORLD_DISTANCE+1)² columns on the
+                                            // player's spawn face. The heightmap LOD covers everything
+                                            // outside this neighborhood from the moment world entry.
+                                            let stream_rd = graphical_core::vulkan_object::WORLD_DISTANCE;
+                                            let side = (2 * stream_rd + 1) as usize;
+                                            let total = side * side;
                                             let erosion_path = dir.join("erosion_map.bin");
                                             let ew = voxel::erosion_worker::ErosionWorker::start(seed, erosion_path);
                                             game_state = GameState::PreGenerating {
                                                 world_dir: dir,
                                                 seed,
                                                 loaded: 0,
-                                                total: (side * side) as usize,
+                                                total,
                                                 erosion_worker: Some(ew),
                                                 erosion_map: None,
                                             };
@@ -224,29 +235,36 @@ fn main() -> Result<()> {
 
                 match &mut game_state {
                     GameState::Playing => {
-                        let old_position = camera.position;
-                        if let Some(world) = application.world() {
-                            let local_p = world.metric.sample(camera.position).p;
-                            input.update_camera(&mut camera, delta_time, player.fly_mode, local_p);
-                            player.resolve_horizontal(&mut camera.position, old_position, world);
-                            player.apply_physics(&mut camera.position, delta_time, world);
-                        }
-                        if application.has_world() {
-                            let destroy_hit = if input.take_left_click() {
-                                application.world().and_then(|w| raycast::raycast(camera.position, camera.front(), w))
-                            } else {
-                                None
-                            };
-                            let place_hit = if input.take_right_click() {
-                                application.world().and_then(|w| raycast::raycast(camera.position, camera.front(), w))
-                            } else {
-                                None
-                            };
-                            if let Some(hit) = destroy_hit {
-                                unsafe { application.set_block(hit.block[0], hit.block[1], hit.block[2], BlockType::Air) };
+                        // Mouse look every frame.
+                        input.apply_mouse_look(&mut player);
+                        // Fixed-step physics + movement.
+                        physics_accumulator = (physics_accumulator + delta_time).min(MAX_PHYSICS_CATCHUP);
+                        while physics_accumulator >= PHYSICS_TICK {
+                            if let Some(world) = application.world() {
+                                let local_p = world.metric.sample(player.world_pos()).p;
+                                input.tick_movement(&mut player, world, PHYSICS_TICK, local_p);
                             }
-                            if let Some(hit) = place_hit {
-                                unsafe { application.set_block(hit.adjacent[0], hit.adjacent[1], hit.adjacent[2], BlockType::Stone) };
+                            physics_accumulator -= PHYSICS_TICK;
+                        }
+                        camera.sync_from_player(&player);
+                        let left = input.take_left_click();
+                        let right = input.take_right_click();
+                        if left || right {
+                            if let Some(world) = application.world() {
+                                if let Some(hit) = raycast::raycast(player.eye_pos(), player.forward, world) {
+                                    let target = if left { hit.hit } else { hit.adjacent };
+                                    let allowed = left || !player.overlaps_block(target.chunk, target.lx, target.ly, target.lz);
+                                    if allowed {
+                                        let new_block = if left {
+                                            voxel::block::BlockType::Air
+                                        } else {
+                                            voxel::block::BlockType::Stone
+                                        };
+                                        unsafe {
+                                            application.set_block_at(target.chunk, target.lx, target.ly, target.lz, new_block);
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -296,6 +314,11 @@ fn main() -> Result<()> {
                     GameState::Playing => {
                         application.ui.begin_frame();
                         application.ui.draw_text(&fps_counter.display(), 4.0, 4.0, 16.0, [1.0, 1.0, 1.0, 0.8]);
+                        let pos_text = format!(
+                            "face={:?} chunk=({},{},{}) local=({:.1},{:.1},{:.1})",
+                            player.face, player.cx, player.cy, player.cz, player.lx, player.ly, player.lz
+                        );
+                        application.ui.draw_text(&pos_text, 4.0, 22.0, 14.0, [1.0, 1.0, 1.0, 0.8]);
                         unsafe { application.render_frame(&user_window, &camera, &eyes) }
                     }
                     _ => {
@@ -406,14 +429,16 @@ fn draw_menu(ui: &mut UiPipeline, state: &mut GameState, sw: f32, sh: f32, curso
                     let seed: u32 = seed_text.parse().unwrap_or_else(|_| rand_seed());
                     match storage::world_meta::create_world(name, seed) {
                         Ok(dir) => {
-                            let side = 2 * WORLD_DISTANCE + 1;
+                            let stream_rd = graphical_core::vulkan_object::WORLD_DISTANCE;
+                            let side = (2 * stream_rd + 1) as usize;
+                            let total = side * side;
                             let erosion_path = dir.join("erosion_map.bin");
                             let ew = voxel::erosion_worker::ErosionWorker::start(seed, erosion_path);
                             *state = GameState::PreGenerating {
                                 world_dir: dir,
                                 seed,
                                 loaded: 0,
-                                total: (side * side) as usize,
+                                total,
                                 erosion_worker: Some(ew),
                                 erosion_map: None,
                             };
@@ -509,8 +534,8 @@ fn tick_pregen(state: &mut GameState, application: &mut VulkanApplication, windo
     }
     let col_count = if let Some(world) = application.world() {
         let mut seen = std::collections::HashSet::new();
-        for [cx, _cy, cz] in world.chunk_positions() {
-            seen.insert((cx, cz));
+        for cp in world.chunk_positions() {
+            seen.insert((cp.face, cp.cx, cp.cz));
         }
         seen.len()
     } else {

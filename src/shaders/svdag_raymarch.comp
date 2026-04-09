@@ -283,8 +283,11 @@ void main() {
     uint view_index = 0;
     vec2 uv = (vec2(pixel) + 0.5) / vec2(screen_size);
     vec2 ndc = uv * 2.0 - 1.0;
-    vec4 world_near = camera.inverse_view_projection[view_index] * vec4(ndc, 0.0, 1.0);
-    vec4 world_far = camera.inverse_view_projection[view_index] * vec4(ndc, 1.0, 1.0);
+    // Reverse-Z: ndc.z=1 is the near plane, ndc.z→0 is far. Use a small but
+    // non-zero "far" so the inverse-VP divide stays well-conditioned with
+    // infinite-far projection.
+    vec4 world_near = camera.inverse_view_projection[view_index] * vec4(ndc, 1.0, 1.0);
+    vec4 world_far = camera.inverse_view_projection[view_index] * vec4(ndc, 1e-5, 1.0);
     world_near /= world_near.w;
     world_far /= world_far.w;
 

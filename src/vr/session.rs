@@ -98,7 +98,6 @@ impl VrSession {
 // ---------------------------------------------------------------------------
 
 const NEAR_PLANE: f32 = 0.1;
-const FAR_PLANE: f32 = 500.0;
 
 /// Convert an OpenXR View (pose + FOV) to a view-projection matrix.
 pub fn view_to_vp(view: &xr::View) -> Mat4 {
@@ -107,7 +106,9 @@ pub fn view_to_vp(view: &xr::View) -> Mat4 {
     proj * view_mat
 }
 
-/// Build a Vulkan-compatible projection matrix from OpenXR asymmetric FOV.
+/// Build a Vulkan-compatible reverse-Z infinite-far projection matrix from
+/// OpenXR asymmetric FOV. Maps view-space `z = -near` → NDC `z = 1`,
+/// `z = -∞` → NDC `z = 0`. Y is negated for Vulkan Y-down.
 fn projection_from_fov(fov: &xr::Fovf) -> Mat4 {
     let left = fov.angle_left.tan();
     let right = fov.angle_right.tan();
@@ -117,15 +118,14 @@ fn projection_from_fov(fov: &xr::Fovf) -> Mat4 {
     let width = right - left;
     let height = up - down;
 
-    // Reversed-depth or standard [0,1] Vulkan depth, right-handed
     let mut m = Mat4::ZERO;
     m.x_axis.x = 2.0 / width;
-    m.y_axis.y = -2.0 / height; // Vulkan Y-down
+    m.y_axis.y = -2.0 / height;
     m.z_axis.x = (right + left) / width;
-    m.z_axis.y = -(up + down) / height; // Vulkan Y-down
-    m.z_axis.z = -FAR_PLANE / (FAR_PLANE - NEAR_PLANE);
+    m.z_axis.y = -(up + down) / height;
+    m.z_axis.z = 0.0;
     m.z_axis.w = -1.0;
-    m.w_axis.z = -(FAR_PLANE * NEAR_PLANE) / (FAR_PLANE - NEAR_PLANE);
+    m.w_axis.z = NEAR_PLANE;
     m
 }
 
