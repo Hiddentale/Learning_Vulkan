@@ -60,11 +60,6 @@ impl World {
     /// lets the planet scale arbitrarily without overflowing the GPU mesh
     /// pool.
     ///
-    /// Cross-face spillover (working set spanning into neighboring faces
-    /// when the player nears a face edge) is a known limitation: the
-    /// heightmap LOD covers the visual gap until the player has fully
-    /// crossed onto the new face, after which the streamer reloads the new
-    /// neighborhood.
     pub fn update(&mut self, player_world: DVec3) -> WorldDelta {
         let mut loaded = Vec::new();
         let mut unloaded = Vec::new();
@@ -87,11 +82,34 @@ impl World {
             self.render_distance
         };
 
+        // Build the set of valid (face, cx, cz) columns once. Iterate the
+        // 2D Chebyshev square around the player; out-of-range columns are
+        // remapped to the neighboring face via `cross_face_neighbor`.
+        let mut target_columns: std::collections::HashSet<(sphere::Face, i32, i32)> =
+            std::collections::HashSet::new();
+        if rd >= 0 {
+            for dz in -rd..=rd {
+                for dx in -rd..=rd {
+                    let cx = player_cx + dx;
+                    let cz = player_cz + dz;
+                    let col = if cx < 0 || cx >= sphere::FACE_SIDE_CHUNKS
+                        || cz < 0 || cz >= sphere::FACE_SIDE_CHUNKS
+                    {
+                        let oob = ChunkPos { face: player_face, cx, cy: 0, cz };
+                        sphere::cross_face_neighbor(oob)
+                            .map(|p| (p.face, p.cx, p.cz))
+                    } else {
+                        Some((player_face, cx, cz))
+                    };
+                    if let Some(c) = col {
+                        target_columns.insert(c);
+                    }
+                }
+            }
+        }
+
         let in_set = |pos: ChunkPos| -> bool {
-            rd >= 0
-                && pos.face == player_face
-                && (pos.cx - player_cx).abs() <= rd
-                && (pos.cz - player_cz).abs() <= rd
+            target_columns.contains(&(pos.face, pos.cx, pos.cz))
         };
 
         // Evict anything outside the 2D column working set.
@@ -103,22 +121,12 @@ impl World {
             }
         }
 
-        // Request every in-set column. Columns are always full-band; the
-        // generator returns the entire terrain stack at once.
-        if rd >= 0 {
-            for dz in -rd..=rd {
-                for dx in -rd..=rd {
-                    let cx = player_cx + dx;
-                    let cz = player_cz + dz;
-                    if cx < 0 || cx >= sphere::FACE_SIDE_CHUNKS || cz < 0 || cz >= sphere::FACE_SIDE_CHUNKS {
-                        continue;
-                    }
-                    let any_loaded = (TERRAIN_MIN_CY..=TERRAIN_MAX_CY)
-                        .any(|cy| self.chunks.contains_key(&ChunkPos { face: player_face, cx, cy, cz }));
-                    if !any_loaded && !self.generator.is_pending(player_face, cx, cz) {
-                        self.generator.request(player_face, cx, cz);
-                    }
-                }
+        // Request every in-set column not yet loaded or pending.
+        for &(face, cx, cz) in &target_columns {
+            let any_loaded = (TERRAIN_MIN_CY..=TERRAIN_MAX_CY)
+                .any(|cy| self.chunks.contains_key(&ChunkPos { face, cx, cy, cz }));
+            if !any_loaded && !self.generator.is_pending(face, cx, cz) {
+                self.generator.request(face, cx, cz);
             }
         }
 

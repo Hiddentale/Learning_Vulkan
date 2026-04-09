@@ -11,14 +11,17 @@ const WORKER_COUNT: usize = 8;
 
 /// Generate the height + material grid for one quadtree tile. Returns
 /// `HEIGHT_PAGE_SIZE²` floats and bytes laid out row-major
-/// (`data[gx + gz * stride]`). Height values are in blocks above (positive)
-/// or below (negative) the planet radius, clamped to
-/// `±MAX_TERRAIN_AMPLITUDE`.
+/// (`data[gx + gz * stride]`). The page is `TILE_GRID_POSTS + 2` wide:
+/// a 1-texel border on each side for bilinear filtering at tile edges.
+/// Interior texels `[1..TILE_GRID_POSTS]` map to the tile's face-local
+/// block range; border texels 0 and `TILE_GRID_POSTS + 1` oversample by
+/// one post step into the neighboring tile's territory.
 pub fn generate_tile_heights(
     node: QuadNode,
     seed: u32,
     erosion_map: Option<&ErosionMap>,
 ) -> TileHeightsData {
+    use super::heightmap_quadtree::TILE_GRID_POSTS;
     let noises = WorldNoises::new(seed);
     let stride = HEIGHT_PAGE_SIZE as usize;
     let mut heights = vec![0.0_f32; stride * stride];
@@ -26,12 +29,17 @@ pub fn generate_tile_heights(
     let side = node.side_blocks();
     let u0 = node.ix as f64 * side - CUBE_HALF_BLOCKS;
     let v0 = node.iy as f64 * side - CUBE_HALF_BLOCKS;
-    let denom = (stride - 1).max(1) as f64;
+    // Interior posts span [1, TILE_GRID_POSTS] in the page. The post step
+    // covers the tile's full side in (TILE_GRID_POSTS - 1) intervals.
+    let interior = TILE_GRID_POSTS as f64;
+    let post_step = side / (interior - 1.0);
     let sea_level_radius = SEA_LEVEL as f64 + PLANET_RADIUS_BLOCKS as f64;
     for gz in 0..stride {
         for gx in 0..stride {
-            let u = u0 + (gx as f64 / denom) * side;
-            let v = v0 + (gz as f64 / denom) * side;
+            // Map page texel to face-local (u, v). Texel 1 = first interior
+            // post (u0), texel 0 = one step before u0 (border).
+            let u = u0 + (gx as f64 - 1.0) * post_step;
+            let v = v0 + (gz as f64 - 1.0) * post_step;
             let probe = sphere::face_local_to_world(node.face, u, v, 0.0);
             let (seabed_radius, block_type) = terrain::surface_radius_at_world(&noises, probe, erosion_map);
             let (visible, mat) = if seabed_radius < sea_level_radius {
@@ -139,11 +147,12 @@ mod tests {
         let side = node.side_blocks();
         let u0 = node.ix as f64 * side - CUBE_HALF_BLOCKS;
         let v0 = node.iy as f64 * side - CUBE_HALF_BLOCKS;
+        // Interior post (0,0) is at page texel (1,1) due to the 1-texel border.
         let probe = face_local_to_world(node.face, u0, v0, 0.0);
         let (r, _) = terrain::surface_radius_at_world(&noises, probe, None);
         let sea = SEA_LEVEL as f64 + PLANET_RADIUS_BLOCKS as f64;
         let expected = (r.max(sea) - PLANET_RADIUS_BLOCKS as f64) as f32;
-        let actual = data.heights[0 + 0 * stride];
+        let actual = data.heights[1 + 1 * stride];
         assert!(
             (actual - expected).abs() < 0.01,
             "corner height mismatch: actual={} expected={}",

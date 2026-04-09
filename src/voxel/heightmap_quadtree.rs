@@ -31,11 +31,11 @@ pub const BASE_TILE_BLOCKS: i32 = 128;
 /// into power-of-two meshlets in the mesh shader.
 pub const TILE_GRID_POSTS: u32 = 65;
 
-/// Side length, in texels, of one heightmap atlas page. Currently equals
-/// `TILE_GRID_POSTS` — one height value per geometric grid post, no skirt.
-/// Bumping this by 2 (for a 1-texel border on each side) is the way to
-/// enable hardware bilinear filtering across tile edges if Phase 3 needs it.
-pub const HEIGHT_PAGE_SIZE: u32 = TILE_GRID_POSTS;
+/// Side length, in texels, of one heightmap atlas page. Equals
+/// `TILE_GRID_POSTS + 2` — a 1-texel border on each side so hardware
+/// bilinear filtering across tile edges reads valid data instead of
+/// clamping to the edge texel.
+pub const HEIGHT_PAGE_SIZE: u32 = TILE_GRID_POSTS + 2;
 
 /// Maximum quadtree depth. With `FACE_SIDE_BLOCKS=22720` and `BASE=128` this
 /// is 8 (root face = level 0, finest leaf = level 8 covering ~88 blocks).
@@ -819,8 +819,6 @@ mod tests {
 
     #[test]
     fn cross_face_neighbor_round_trips() {
-        // Walking off and back must return to the original tile (modulo
-        // level — we test at every level).
         for level in 0..=MAX_LEVEL.min(4) {
             let n = 1u32 << level;
             for face in ALL_FACES {
@@ -839,6 +837,72 @@ mod tests {
                         assert_ne!(nb.face, node.face, "cross-face dir {:?} kept same face", dir);
                         assert_eq!(nb.level, level);
                     }
+                }
+            }
+        }
+    }
+
+    /// CDLOD morph correctness: when morph_factor = 1.0, a child tile's
+    /// coarse-grid position (post indices snapped to even) must match the
+    /// parent tile's corresponding fine-grid position. This is the contract
+    /// the mesh shader relies on — if it breaks, LOD transitions pop.
+    ///
+    /// The mesh shader computes:
+    ///   u_coarse = u0 + (post_x & ~1) * post_step
+    /// At morph = 1.0: vertex = project(face, u_coarse, v_coarse, h_coarse).
+    ///
+    /// The parent tile covers 2× the side, so its post_step is 2× larger,
+    /// and its post at index (post_x / 2) lands at the same face-local
+    /// (u, v) as the child's snapped-to-even post. We verify this numerically.
+    #[test]
+    fn morph_target_matches_parent_grid() {
+        // Pick a non-root child tile on each face.
+        for face in ALL_FACES {
+            let child = QuadNode { face, level: 4, ix: 3, iy: 5 };
+            let parent = child.parent().unwrap();
+
+            let child_side = child.side_blocks();
+            let parent_side = parent.side_blocks();
+            let half = CUBE_HALF_BLOCKS;
+            let child_u0 = child.ix as f64 * child_side - half;
+            let child_v0 = child.iy as f64 * child_side - half;
+            let parent_u0 = parent.ix as f64 * parent_side - half;
+            let parent_v0 = parent.iy as f64 * parent_side - half;
+            let posts = HEIGHT_PAGE_SIZE as usize;
+            let child_step = child_side / (posts - 1) as f64;
+            let parent_step = parent_side / (posts - 1) as f64;
+
+            // Sample a few posts: even-indexed posts in the child grid.
+            for &post_x in &[0u32, 2, 16, 32, 64] {
+                for &post_y in &[0u32, 2, 16, 32, 64] {
+                    if post_x >= posts as u32 || post_y >= posts as u32 { continue; }
+                    // Child's coarse position (snapped to even).
+                    let snapped_x = post_x & !1;
+                    let snapped_y = post_y & !1;
+                    let child_u = child_u0 + snapped_x as f64 * child_step;
+                    let child_v = child_v0 + snapped_y as f64 * child_step;
+
+                    // Parent's fine position at the corresponding post.
+                    // Child is one of 4 quadrants of parent. Its (ix, iy)
+                    // within the parent is (child.ix % 2, child.iy % 2).
+                    let qx = child.ix % 2;
+                    let qy = child.iy % 2;
+                    let parent_post_x = qx * (posts as u32 / 2) + snapped_x / 2;
+                    let parent_post_y = qy * (posts as u32 / 2) + snapped_y / 2;
+                    let parent_u = parent_u0 + parent_post_x as f64 * parent_step;
+                    let parent_v = parent_v0 + parent_post_y as f64 * parent_step;
+
+                    let du = (child_u - parent_u).abs();
+                    let dv = (child_v - parent_v).abs();
+                    assert!(
+                        du < 0.01 && dv < 0.01,
+                        "morph target mismatch on face {:?}: child post ({},{}) snapped ({},{}) \
+                         -> child uv ({:.3},{:.3}) vs parent post ({},{}) -> parent uv ({:.3},{:.3}), \
+                         delta=({:.6},{:.6})",
+                        face, post_x, post_y, snapped_x, snapped_y,
+                        child_u, child_v, parent_post_x, parent_post_y,
+                        parent_u, parent_v, du, dv
+                    );
                 }
             }
         }
