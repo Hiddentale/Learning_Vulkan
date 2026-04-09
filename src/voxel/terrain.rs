@@ -969,9 +969,7 @@ mod surface_diagnostics {
         };
         // Find the topmost solid block of each column so we can restrict the
         // exposure scan to "starting at or near the surface".
-        let topmost = |x: usize, z: usize| -> Option<usize> {
-            (0..CHUNK_SIZE * CHUNK_LAYERS).rev().find(|&y| solid(x, y, z))
-        };
+        let topmost = |x: usize, z: usize| -> Option<usize> { (0..CHUNK_SIZE * CHUNK_LAYERS).rev().find(|&y| solid(x, y, z)) };
 
         let mut max_run = 0usize;
         let mut worst = (0, 0, 0, 0);
