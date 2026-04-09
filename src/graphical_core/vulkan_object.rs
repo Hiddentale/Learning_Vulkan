@@ -7,8 +7,6 @@ use crate::graphical_core::{
     frustum::Frustum,
     gpu::choose_gpu,
     heightmap_atlas::HeightmapAtlas,
-    heightmap_pipeline::HeightmapPipeline,
-    heightmap_pool::HeightmapPool,
     heightmap_tile_pipeline::{CullPush as HmCullPush, HeightmapTilePipeline, TilePush as HmTilePush},
     instance::{create_instance, create_logical_device},
     mesh_pipeline::MeshShaderPipeline,
@@ -26,7 +24,7 @@ use crate::graphical_core::{
 use crate::storage::region::RegionStore;
 use crate::voxel::chunk::{Chunk, CHUNK_SIZE};
 use crate::voxel::erosion::ErosionMap;
-use crate::voxel::heightmap_generator::{HeightmapGenerator, HeightmapRequest, HeightsGenerator, HeightsRequest};
+use crate::voxel::heightmap_generator::{HeightsGenerator, HeightsRequest};
 use crate::voxel::heightmap_quadtree::{GpuTileDesc, Quadtree, MAX_RESIDENT_TILES};
 use crate::voxel::svdag_compressor::SvdagCompressor;
 use crate::voxel::world::World;
@@ -95,14 +93,6 @@ const LOD3_DISTANCE: i32 = 192; // 3072m
 const LOD4_DISTANCE: i32 = 384; // 6144m (>5km)
 /// World generates terrain out to this distance (raw chunks for LOD-0 super-chunk building).
 pub const WORLD_DISTANCE: i32 = LOD0_DISTANCE + 8 + 4;
-/// Angular margin (radians) by which the heightmap reaches *inside* the
-/// mesh-chunk arc. Lets the heightmap cover the load-in frontier while the
-/// outermost mesh chunks are still being generated. Sized at ~4 chunks of
-/// arc at the current planet radius — large enough to absorb generator
-/// latency, small enough that the resulting overlap ring is sub-pixel
-/// when the player is high enough to notice it at all.
-const HEIGHTMAP_OVERLAP_ARC: f32 =
-    (4.0 * crate::voxel::chunk::CHUNK_SIZE as f32) / crate::voxel::sphere::PLANET_RADIUS_BLOCKS as f32;
 /// Maximum SVDAG render distance across all LOD levels.
 const SVDAG_DISTANCE: i32 = LOD4_DISTANCE;
 /// Sized to hold the working set: a `(2·WORLD_DISTANCE+1)²` column window
@@ -136,11 +126,6 @@ pub struct WorldResources {
     lod_empty: std::collections::HashSet<[i32; 3]>,
     /// Consecutive frames where LOD scheduling had no work.
     lod_idle_frames: u32,
-    heightmap_pool: HeightmapPool,
-    heightmap_pipeline: HeightmapPipeline,
-    heightmap_generator: HeightmapGenerator,
-    heightmap_in_flight: std::collections::HashSet<crate::voxel::heightmap_generator::TileKey>,
-    // SSE quadtree heightmap path (Phase 4 onward).
     heightmap_atlas: HeightmapAtlas,
     heightmap_tile_pipeline: HeightmapTilePipeline,
     heightmap_quadtree: Quadtree,
@@ -380,10 +365,6 @@ impl VulkanApplication {
             svdag_caches.push(RegionStore::new(&crate::storage::world_meta::svdag_lod_dir(world_dir, lod))?);
         }
 
-        let heightmap_pool = HeightmapPool::new(&self.device, &self.vulkan_instance, &mut self.vulkan_application_data)?;
-        let heightmap_pipeline = HeightmapPipeline::create(&self.device, &self.vulkan_application_data)?;
-        let heightmap_generator = HeightmapGenerator::new(erosion_map.clone());
-
         let heightmap_atlas = HeightmapAtlas::new(&self.device, &self.vulkan_instance, &mut self.vulkan_application_data)?;
         let heightmap_tile_pipeline = HeightmapTilePipeline::create(
             &self.device,
@@ -410,10 +391,6 @@ impl VulkanApplication {
             lod_empty: std::collections::HashSet::new(),
             lod_idle_frames: 0,
             seed,
-            heightmap_pool,
-            heightmap_pipeline,
-            heightmap_generator,
-            heightmap_in_flight: std::collections::HashSet::new(),
             heightmap_atlas,
             heightmap_tile_pipeline,
             heightmap_quadtree,
@@ -435,8 +412,6 @@ impl VulkanApplication {
         if let Some(mut wr) = self.wr.take() {
             wr.heightmap_tile_pipeline.destroy(&self.device);
             wr.heightmap_atlas.destroy(&self.device);
-            wr.heightmap_pipeline.destroy(&self.device);
-            wr.heightmap_pool.destroy(&self.device);
             wr.svdag_pipeline.destroy(&self.device);
             wr.svdag_pool.destroy(&self.device);
             wr.cull_compact_pipeline.destroy(&self.device);
@@ -636,8 +611,6 @@ impl VulkanApplication {
         } else {
             None
         };
-        let _ = HEIGHTMAP_BANDS; // legacy path retained for Phase 5 deletion
-        let _ = chunked_arc_radians;
         let hm_cull_push = HmCullPush {
             planes: [
                 frustum.plane(0),
@@ -1033,7 +1006,7 @@ const LOD_BANDS: &[(i32, u32, u32, i32, i32)] = &[
     // so they're available immediately. Finer LODs replace them once ready.
     (8, 2, 3, MESH_DISTANCE, LOD1_DISTANCE + 8), // LOD-1: covers LOD-0 area (8-24) as fallback
     (16, 4, 4, LOD0_DISTANCE, LOD2_DISTANCE + 16), // LOD-2: covers LOD-1 area (24-48) as fallback
-                                                 // LOD-3 and LOD-4 replaced by rasterized heightmap tiles (HEIGHTMAP_BANDS)
+                                                 // LOD-3 and LOD-4 replaced by rasterized heightmap tiles
 ];
 const MAX_LOD_IN_FLIGHT: usize = 32;
 const LOD_SUBMISSIONS_PER_FRAME: usize = 32;
@@ -1144,29 +1117,6 @@ unsafe fn try_load_cached_lod(wr: &mut WorldResources, pos: [i32; 3], lod_level:
 /// * CHUNK_SIZE / PLANET_RADIUS` is the angular reach of the mesh-shader
 /// chunk renderer. Tiles never overlap chunk geometry: the inner band starts
 /// exactly where chunks stop. On a small planet where the chunk reach
-/// already covers > π radians, no tile renders at all (correct — the planet
-/// is fully chunked).
-/// Bands are interpreted as `(tile_chunks, grid_posts, coarse_grid_posts,
-/// extra_min, extra_max)`. The angular range of a band is
-/// `[max(0, chunked_arc + extra_min), chunked_arc + extra_max]`. Negative
-/// `extra_min` allows a band to start before mesh-shader reach so the
-/// heightmap covers directly-below the player even when the mesh chunks have
-/// been evicted (e.g. at altitude where the 3D Chebyshev cube no longer
-/// intersects the surface band). Mesh chunks and the inner heightmap tiles
-/// are coincident in world position (both derive from the same canonical
-/// `surface_radius_at_world` after the parity fix), so where mesh chunks do
-/// exist they win the depth test cleanly without z-fighting in practice.
-const HEIGHTMAP_BANDS: &[(i32, usize, usize, f32, f32)] = &[
-    (8, 65, 17, -10.0, 0.50),
-    (16, 65, 17, 0.50, 1.50),
-];
-
-fn chunked_arc_radians() -> f32 {
-    (WORLD_DISTANCE as f32 * CHUNK_SIZE as f32) / crate::voxel::sphere::PLANET_RADIUS_BLOCKS as f32
-}
-const MAX_HEIGHTMAP_IN_FLIGHT: usize = 16;
-const HEIGHTMAP_SUBMISSIONS_PER_FRAME: usize = 8;
-
 /// Per-frame update for the SSE quadtree heightmap path. Drains finished
 /// heights pages from the worker pool, runs the quadtree's SSE descent +
 /// restrict + morph, streams loads/evicts against the GPU atlas, and packs
@@ -1180,7 +1130,7 @@ unsafe fn update_heightmap_quadtree(
     for result in wr.heights_generator.receive() {
         let morton = result.node.morton();
         wr.heights_in_flight.remove(&morton);
-        wr.heightmap_atlas.insert(morton, &result.heights);
+        wr.heightmap_atlas.insert(morton, &result.heights, &result.materials);
     }
 
     // 2. Drive the SSE descent at the current camera pose.
@@ -1192,6 +1142,17 @@ unsafe fn update_heightmap_quadtree(
     let fov_y_rad = crate::graphical_core::camera::FOV_DEGREES.to_radians();
     wr.heightmap_quadtree.update(camera_world, screen_height_px, fov_y_rad);
 
+    // 2b. Mask tiles whose footprint is fully covered by resident mesh
+    //     chunks. Build a (face, cx, cz) column set from the voxel pool
+    //     once per frame, then prune. Cost: ~one hashset insert per
+    //     resident chunk + 5 lookups per tile. Eliminates heightmap/mesh
+    //     overlap without an angular guess or load-in flicker.
+    let loaded_columns: std::collections::HashSet<(crate::voxel::sphere::Face, i32, i32)> =
+        wr.voxel_pool.chunk_positions().into_iter().map(|p| (p.face, p.cx, p.cz)).collect();
+    wr.heightmap_quadtree.prune_masked_columns(|face, cx, cz| {
+        loaded_columns.contains(&(face, cx, cz))
+    });
+
     // 3. Stream loads/evicts. Each new tile gets an immediate zero-filled
     //    placeholder page in the atlas so the GPU has coverage on the very
     //    next frame; the worker pool overwrites it in place when real
@@ -1202,10 +1163,11 @@ unsafe fn update_heightmap_quadtree(
     for &morton in &delta.to_evict {
         wr.heightmap_atlas.evict(morton);
     }
-    let placeholder = vec![0.0_f32; crate::graphical_core::heightmap_atlas::FLOATS_PER_PAGE];
+    let placeholder_h = vec![0.0_f32; crate::graphical_core::heightmap_atlas::FLOATS_PER_PAGE];
+    let placeholder_m = vec![0u8; crate::graphical_core::heightmap_atlas::MATERIAL_BYTES_PER_PAGE];
     for node in &delta.to_load {
         let morton = node.morton();
-        wr.heightmap_atlas.insert(morton, &placeholder);
+        wr.heightmap_atlas.insert(morton, &placeholder_h, &placeholder_m);
         if !wr.heights_in_flight.contains(&morton) {
             wr.heights_generator.request(HeightsRequest { node: *node, seed: wr.seed });
             wr.heights_in_flight.insert(morton);
@@ -1232,52 +1194,6 @@ unsafe fn update_heightmap_quadtree(
         }
     }
     wr.heightmap_tile_pipeline_active_count = count;
-}
-
-/// Walk every (face, cx, cz) tile in the world, classify by angular distance
-/// to the player, and submit any that fall inside a heightmap band and are
-/// not already loaded or in flight. The tile-aligned (cx, cz) is the
-/// chunk-grid coordinate of the tile's lower corner; tiles on a face never
-/// straddle the seam — neighboring face tiles cover the seam from the other
-/// side, and the curved meshes meet at the projected cube edge.
-fn schedule_heightmap_generation(
-    wr: &mut WorldResources,
-    player_world: glam::DVec3,
-    mesh_shadow_arc: f32,
-) {
-    use crate::voxel::heightmap_generator::{schedule_candidates, HeightmapRequest};
-    use crate::voxel::sphere::FACE_SIDE_CHUNKS;
-    if wr.heightmap_in_flight.len() >= MAX_HEIGHTMAP_IN_FLIGHT {
-        return;
-    }
-    let chunked_arc = chunked_arc_radians();
-    let pool = &wr.heightmap_pool;
-    let in_flight = &wr.heightmap_in_flight;
-    let is_loaded_or_in_flight = |key| pool.has_tile(&key) || in_flight.contains(&key);
-
-    let picks = schedule_candidates(
-        player_world,
-        HEIGHTMAP_BANDS,
-        chunked_arc,
-        mesh_shadow_arc,
-        FACE_SIDE_CHUNKS,
-        &is_loaded_or_in_flight,
-        HEIGHTMAP_SUBMISSIONS_PER_FRAME,
-    );
-
-    for cand in picks {
-        // Pull the per-band geometry config from HEIGHTMAP_BANDS.
-        let (_, grid_posts, coarse_grid_posts, _, _) = HEIGHTMAP_BANDS[cand.band_idx as usize];
-        wr.heightmap_generator.request(HeightmapRequest {
-            key: cand.key,
-            lod: cand.band_idx,
-            tile_chunks_per_side: cand.tile_chunks,
-            grid_posts,
-            coarse_grid_posts,
-            seed: wr.seed,
-        });
-        wr.heightmap_in_flight.insert(cand.key);
-    }
 }
 
 impl VulkanApplication {
@@ -1465,62 +1381,3 @@ impl VulkanApplication {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::graphical_core::heightmap_pool;
-
-    /// Estimate the steady-state working set of heightmap tiles for the
-    /// current band layout. Pure geometry — no GPU, no allocation.
-    ///
-    /// Each band covers an angular annulus `[θ_min, θ_max]` on the sphere.
-    /// The annulus area in steradians is `2π · ∫ sin(θ) dθ` from θ_min to
-    /// θ_max, which equals `2π · (cos(θ_min) − cos(θ_max))`. Each tile
-    /// occupies a square patch of side `tile_arc = tile_chunks · CHUNK_SIZE
-    /// / PLANET_RADIUS` radians, so its area is `tile_arc²`. Tile count is
-    /// the ratio, ceilinged.
-    fn working_set_estimate() -> usize {
-        let r = crate::voxel::sphere::PLANET_RADIUS_BLOCKS as f32;
-        let chunked_arc = chunked_arc_radians();
-        let mut total = 0usize;
-        for &(tile_chunks, _grid, _coarse, extra_min, extra_max) in HEIGHTMAP_BANDS {
-            // Must mirror the runtime clamp in `schedule_heightmap_generation`
-            // exactly: bands may have negative `extra_min` to start the inner
-            // ring at the player's directly-below position.
-            let theta_min = (chunked_arc + extra_min).max(0.0).min(std::f32::consts::PI);
-            let theta_max = (chunked_arc + extra_max).max(0.0).min(std::f32::consts::PI);
-            if theta_max <= theta_min {
-                continue;
-            }
-            let ring_area =
-                2.0 * std::f32::consts::PI * (theta_min.cos() - theta_max.cos());
-            let tile_arc = (tile_chunks as f32 * CHUNK_SIZE as f32) / r;
-            let tile_area = tile_arc * tile_arc;
-            total += (ring_area / tile_area).ceil() as usize;
-        }
-        total
-    }
-
-    /// The heightmap tile pool must be large enough to hold the steady-state
-    /// working set of every band, with headroom for eviction lag during
-    /// player movement. If a future band-config change pushes the bound
-    /// above `MAX_TILES`, this test fails — bump `MAX_TILES` (or coarsen a
-    /// band) and update its derivation comment.
-    #[test]
-    fn heightmap_band_working_set_fits_pool() {
-        let bound = working_set_estimate();
-        // 1.4× headroom for transient overshoot during fast player motion.
-        let with_headroom = (bound as f32 * 1.4) as usize;
-        assert!(
-            with_headroom <= heightmap_pool::MAX_TILES as usize,
-            "heightmap working set {} (×1.4 = {}) exceeds MAX_TILES={} \
-             at PLANET_RADIUS_BLOCKS={}, chunked_arc={:.3} rad. \
-             Bands need to be coarsened or MAX_TILES bumped (with derivation).",
-            bound,
-            with_headroom,
-            heightmap_pool::MAX_TILES,
-            crate::voxel::sphere::PLANET_RADIUS_BLOCKS,
-            chunked_arc_radians(),
-        );
-    }
-}

@@ -8,8 +8,6 @@ pub mod descriptors;
 pub mod frustum;
 pub mod gpu;
 pub mod heightmap_atlas;
-pub mod heightmap_pipeline;
-pub mod heightmap_pool;
 pub mod heightmap_tile_pipeline;
 pub mod input;
 pub mod instance;

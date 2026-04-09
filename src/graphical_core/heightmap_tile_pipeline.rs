@@ -17,6 +17,7 @@
 
 use crate::graphical_core::camera::UniformBufferObject;
 use crate::graphical_core::buffers::allocate_buffer;
+use crate::voxel::material::MaterialPalette;
 use crate::graphical_core::heightmap_atlas::HeightmapAtlas;
 use crate::graphical_core::shaders::create_shader_module;
 use crate::graphical_core::vulkan_object::VulkanApplicationData;
@@ -232,6 +233,24 @@ unsafe fn create_descriptor_layout(device: &Device) -> anyhow::Result<vk::Descri
             .descriptor_count(1)
             .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
             .stage_flags(MESH_STAGE),
+        // 5: Material atlas (fragment, R8_UINT + NEAREST)
+        *vk::DescriptorSetLayoutBinding::builder()
+            .binding(5)
+            .descriptor_count(1)
+            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .stage_flags(vk::ShaderStageFlags::FRAGMENT),
+        // 6: Texture array (fragment, shared with voxel mesh pipeline)
+        *vk::DescriptorSetLayoutBinding::builder()
+            .binding(6)
+            .descriptor_count(1)
+            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .stage_flags(vk::ShaderStageFlags::FRAGMENT),
+        // 7: MaterialPalette UBO (fragment)
+        *vk::DescriptorSetLayoutBinding::builder()
+            .binding(7)
+            .descriptor_count(1)
+            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+            .stage_flags(vk::ShaderStageFlags::FRAGMENT),
     ];
     let info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings);
     Ok(device.create_descriptor_set_layout(&info, None)?)
@@ -240,8 +259,8 @@ unsafe fn create_descriptor_layout(device: &Device) -> anyhow::Result<vk::Descri
 unsafe fn create_descriptor_pool(device: &Device) -> anyhow::Result<vk::DescriptorPool> {
     let sizes = [
         *vk::DescriptorPoolSize::builder().descriptor_count(3).r#type(vk::DescriptorType::STORAGE_BUFFER),
-        *vk::DescriptorPoolSize::builder().descriptor_count(1).r#type(vk::DescriptorType::UNIFORM_BUFFER),
-        *vk::DescriptorPoolSize::builder().descriptor_count(1).r#type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER),
+        *vk::DescriptorPoolSize::builder().descriptor_count(2).r#type(vk::DescriptorType::UNIFORM_BUFFER), // camera + palette
+        *vk::DescriptorPoolSize::builder().descriptor_count(3).r#type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER), // height + material + texArray
     ];
     let info = vk::DescriptorPoolCreateInfo::builder().max_sets(1).pool_sizes(&sizes);
     Ok(device.create_descriptor_pool(&info, None)?)
@@ -271,6 +290,17 @@ unsafe fn write_descriptors(
         .image_view(atlas.image_view)
         .sampler(atlas.sampler)
         .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
+    let mat_atlas_info = [*vk::DescriptorImageInfo::builder()
+        .image_view(atlas.mat_image_view)
+        .sampler(atlas.mat_sampler)
+        .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
+    let tex_array_info = [*vk::DescriptorImageInfo::builder()
+        .image_view(data.texture_image_view)
+        .sampler(data.texture_sampler)
+        .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
+    let palette_info = [*vk::DescriptorBufferInfo::builder()
+        .buffer(data.palette_buffer)
+        .range(std::mem::size_of::<MaterialPalette>() as u64)];
 
     let writes = [
         *vk::WriteDescriptorSet::builder().dst_set(set).dst_binding(0).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&tile_info),
@@ -278,6 +308,9 @@ unsafe fn write_descriptors(
         *vk::WriteDescriptorSet::builder().dst_set(set).dst_binding(2).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&args_info),
         *vk::WriteDescriptorSet::builder().dst_set(set).dst_binding(3).descriptor_type(vk::DescriptorType::UNIFORM_BUFFER).buffer_info(&ubo_info),
         *vk::WriteDescriptorSet::builder().dst_set(set).dst_binding(4).descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER).image_info(&atlas_info),
+        *vk::WriteDescriptorSet::builder().dst_set(set).dst_binding(5).descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER).image_info(&mat_atlas_info),
+        *vk::WriteDescriptorSet::builder().dst_set(set).dst_binding(6).descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER).image_info(&tex_array_info),
+        *vk::WriteDescriptorSet::builder().dst_set(set).dst_binding(7).descriptor_type(vk::DescriptorType::UNIFORM_BUFFER).buffer_info(&palette_info),
     ];
     device.update_descriptor_sets(&writes, &[] as &[vk::CopyDescriptorSet]);
 }
@@ -330,6 +363,9 @@ unsafe fn create_tile_graphics_pipeline(
         // mesh pipeline's FRONT/CW rule does NOT apply here because the
         // voxel mesh shader emits per-cube-face quads with face-local
         // winding that the cube_to_sphere projection ends up inverting.
+        // (TU, TV, N) face basis is right-handed for every cube face, and
+        // the mesh shader winds triangles (tl, tr, bl) so the geometric
+        // normal is +N (outward). CCW front, BACK cull.
         .cull_mode(vk::CullModeFlags::BACK)
         .front_face(vk::FrontFace::COUNTER_CLOCKWISE);
 

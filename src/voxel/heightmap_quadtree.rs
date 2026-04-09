@@ -322,6 +322,46 @@ impl Quadtree {
 
     pub fn resident_count(&self) -> usize { self.resident.len() }
 
+    /// Hide tiles whose footprint is fully covered by loaded mesh chunks.
+    /// Samples 5 points (4 corners + center) of each tile in face-local cube
+    /// coords, converts to chunk grid coords, and removes the tile iff every
+    /// sample has its column loaded. Conservative: an under-sampled mesh
+    /// boundary leaves the tile visible (acceptable — heightmap overdraws
+    /// mesh, mesh wins via depth test). Coarse tiles larger than the mesh
+    /// streaming radius can never be fully covered, so they pass through
+    /// untouched at no extra cost beyond 5 hashset lookups.
+    pub fn prune_masked_columns(
+        &mut self,
+        is_column_loaded: impl Fn(Face, i32, i32) -> bool,
+    ) {
+        use crate::voxel::chunk::CHUNK_SIZE;
+        let cs = CHUNK_SIZE as f64;
+        let half = CUBE_HALF_BLOCKS;
+        self.active.retain(|tile| {
+            let node = tile.node;
+            let side = node.side_blocks();
+            let u0 = node.ix as f64 * side - half;
+            let v0 = node.iy as f64 * side - half;
+            // Inset by 1 block so corner samples land squarely inside the tile.
+            let inset = 1.0_f64.min(side * 0.25);
+            let samples = [
+                (u0 + inset,         v0 + inset),
+                (u0 + side - inset,  v0 + inset),
+                (u0 + inset,         v0 + side - inset),
+                (u0 + side - inset,  v0 + side - inset),
+                (u0 + side * 0.5,    v0 + side * 0.5),
+            ];
+            for (u, v) in samples {
+                let cx = ((u + half) / cs).floor() as i32;
+                let cz = ((v + half) / cs).floor() as i32;
+                if !is_column_loaded(node.face, cx, cz) {
+                    return true; // keep — at least one column is missing
+                }
+            }
+            false // every sample loaded → hide
+        });
+    }
+
     /// Drive one frame: SSE descent → restrict → morph. After this call,
     /// `active()` returns the leaf set ready for the GPU streamer.
     pub fn update(&mut self, camera_world: DVec3, screen_height_px: f32, fov_y_rad: f32) {

@@ -36,6 +36,10 @@ const _: () = assert!(ATLAS_PAGE_COUNT >= MAX_RESIDENT_TILES);
 pub const ATLAS_WIDTH: u32 = ATLAS_COLS * HEIGHT_PAGE_SIZE;
 pub const ATLAS_HEIGHT: u32 = ATLAS_ROWS * HEIGHT_PAGE_SIZE;
 pub const ATLAS_FORMAT: vk::Format = vk::Format::R32_SFLOAT;
+pub const MATERIAL_ATLAS_FORMAT: vk::Format = vk::Format::R8_UINT;
+
+/// One material id (u8) per post.
+pub const MATERIAL_BYTES_PER_PAGE: usize = FLOATS_PER_PAGE; // 65*65 = 4225 bytes
 
 /// Sentinel meaning "no page assigned to this morton".
 pub const NO_PAGE: u32 = u32::MAX;
@@ -112,6 +116,7 @@ impl Default for PageAllocator {
 }
 
 pub struct HeightmapAtlas {
+    // Height atlas (R32_SFLOAT).
     pub image: vk::Image,
     pub image_view: vk::ImageView,
     pub sampler: vk::Sampler,
@@ -119,6 +124,16 @@ pub struct HeightmapAtlas {
     staging_buffer: vk::Buffer,
     staging_memory: vk::DeviceMemory,
     staging_ptr: *mut f32,
+
+    // Material atlas (R8_UINT).
+    pub mat_image: vk::Image,
+    pub mat_image_view: vk::ImageView,
+    pub mat_sampler: vk::Sampler,
+    mat_image_memory: vk::DeviceMemory,
+    mat_staging_buffer: vk::Buffer,
+    mat_staging_memory: vk::DeviceMemory,
+    mat_staging_ptr: *mut u8,
+
     /// Pages with new contents written to staging since the last upload
     /// flush. `record_uploads` drains this.
     pending: Vec<u32>,
@@ -134,13 +149,28 @@ unsafe impl Sync for HeightmapAtlas {}
 
 impl HeightmapAtlas {
     pub unsafe fn new(device: &Device, instance: &Instance, data: &mut VulkanApplicationData) -> anyhow::Result<Self> {
-        let (image, image_memory) = create_atlas_image(device, instance, data)?;
-        let image_view = create_atlas_view(device, image)?;
-        let sampler = create_atlas_sampler(device)?;
+        let (image, image_memory) = create_atlas_image(device, instance, data, ATLAS_FORMAT)?;
+        let image_view = create_atlas_view(device, image, ATLAS_FORMAT)?;
+        let sampler = create_atlas_sampler(device, vk::Filter::LINEAR)?;
 
         let staging_size = ATLAS_PAGE_COUNT as u64 * BYTES_PER_PAGE as u64;
         let (staging_buffer, staging_memory, staging_ptr) = allocate_buffer::<f32>(
             staging_size,
+            vk::BufferUsageFlags::TRANSFER_SRC,
+            device,
+            instance,
+            data,
+            super::host_visible_coherent(),
+        )?;
+
+        // Material atlas (R8_UINT, NEAREST sampling).
+        let (mat_image, mat_image_memory) = create_atlas_image(device, instance, data, MATERIAL_ATLAS_FORMAT)?;
+        let mat_image_view = create_atlas_view(device, mat_image, MATERIAL_ATLAS_FORMAT)?;
+        let mat_sampler = create_atlas_sampler(device, vk::Filter::NEAREST)?;
+
+        let mat_staging_size = ATLAS_PAGE_COUNT as u64 * MATERIAL_BYTES_PER_PAGE as u64;
+        let (mat_staging_buffer, mat_staging_memory, mat_staging_ptr) = allocate_buffer::<u8>(
+            mat_staging_size,
             vk::BufferUsageFlags::TRANSFER_SRC,
             device,
             instance,
@@ -156,6 +186,13 @@ impl HeightmapAtlas {
             staging_buffer,
             staging_memory,
             staging_ptr,
+            mat_image,
+            mat_image_view,
+            mat_sampler,
+            mat_image_memory,
+            mat_staging_buffer,
+            mat_staging_memory,
+            mat_staging_ptr,
             pending: Vec::with_capacity(ATLAS_PAGE_COUNT),
             initial_layout_done: false,
             allocator: PageAllocator::new(),
@@ -170,18 +207,30 @@ impl HeightmapAtlas {
         device.unmap_memory(self.staging_memory);
         device.destroy_buffer(self.staging_buffer, None);
         device.free_memory(self.staging_memory, None);
+
+        device.destroy_sampler(self.mat_sampler, None);
+        device.destroy_image_view(self.mat_image_view, None);
+        device.destroy_image(self.mat_image, None);
+        device.free_memory(self.mat_image_memory, None);
+        device.unmap_memory(self.mat_staging_memory);
+        device.destroy_buffer(self.mat_staging_buffer, None);
+        device.free_memory(self.mat_staging_memory, None);
     }
 
     pub fn resident(&self) -> usize { self.allocator.resident() }
     pub fn page_of(&self, morton: u64) -> Option<u32> { self.allocator.page_of(morton) }
 
-    /// Insert a heights page for `morton`. Allocates a page (evicting LRU
-    /// if full), writes into the staging buffer, and queues a GPU upload
-    /// for the next `record_uploads` call.
-    pub fn insert(&mut self, morton: u64, heights: &[f32]) -> u32 {
+    /// Insert a heights + material page for `morton`. Allocates a page
+    /// (evicting LRU if full), writes into both staging buffers, and
+    /// queues a GPU upload for the next `record_uploads` call.
+    pub fn insert(&mut self, morton: u64, heights: &[f32], materials: &[u8]) -> u32 {
         assert_eq!(heights.len(), FLOATS_PER_PAGE);
+        assert_eq!(materials.len(), MATERIAL_BYTES_PER_PAGE);
         let (page, _evicted) = self.allocator.alloc(morton);
-        unsafe { self.write_staging(page, heights); }
+        unsafe {
+            self.write_staging(page, heights);
+            self.write_mat_staging(page, materials);
+        }
         self.pending.push(page);
         page
     }
@@ -192,7 +241,7 @@ impl HeightmapAtlas {
 
     /// Record `cmd_copy_buffer_to_image` for every page modified since the
     /// last call. Brackets the copies with the layout transitions needed
-    /// to land the image back in `SHADER_READ_ONLY_OPTIMAL`.
+    /// to land both atlases back in `SHADER_READ_ONLY_OPTIMAL`.
     pub unsafe fn record_uploads(&mut self, device: &Device, cmd: vk::CommandBuffer) {
         if self.pending.is_empty() && self.initial_layout_done {
             return;
@@ -207,29 +256,46 @@ impl HeightmapAtlas {
         } else {
             (vk::AccessFlags::empty(), vk::PipelineStageFlags::TOP_OF_PIPE)
         };
-        transition_image(
-            device, cmd, self.image,
+        // Transition both atlases to TRANSFER_DST.
+        transition_image(device, cmd, self.image,
             old_layout, vk::ImageLayout::TRANSFER_DST_OPTIMAL,
             src_access, vk::AccessFlags::TRANSFER_WRITE,
-            src_stage, vk::PipelineStageFlags::TRANSFER,
-        );
+            src_stage, vk::PipelineStageFlags::TRANSFER);
+        transition_image(device, cmd, self.mat_image,
+            old_layout, vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            src_access, vk::AccessFlags::TRANSFER_WRITE,
+            src_stage, vk::PipelineStageFlags::TRANSFER);
         for &page in &self.pending {
             let (px, py) = page_origin_texels(page);
-            let region = *vk::BufferImageCopy::builder()
+            let subresource = *vk::ImageSubresourceLayers::builder()
+                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                .layer_count(1);
+            let offset = vk::Offset3D { x: px as i32, y: py as i32, z: 0 };
+            let extent = vk::Extent3D { width: HEIGHT_PAGE_SIZE, height: HEIGHT_PAGE_SIZE, depth: 1 };
+            // Height page.
+            let h_region = *vk::BufferImageCopy::builder()
                 .buffer_offset(page as u64 * BYTES_PER_PAGE as u64)
-                .image_subresource(*vk::ImageSubresourceLayers::builder()
-                    .aspect_mask(vk::ImageAspectFlags::COLOR)
-                    .layer_count(1))
-                .image_offset(vk::Offset3D { x: px as i32, y: py as i32, z: 0 })
-                .image_extent(vk::Extent3D { width: HEIGHT_PAGE_SIZE, height: HEIGHT_PAGE_SIZE, depth: 1 });
-            device.cmd_copy_buffer_to_image(cmd, self.staging_buffer, self.image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[region]);
+                .image_subresource(subresource)
+                .image_offset(offset)
+                .image_extent(extent);
+            device.cmd_copy_buffer_to_image(cmd, self.staging_buffer, self.image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[h_region]);
+            // Material page.
+            let m_region = *vk::BufferImageCopy::builder()
+                .buffer_offset(page as u64 * MATERIAL_BYTES_PER_PAGE as u64)
+                .image_subresource(subresource)
+                .image_offset(offset)
+                .image_extent(extent);
+            device.cmd_copy_buffer_to_image(cmd, self.mat_staging_buffer, self.mat_image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[m_region]);
         }
-        transition_image(
-            device, cmd, self.image,
+        // Transition both atlases back to SHADER_READ_ONLY.
+        transition_image(device, cmd, self.image,
             vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
             vk::AccessFlags::TRANSFER_WRITE, vk::AccessFlags::SHADER_READ,
-            vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER,
-        );
+            vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER);
+        transition_image(device, cmd, self.mat_image,
+            vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            vk::AccessFlags::TRANSFER_WRITE, vk::AccessFlags::SHADER_READ,
+            vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER);
         self.pending.clear();
         self.initial_layout_done = true;
     }
@@ -237,6 +303,11 @@ impl HeightmapAtlas {
     unsafe fn write_staging(&mut self, page: u32, heights: &[f32]) {
         let dst = self.staging_ptr.add(page as usize * FLOATS_PER_PAGE);
         std::ptr::copy_nonoverlapping(heights.as_ptr(), dst, FLOATS_PER_PAGE);
+    }
+
+    unsafe fn write_mat_staging(&mut self, page: u32, materials: &[u8]) {
+        let dst = self.mat_staging_ptr.add(page as usize * MATERIAL_BYTES_PER_PAGE);
+        std::ptr::copy_nonoverlapping(materials.as_ptr(), dst, MATERIAL_BYTES_PER_PAGE);
     }
 }
 
@@ -246,10 +317,10 @@ fn page_origin_texels(page: u32) -> (u32, u32) {
     (px * HEIGHT_PAGE_SIZE, py * HEIGHT_PAGE_SIZE)
 }
 
-unsafe fn create_atlas_image(device: &Device, instance: &Instance, data: &VulkanApplicationData) -> anyhow::Result<(vk::Image, vk::DeviceMemory)> {
+unsafe fn create_atlas_image(device: &Device, instance: &Instance, data: &VulkanApplicationData, format: vk::Format) -> anyhow::Result<(vk::Image, vk::DeviceMemory)> {
     let info = vk::ImageCreateInfo::builder()
         .image_type(vk::ImageType::_2D)
-        .format(ATLAS_FORMAT)
+        .format(format)
         .extent(vk::Extent3D { width: ATLAS_WIDTH, height: ATLAS_HEIGHT, depth: 1 })
         .mip_levels(1)
         .array_layers(1)
@@ -268,10 +339,10 @@ unsafe fn create_atlas_image(device: &Device, instance: &Instance, data: &Vulkan
     Ok((image, memory))
 }
 
-unsafe fn create_atlas_view(device: &Device, image: vk::Image) -> anyhow::Result<vk::ImageView> {
+unsafe fn create_atlas_view(device: &Device, image: vk::Image, format: vk::Format) -> anyhow::Result<vk::ImageView> {
     let info = vk::ImageViewCreateInfo::builder()
         .image(image)
-        .format(ATLAS_FORMAT)
+        .format(format)
         .view_type(vk::ImageViewType::_2D)
         .subresource_range(*vk::ImageSubresourceRange::builder()
             .aspect_mask(vk::ImageAspectFlags::COLOR)
@@ -280,15 +351,10 @@ unsafe fn create_atlas_view(device: &Device, image: vk::Image) -> anyhow::Result
     Ok(device.create_image_view(&info, None)?)
 }
 
-unsafe fn create_atlas_sampler(device: &Device) -> anyhow::Result<vk::Sampler> {
-    // Bilinear filtering with clamp-to-edge so a stray sample at the page
-    // boundary reads the edge texel rather than wrapping into a neighbor
-    // page. Phase 4 may add a one-texel skirt to enable proper bilinear
-    // continuity across tile edges; for now, mesh shader samples are
-    // pinned to texel centers so the wrap mode rarely matters.
+unsafe fn create_atlas_sampler(device: &Device, filter: vk::Filter) -> anyhow::Result<vk::Sampler> {
     let info = vk::SamplerCreateInfo::builder()
-        .mag_filter(vk::Filter::LINEAR)
-        .min_filter(vk::Filter::LINEAR)
+        .mag_filter(filter)
+        .min_filter(filter)
         .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
         .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
         .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE)

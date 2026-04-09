@@ -105,6 +105,8 @@ vec3 project(uint face, float u, float v, float h) {
 // Fragment shader outputs.
 layout(location = 0) out vec3 fragWorldPos[];
 layout(location = 1) out float fragHeight[];
+layout(location = 2) out vec2 fragFaceUV[];   // face-local (u, v) in block coords
+layout(location = 3) out vec2 fragAtlasUV[];  // material atlas UV for frag lookup
 
 void main() {
     MeshPayload p = payloads[gl_WorkGroupID.x];
@@ -124,12 +126,6 @@ void main() {
 
     float morph = tile.morph_factor;
     uint tid = gl_LocalInvocationID.x;
-    // Emit 81 vertices, ~3 per thread. CDLOD morph is applied in face-local
-    // (u, v) space *before* the cube_to_sphere projection: each vertex
-    // blends toward its parent-grid position (snap each post index down
-    // to the nearest even value) so the mesh smoothly approaches the
-    // coarser parent tile as the camera retreats. Doing this pre-projection
-    // is the correctness fix vs morphing post-projection along the radial.
     for (uint i = tid; i < 81u; i += 32u) {
         uint lx = i % POSTS_PER_QUAD;
         uint ly = i / POSTS_PER_QUAD;
@@ -153,6 +149,8 @@ void main() {
         gl_MeshVerticesEXT[i].gl_Position = camera.view_projection[gl_ViewIndex] * vec4(world, 1.0);
         fragWorldPos[i] = world;
         fragHeight[i] = h;
+        fragFaceUV[i] = vec2(u, v);
+        fragAtlasUV[i] = atlas_uv(tile.height_page, post_x, post_y);
     }
 
     // Emit 128 triangles, ~4 per thread.
@@ -165,7 +163,10 @@ void main() {
         uint br = bl + 1u;
         uint t0 = q * 2u;
         uint t1 = t0 + 1u;
-        gl_PrimitiveTriangleIndicesEXT[t0] = uvec3(tl, bl, tr);
-        gl_PrimitiveTriangleIndicesEXT[t1] = uvec3(tr, bl, br);
+        // (TU, TV, N) is right-handed for every face, so the outward normal
+        // is +u × +v = +N. Indices must wind so (e1 × e2) points along +N:
+        // (tl -> tr -> bl) gives (+u) x (+v) = +N.
+        gl_PrimitiveTriangleIndicesEXT[t0] = uvec3(tl, tr, bl);
+        gl_PrimitiveTriangleIndicesEXT[t1] = uvec3(tr, br, bl);
     }
 }
