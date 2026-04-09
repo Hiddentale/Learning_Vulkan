@@ -38,18 +38,6 @@ impl Camera {
         self.right = player.right;
     }
 
-    pub fn up(&self) -> Vec3 {
-        self.position.normalize_or(Vec3::Y)
-    }
-
-    pub fn front(&self) -> Vec3 {
-        self.forward
-    }
-
-    pub fn right(&self) -> Vec3 {
-        self.right
-    }
-
     pub fn view_matrix(&self) -> Mat4 {
         let view_up = self.right.cross(self.forward).normalize_or(Vec3::Y);
         Mat4::look_at_rh(self.position, self.position + self.forward, view_up)
@@ -165,6 +153,40 @@ pub fn update_uniform_buffer(data: &VulkanApplicationData, eyes: &EyeMatrices) -
 }
 
 /// Unmaps, destroys, and frees the uniform buffer and its memory.
+pub fn destroy_uniform_buffer(device: &Device, vulkan_application_data: &mut VulkanApplicationData) {
+    unsafe {
+        device.unmap_memory(vulkan_application_data.uniform_buffer_memory);
+        device.destroy_buffer(vulkan_application_data.uniform_buffer, None);
+        device.free_memory(vulkan_application_data.uniform_buffer_memory, None);
+    }
+}
+
+/// Computes the view-projection matrix for the current camera and swapchain extent.
+/// Used by both UBO upload and frustum extraction.
+pub fn view_projection_matrix(camera: &Camera, extent: vk::Extent2D) -> Mat4 {
+    let width = extent.width as f32;
+    let height = extent.height as f32;
+    let projection = reverse_z_infinite_perspective(FOV_DEGREES.to_radians(), width / height, NEAR_PLANE);
+    projection * camera.view_matrix()
+}
+
+/// Right-handed Vulkan projection with infinite-far and reverse-Z depth.
+/// Maps view-space `z = -near` → NDC `z = 1`, `z = -∞` → NDC `z = 0`. The
+/// reversed range puts depth precision where it matters (close to the camera)
+/// and the infinite far plane removes the second precision-eating divide.
+///
+/// Y axis is negated to match Vulkan's Y-down NDC.
+pub fn reverse_z_infinite_perspective(fov_y: f32, aspect: f32, near: f32) -> Mat4 {
+    let f = 1.0 / (fov_y * 0.5).tan();
+    let mut m = Mat4::ZERO;
+    m.x_axis.x = f / aspect;
+    m.y_axis.y = -f;
+    m.z_axis.z = 0.0;
+    m.z_axis.w = -1.0;
+    m.w_axis.z = near;
+    m
+}
+
 #[cfg(test)]
 mod reverse_z_tests {
     use super::*;
@@ -208,38 +230,4 @@ mod reverse_z_tests {
         // transform here, that's world z ≈ -0.1).
         assert!((w.z + 0.1).abs() < 1e-4, "inverse * near = {:?}", w);
     }
-}
-
-pub fn destroy_uniform_buffer(device: &Device, vulkan_application_data: &mut VulkanApplicationData) {
-    unsafe {
-        device.unmap_memory(vulkan_application_data.uniform_buffer_memory);
-        device.destroy_buffer(vulkan_application_data.uniform_buffer, None);
-        device.free_memory(vulkan_application_data.uniform_buffer_memory, None);
-    }
-}
-
-/// Computes the view-projection matrix for the current camera and swapchain extent.
-/// Used by both UBO upload and frustum extraction.
-pub fn view_projection_matrix(camera: &Camera, extent: vk::Extent2D) -> Mat4 {
-    let width = extent.width as f32;
-    let height = extent.height as f32;
-    let projection = reverse_z_infinite_perspective(FOV_DEGREES.to_radians(), width / height, NEAR_PLANE);
-    projection * camera.view_matrix()
-}
-
-/// Right-handed Vulkan projection with infinite-far and reverse-Z depth.
-/// Maps view-space `z = -near` → NDC `z = 1`, `z = -∞` → NDC `z = 0`. The
-/// reversed range puts depth precision where it matters (close to the camera)
-/// and the infinite far plane removes the second precision-eating divide.
-///
-/// Y axis is negated to match Vulkan's Y-down NDC.
-pub fn reverse_z_infinite_perspective(fov_y: f32, aspect: f32, near: f32) -> Mat4 {
-    let f = 1.0 / (fov_y * 0.5).tan();
-    let mut m = Mat4::ZERO;
-    m.x_axis.x = f / aspect;
-    m.y_axis.y = -f;
-    m.z_axis.z = 0.0;
-    m.z_axis.w = -1.0;
-    m.w_axis.z = near;
-    m
 }

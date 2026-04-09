@@ -94,12 +94,24 @@ impl InputState {
         let up = right.cross(front).normalize_or(player.up());
 
         let mut move_dir = glam::Vec3::ZERO;
-        if self.is_pressed(KeyCode::KeyW) { move_dir += front; }
-        if self.is_pressed(KeyCode::KeyS) { move_dir -= front; }
-        if self.is_pressed(KeyCode::KeyD) { move_dir += right; }
-        if self.is_pressed(KeyCode::KeyA) { move_dir -= right; }
-        if self.is_pressed(KeyCode::KeyE) { move_dir += up; }
-        if self.is_pressed(KeyCode::KeyQ) { move_dir -= up; }
+        if self.is_pressed(KeyCode::KeyW) {
+            move_dir += front;
+        }
+        if self.is_pressed(KeyCode::KeyS) {
+            move_dir -= front;
+        }
+        if self.is_pressed(KeyCode::KeyD) {
+            move_dir += right;
+        }
+        if self.is_pressed(KeyCode::KeyA) {
+            move_dir -= right;
+        }
+        if self.is_pressed(KeyCode::KeyE) {
+            move_dir += up;
+        }
+        if self.is_pressed(KeyCode::KeyQ) {
+            move_dir -= up;
+        }
 
         if move_dir != glam::Vec3::ZERO {
             let scale = metric::metric_speed_scale(move_dir, local_p);
@@ -116,10 +128,18 @@ impl InputState {
         let right = forward.cross(up).normalize_or(player.right());
 
         let mut move_dir = glam::Vec3::ZERO;
-        if self.is_pressed(KeyCode::KeyW) { move_dir += forward; }
-        if self.is_pressed(KeyCode::KeyS) { move_dir -= forward; }
-        if self.is_pressed(KeyCode::KeyD) { move_dir += right; }
-        if self.is_pressed(KeyCode::KeyA) { move_dir -= right; }
+        if self.is_pressed(KeyCode::KeyW) {
+            move_dir += forward;
+        }
+        if self.is_pressed(KeyCode::KeyS) {
+            move_dir -= forward;
+        }
+        if self.is_pressed(KeyCode::KeyD) {
+            move_dir += right;
+        }
+        if self.is_pressed(KeyCode::KeyA) {
+            move_dir -= right;
+        }
 
         if move_dir != glam::Vec3::ZERO {
             let scale = metric::metric_speed_scale(move_dir, local_p);

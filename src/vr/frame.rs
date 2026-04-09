@@ -112,12 +112,8 @@ unsafe fn record_vr_frame(
 
     if chunk_count > 0 {
         let task_mesh_flags = vk::ShaderStageFlags::from_raw(0x40 | 0x80);
-        crate::graphical_core::commands::bind_mesh_pipeline_and_draw_indirect(
-            device, cmd, mesh_pipeline, voxel_pool, &push, 1, task_mesh_flags,
-        );
-        crate::graphical_core::commands::bind_mesh_pipeline_and_draw_indirect(
-            device, cmd, mesh_pipeline, voxel_pool, &push, 2, task_mesh_flags,
-        );
+        crate::graphical_core::commands::bind_mesh_pipeline_and_draw_indirect(device, cmd, mesh_pipeline, voxel_pool, &push, 1, task_mesh_flags);
+        crate::graphical_core::commands::bind_mesh_pipeline_and_draw_indirect(device, cmd, mesh_pipeline, voxel_pool, &push, 2, task_mesh_flags);
     }
 
     device.cmd_end_render_pass(cmd);

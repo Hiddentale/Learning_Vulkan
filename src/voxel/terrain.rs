@@ -191,7 +191,15 @@ fn lerp(a: f64, b: f64, t: f64) -> f64 {
     a + (b - a) * t.clamp(0.0, 1.0)
 }
 
-pub(crate) fn compute_height_from_params(noises: &WorldNoises, face: Face, u: f64, v: f64, continentalness: f64, erosion: f64, weirdness: f64) -> usize {
+pub(crate) fn compute_height_from_params(
+    noises: &WorldNoises,
+    face: Face,
+    u: f64,
+    v: f64,
+    continentalness: f64,
+    erosion: f64,
+    weirdness: f64,
+) -> usize {
     let base = continental_curve(continentalness);
     let p = sphere::noise_pos_on_face(face, u, v);
 
@@ -205,18 +213,11 @@ pub(crate) fn compute_height_from_params(noises: &WorldNoises, face: Face, u: f6
     height.clamp(MIN_HEIGHT as f64, MAX_HEIGHT as f64) as usize
 }
 
-/// Sample the surface block type at face-local coordinates.
-pub(crate) fn sample_surface(noises: &WorldNoises, face: Face, u: f64, v: f64, erosion_map: Option<&super::erosion::ErosionMap>) -> (usize, BlockType) {
-    let params = sample_params(noises, face, u, v, erosion_map);
-    let surface = biome::surface_block(params.biome);
-    (params.height, surface)
-}
-
 /// Generates a full column of chunks via 3D density sampling. For each block
 /// in the column, we compute the world cartesian position via the cube-to-
 /// sphere projection and evaluate a density function at that point. Density
-/// > 0 → solid; density ≤ 0 with `|world| < surface_radius_at_sea_level` →
-/// water; otherwise air. Because density is purely a function of world
+/// \> 0 is solid; density <= 0 with `|world| < surface_radius_at_sea_level`
+/// is water; otherwise air. Because density is purely a function of world
 /// position (and noise on direction), terrain is seamless across face edges.
 pub fn generate_column(face: Face, chunk_x: i32, chunk_z: i32, seed: u32, erosion_map: Option<&super::erosion::ErosionMap>) -> Vec<Chunk> {
     let noises = WorldNoises::new(seed);
@@ -248,7 +249,12 @@ fn fill_density_column(
 ) {
     // Sample one representative point in the column to fix the direction.
     let probe = sphere::chunk_to_world(
-        sphere::ChunkPos { face, cx: chunk_x, cy: 0, cz: chunk_z },
+        sphere::ChunkPos {
+            face,
+            cx: chunk_x,
+            cy: 0,
+            cz: chunk_z,
+        },
         glam::Vec3::new(x as f32 + 0.5, 0.5, z as f32 + 0.5),
     );
     let params = sample_params_at_world(noises, probe, erosion_map);
@@ -258,9 +264,14 @@ fn fill_density_column(
     let surface_block = biome::surface_block(params.biome);
     let subsurface_block = biome::subsurface_block(params.biome);
 
-    for cy in 0..CHUNK_LAYERS {
+    for (cy, chunk) in chunks.iter_mut().enumerate().take(CHUNK_LAYERS) {
         for ly in 0..CHUNK_SIZE {
-            let cp = sphere::ChunkPos { face, cx: chunk_x, cy: cy as i32, cz: chunk_z };
+            let cp = sphere::ChunkPos {
+                face,
+                cx: chunk_x,
+                cy: cy as i32,
+                cz: chunk_z,
+            };
             let local = glam::Vec3::new(x as f32 + 0.5, ly as f32 + 0.5, z as f32 + 0.5);
             let world = sphere::chunk_to_world(cp, local);
             let r = world.length();
@@ -269,7 +280,7 @@ fn fill_density_column(
             }
             let block = sample_density_block(world, r, surface_radius, sea_radius, surface_block, subsurface_block, noises);
             if block != BlockType::Air {
-                chunks[cy].set(x, ly, z, block);
+                chunk.set(x, ly, z, block);
             }
         }
     }
@@ -337,14 +348,9 @@ fn sample_params_at_world(noises: &WorldNoises, world: glam::DVec3, erosion_map:
     // direction.
     let p_warp = sphere::noise_pos_at_world(world);
     let dir = world.normalize_or(glam::DVec3::Y);
-    let warp_3d = glam::DVec3::new(
-        noises.warp_x.get(p_warp),
-        noises.warp_y.get(p_warp),
-        noises.warp_z.get(p_warp),
-    );
+    let warp_3d = glam::DVec3::new(noises.warp_x.get(p_warp), noises.warp_y.get(p_warp), noises.warp_z.get(p_warp));
     let warp_tangent = warp_3d - dir * warp_3d.dot(dir);
-    let warped_dir = (dir + warp_tangent * (WARP_STRENGTH / sphere::SURFACE_RADIUS_BLOCKS as f64))
-        .normalize_or(dir);
+    let warped_dir = (dir + warp_tangent * (WARP_STRENGTH / sphere::SURFACE_RADIUS_BLOCKS as f64)).normalize_or(dir);
     let p = [
         warped_dir.x * sphere::SURFACE_RADIUS_BLOCKS as f64,
         warped_dir.y * sphere::SURFACE_RADIUS_BLOCKS as f64,
@@ -362,8 +368,7 @@ fn sample_params_at_world(noises: &WorldNoises, world: glam::DVec3, erosion_map:
     let mountain = noises.mountain.get(p) * MOUNTAIN_AMPLITUDE * erosion_factor;
     let detail = noises.detail.get(p) * DETAIL_AMPLITUDE * erosion_factor;
     let weirdness_offset = weirdness * WEIRDNESS_AMPLITUDE;
-    let mut height = (SEA_LEVEL as f64 + base + mountain + detail + weirdness_offset)
-        .clamp(MIN_HEIGHT as f64, MAX_HEIGHT as f64) as usize;
+    let mut height = (SEA_LEVEL as f64 + base + mountain + detail + weirdness_offset).clamp(MIN_HEIGHT as f64, MAX_HEIGHT as f64) as usize;
 
     if let Some(emap) = erosion_map {
         // Erosion map is still indexed in face-local cube coords; sample with
@@ -395,11 +400,7 @@ fn sample_params_at_world(noises: &WorldNoises, world: glam::DVec3, erosion_map:
 /// so heightmap tiles using this stay consistent with the mesh-shader chunks
 /// at every world point. The returned block is the surface biome block at
 /// the same point.
-pub fn surface_radius_at_world(
-    noises: &WorldNoises,
-    world: glam::DVec3,
-    erosion_map: Option<&super::erosion::ErosionMap>,
-) -> (f64, BlockType) {
+pub fn surface_radius_at_world(noises: &WorldNoises, world: glam::DVec3, erosion_map: Option<&super::erosion::ErosionMap>) -> (f64, BlockType) {
     let params = sample_params_at_world(noises, world, erosion_map);
     let radius = sphere::PLANET_RADIUS_BLOCKS as f64 + params.height as f64;
     let block = biome::surface_block(params.biome);
@@ -491,6 +492,18 @@ fn sample_block(y: usize, height: usize, surface: BlockType, subsurface: BlockTy
     block
 }
 
+/// A flat 64³ voxel grid for LOD super-chunk generation.
+pub struct LodVoxelGrid {
+    blocks: Vec<BlockType>,
+    size: usize,
+}
+
+impl super::svdag::VoxelSource for LodVoxelGrid {
+    fn get(&self, x: usize, y: usize, z: usize) -> BlockType {
+        self.blocks[x + z * self.size + y * self.size * self.size]
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Terrain smoothness verification.
 //
@@ -532,7 +545,12 @@ mod surface_diagnostics {
             for ly_rev in (0..CHUNK_SIZE).rev() {
                 let block = chunks[cy_rev].get(x, ly_rev, z);
                 if block != BlockType::Air && block != BlockType::Water {
-                    let cp = sphere::ChunkPos { face, cx, cy: cy_rev as i32, cz };
+                    let cp = sphere::ChunkPos {
+                        face,
+                        cx,
+                        cy: cy_rev as i32,
+                        cz,
+                    };
                     let world = sphere::chunk_to_world(cp, glam::Vec3::new(x as f32 + 0.5, ly_rev as f32 + 0.5, z as f32 + 0.5));
                     return world.length();
                 }
@@ -548,10 +566,7 @@ mod surface_diagnostics {
     fn topmost_solid_radius(face: Face, cx: i32, cz: i32, x: i32, z: i32, noises: &WorldNoises) -> Option<f64> {
         let max_radius = SURFACE_RADIUS_BLOCKS as f64 + 100.0;
         let min_radius = PLANET_RADIUS_BLOCKS as f64 - 50.0;
-        let probe = sphere::chunk_to_world(
-            ChunkPos { face, cx, cy: 0, cz },
-            glam::Vec3::new(x as f32 + 0.5, 0.5, z as f32 + 0.5),
-        );
+        let probe = sphere::chunk_to_world(ChunkPos { face, cx, cy: 0, cz }, glam::Vec3::new(x as f32 + 0.5, 0.5, z as f32 + 0.5));
         let params = sample_params_at_world(noises, probe, None);
         let surface_radius = PLANET_RADIUS_BLOCKS as f64 + params.height as f64;
         let sea_radius = SURFACE_RADIUS_BLOCKS as f64;
@@ -576,9 +591,9 @@ mod surface_diagnostics {
     /// Sample the topmost solid radius for every (lx, lz) in a chunk column.
     fn chunk_surface_grid(face: Face, cx: i32, cz: i32, noises: &WorldNoises) -> [[f64; 16]; 16] {
         let mut g = [[0.0; 16]; 16];
-        for x in 0..16 {
-            for z in 0..16 {
-                g[x][z] = topmost_solid_radius(face, cx, cz, x as i32, z as i32, noises).unwrap_or(0.0);
+        for (x, row) in g.iter_mut().enumerate() {
+            for (z, cell) in row.iter_mut().enumerate() {
+                *cell = topmost_solid_radius(face, cx, cz, x as i32, z as i32, noises).unwrap_or(0.0);
             }
         }
         g
@@ -595,11 +610,14 @@ mod surface_diagnostics {
         let cx = FACE_SIDE_CHUNKS / 2;
         let cz = FACE_SIDE_CHUNKS / 2;
         let g = chunk_surface_grid(face, cx, cz, &noises);
-        eprintln!("\n--- terrain surface heights at face={:?} chunk=({},{}) (radius - PLANET_RADIUS) ---", face, cx, cz);
+        eprintln!(
+            "\n--- terrain surface heights at face={:?} chunk=({},{}) (radius - PLANET_RADIUS) ---",
+            face, cx, cz
+        );
         for z in 0..16 {
             let mut row = String::new();
-            for x in 0..16 {
-                row.push_str(&format!("{:5.1} ", g[x][z] - PLANET_RADIUS_BLOCKS as f64));
+            for col in &g {
+                row.push_str(&format!("{:5.1} ", col[z] - PLANET_RADIUS_BLOCKS as f64));
             }
             eprintln!("{}", row);
         }
@@ -630,11 +648,17 @@ mod surface_diagnostics {
                 let h = grid[gx * n + gz];
                 if gx + 1 < n {
                     let d = (grid[(gx + 1) * n + gz] - h).abs();
-                    if d > max_delta { max_delta = d; worst = (gx, gz); }
+                    if d > max_delta {
+                        max_delta = d;
+                        worst = (gx, gz);
+                    }
                 }
                 if gz + 1 < n {
                     let d = (grid[gx * n + gz + 1] - h).abs();
-                    if d > max_delta { max_delta = d; worst = (gx, gz); }
+                    if d > max_delta {
+                        max_delta = d;
+                        worst = (gx, gz);
+                    }
                 }
             }
         }
@@ -667,11 +691,17 @@ mod surface_diagnostics {
                 let analytic = topmost_solid_radius(face, cx, cz, x as i32, z as i32, &noises).unwrap_or(0.0);
                 let truth = topmost_solid_radius_via_generator(face, cx, cz, x, z, 42);
                 let diff = (analytic - truth).abs();
-                if diff > max_diff { max_diff = diff; }
+                if diff > max_diff {
+                    max_diff = diff;
+                }
             }
         }
         eprintln!("max disagreement between analytic and ground-truth = {:.1}", max_diff);
-        assert!(max_diff < 1.5, "analytic test disagrees with generate_column by {} blocks — the analytic test is lying", max_diff);
+        assert!(
+            max_diff < 1.5,
+            "analytic test disagrees with generate_column by {} blocks — the analytic test is lying",
+            max_diff
+        );
     }
 
     /// Probe a specific user-reported cliff. Generates a 3×3 chunk window
@@ -695,14 +725,14 @@ mod surface_diagnostics {
                     continue;
                 }
                 let chunks = generate_column(face, cx, cz, 42, None);
-                for cy in 0..CHUNK_LAYERS {
+                for (cy, chunk) in chunks.iter().enumerate().take(CHUNK_LAYERS) {
                     for ly in 0..CHUNK_SIZE {
                         for lx in 0..16 {
                             for lz in 0..16 {
                                 let gx = dx as usize * 16 + lx;
                                 let gz = dz as usize * 16 + lz;
                                 let gy = cy * CHUNK_SIZE + ly;
-                                grid[gx][gz][gy] = chunks[cy].get(lx, ly, lz);
+                                grid[gx][gz][gy] = chunk.get(lx, ly, lz);
                             }
                         }
                     }
@@ -710,49 +740,66 @@ mod surface_diagnostics {
             }
         }
         let solid = |x: usize, y: usize, z: usize| -> bool {
-            if x >= W || z >= W || y >= CHUNK_SIZE * CHUNK_LAYERS { return false; }
+            if x >= W || z >= W || y >= CHUNK_SIZE * CHUNK_LAYERS {
+                return false;
+            }
             let b = grid[x][z][y];
             b != BlockType::Air && b != BlockType::Water
         };
         // Also build a "solid OR water" view so we can see where water
         // columns are vs land columns. Water columns count as "below sea level".
         let any_solid_or_water = |x: usize, y: usize, z: usize| -> bool {
-            if x >= W || z >= W || y >= CHUNK_SIZE * CHUNK_LAYERS { return false; }
+            if x >= W || z >= W || y >= CHUNK_SIZE * CHUNK_LAYERS {
+                return false;
+            }
             grid[x][z][y] != BlockType::Air
         };
         // Top-of-column heights for the WxW window. Print TWO grids:
         // 1) topmost solid (= seabed for water columns, surface for land)
         // 2) topmost solid-or-water (= water surface for water cols, surface for land)
-        eprintln!("\n--- topmost SOLID (skip water) for face=PosZ chunks ({}..{}, *, {}..{}), player at cx={} cz={} ---",
-            mid_cx - 2, mid_cx + 2, mid_cz - 2, mid_cz + 2, mid_cx, mid_cz);
+        eprintln!(
+            "\n--- topmost SOLID (skip water) for face=PosZ chunks ({}..{}, *, {}..{}), player at cx={} cz={} ---",
+            mid_cx - 2,
+            mid_cx + 2,
+            mid_cz - 2,
+            mid_cz + 2,
+            mid_cx,
+            mid_cz
+        );
         let mut tops = vec![vec![0usize; W]; W];
-        for x in 0..W {
-            for z in 0..W {
+        for (x, tops_col) in tops.iter_mut().enumerate().take(W) {
+            for (z, top_val) in tops_col.iter_mut().enumerate().take(W) {
                 for y in (0..CHUNK_SIZE * CHUNK_LAYERS).rev() {
-                    if solid(x, y, z) { tops[x][z] = y; break; }
+                    if solid(x, y, z) {
+                        *top_val = y;
+                        break;
+                    }
                 }
             }
         }
         for z in 0..W {
             let mut row = String::new();
-            for x in 0..W {
-                row.push_str(&format!("{:3}", tops[x][z] as i32));
+            for col in tops.iter().take(W) {
+                row.push_str(&format!("{:3}", col[z] as i32));
             }
             eprintln!("{}", row);
         }
         eprintln!("\n--- topmost solid-or-water (= visible top including ocean surface) ---");
         let mut wtops = vec![vec![0usize; W]; W];
-        for x in 0..W {
-            for z in 0..W {
+        for (x, wtops_col) in wtops.iter_mut().enumerate().take(W) {
+            for (z, wtop_val) in wtops_col.iter_mut().enumerate().take(W) {
                 for y in (0..CHUNK_SIZE * CHUNK_LAYERS).rev() {
-                    if any_solid_or_water(x, y, z) { wtops[x][z] = y; break; }
+                    if any_solid_or_water(x, y, z) {
+                        *wtop_val = y;
+                        break;
+                    }
                 }
             }
         }
         for z in 0..W {
             let mut row = String::new();
-            for x in 0..W {
-                row.push_str(&format!("{:3}", wtops[x][z] as i32));
+            for col in wtops.iter().take(W) {
+                row.push_str(&format!("{:3}", col[z] as i32));
             }
             eprintln!("{}", row);
         }
@@ -764,17 +811,24 @@ mod surface_diagnostics {
                 let h = tops[x][z] as i32;
                 let dx_d = (tops[x + 1][z] as i32 - h).abs();
                 let dz_d = (tops[x][z + 1] as i32 - h).abs();
-                if dx_d > max_top_delta { max_top_delta = dx_d; worst = (x, z); }
-                if dz_d > max_top_delta { max_top_delta = dz_d; worst = (x, z); }
+                if dx_d > max_top_delta {
+                    max_top_delta = dx_d;
+                    worst = (x, z);
+                }
+                if dz_d > max_top_delta {
+                    max_top_delta = dz_d;
+                    worst = (x, z);
+                }
             }
         }
         // Max VISIBLE lateral exposure (run starting from top, walking down while solid here / air at neighbor)
         let mut max_run = 0usize;
         let mut worst_run = (0, 0, 0);
-        for x in 1..W - 1 {
-            for z in 1..W - 1 {
-                let top = tops[x][z];
-                if top == 0 { continue; }
+        for (x, tops_col) in tops.iter().enumerate().take(W - 1).skip(1) {
+            for (z, &top) in tops_col.iter().enumerate().take(W - 1).skip(1) {
+                if top == 0 {
+                    continue;
+                }
                 for (dir_idx, (dx, dz)) in [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)].iter().enumerate() {
                     let nx = (x as i32 + dx) as usize;
                     let nz = (z as i32 + dz) as usize;
@@ -784,27 +838,40 @@ mod surface_diagnostics {
                         if solid(x, y as usize, z) && !solid(nx, y as usize, nz) {
                             run += 1;
                             y -= 1;
-                        } else { break; }
+                        } else {
+                            break;
+                        }
                     }
-                    if run > max_run { max_run = run; worst_run = (x, z, dir_idx); }
+                    if run > max_run {
+                        max_run = run;
+                        worst_run = (x, z, dir_idx);
+                    }
                 }
             }
         }
         eprintln!("max top-delta = {} at ({},{})", max_top_delta, worst.0, worst.1);
-        eprintln!("max VISIBLE lateral exposure = {} at column ({},{}) dir={}", max_run, worst_run.0, worst_run.1, worst_run.2);
+        eprintln!(
+            "max VISIBLE lateral exposure = {} at column ({},{}) dir={}",
+            max_run, worst_run.0, worst_run.1, worst_run.2
+        );
 
         // ----- Now print a focused 33×33 view centered on the player -----
         // Player is at face_z chunks (mid_cx, mid_cz) local (4.5, 1.7, 0.2).
         // The 5×5 window puts the player chunk at center: grid x range 16..32 → 32..48.
         // Center on grid (40, 40 ish).
         let pgx = (mid_cx - (mid_cx - 2)) as usize * 16 + 4; // = 36
-        let pgz = (mid_cz - (mid_cz - 2)) as usize * 16 + 0; // = 32
-        eprintln!("\n--- 33×33 view of topmost SOLID centered on player (player at grid ({},{})) ---", pgx, pgz);
+        let pgz = (mid_cz - (mid_cz - 2)) as usize * 16; // = 32
+        eprintln!(
+            "\n--- 33×33 view of topmost SOLID centered on player (player at grid ({},{})) ---",
+            pgx, pgz
+        );
         eprintln!("--- player cube_y = {} (cy=4 ly=1.7) ---", 4 * 16 + 2);
         let half = 16i32;
         for dz in -half..=half {
             let z = pgz as i32 + dz;
-            if z < 0 || z >= W as i32 { continue; }
+            if z < 0 || z >= W as i32 {
+                continue;
+            }
             let mut row = String::new();
             for dx in -half..=half {
                 let x = pgx as i32 + dx;
@@ -827,10 +894,14 @@ mod surface_diagnostics {
             for dx in -half..=half {
                 let x = pgx as i32 + dx;
                 let z = pgz as i32 + dz;
-                if x < 0 || z < 0 || x >= W as i32 || z >= W as i32 { continue; }
+                if x < 0 || z < 0 || x >= W as i32 || z >= W as i32 {
+                    continue;
+                }
                 let target_y = tops[x as usize][z as usize] as i32;
                 let horiz = ((dx * dx + dz * dz) as f64).sqrt();
-                if horiz < 1.0 { continue; }
+                if horiz < 1.0 {
+                    continue;
+                }
                 let vert = (target_y - player_y) as f64;
                 let slope = vert / horiz;
                 if slope > max_slope_to_surface {
@@ -841,11 +912,16 @@ mod surface_diagnostics {
         }
         eprintln!("\nFrom player at cube_y={}, steepest visible slope to a surface block:", player_y);
         let h = (((steepest_target.0 - pgx as i32).pow(2) + (steepest_target.1 - pgz as i32).pow(2)) as f64).sqrt();
-        eprintln!("  target=({},{}, top_y={}) → vertical={}, horizontal={:.1}, slope={:.2} ({:.0}°)",
-            steepest_target.0, steepest_target.1, steepest_target.2,
+        eprintln!(
+            "  target=({},{}, top_y={}) → vertical={}, horizontal={:.1}, slope={:.2} ({:.0}°)",
+            steepest_target.0,
+            steepest_target.1,
+            steepest_target.2,
             steepest_target.2 - player_y,
             h,
-            max_slope_to_surface, max_slope_to_surface.atan().to_degrees());
+            max_slope_to_surface,
+            max_slope_to_surface.atan().to_degrees()
+        );
     }
 
     /// Maximum allowed *visible* lateral cliff exposure. A visible cliff is a
@@ -870,14 +946,14 @@ mod surface_diagnostics {
                 let cx = mid - 1 + dx as i32;
                 let cz = mid - 1 + dz as i32;
                 let chunks = generate_column(face, cx, cz, 42, None);
-                for cy in 0..CHUNK_LAYERS {
+                for (cy, chunk) in chunks.iter().enumerate().take(CHUNK_LAYERS) {
                     for ly in 0..CHUNK_SIZE {
                         for lx in 0..16 {
                             for lz in 0..16 {
                                 let gx = dx * 16 + lx;
                                 let gz = dz * 16 + lz;
                                 let gy = cy * CHUNK_SIZE + ly;
-                                grid[gx][gz][gy] = chunks[cy].get(lx, ly, lz);
+                                grid[gx][gz][gy] = chunk.get(lx, ly, lz);
                             }
                         }
                     }
@@ -885,17 +961,16 @@ mod surface_diagnostics {
             }
         }
         let solid = |x: usize, y: usize, z: usize| -> bool {
-            if x >= 48 || z >= 48 || y >= CHUNK_SIZE * CHUNK_LAYERS { return false; }
+            if x >= 48 || z >= 48 || y >= CHUNK_SIZE * CHUNK_LAYERS {
+                return false;
+            }
             let b = grid[x][z][y];
             b != BlockType::Air && b != BlockType::Water
         };
         // Find the topmost solid block of each column so we can restrict the
         // exposure scan to "starting at or near the surface".
         let topmost = |x: usize, z: usize| -> Option<usize> {
-            for y in (0..CHUNK_SIZE * CHUNK_LAYERS).rev() {
-                if solid(x, y, z) { return Some(y); }
-            }
-            None
+            (0..CHUNK_SIZE * CHUNK_LAYERS).rev().find(|&y| solid(x, y, z))
         };
 
         let mut max_run = 0usize;
@@ -903,7 +978,10 @@ mod surface_diagnostics {
         // Skip the outermost ring so neighbor lookups always have data.
         for x in 1..47 {
             for z in 1..47 {
-                let top_here = match topmost(x, z) { Some(t) => t, None => continue };
+                let top_here = match topmost(x, z) {
+                    Some(t) => t,
+                    None => continue,
+                };
                 for (dir_idx, (dx, dz)) in [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)].iter().enumerate() {
                     let nx = (x as i32 + dx) as usize;
                     let nz = (z as i32 + dz) as usize;
@@ -921,11 +999,17 @@ mod surface_diagnostics {
                             break;
                         }
                     }
-                    if run > max_run { max_run = run; worst = (x, top_here, z, dir_idx); }
+                    if run > max_run {
+                        max_run = run;
+                        worst = (x, top_here, z, dir_idx);
+                    }
                 }
             }
         }
-        eprintln!("max VISIBLE lateral cliff exposure in 3×3 chunk window = {} blocks at column ({},{}) top y={}, dir={}", max_run, worst.0, worst.2, worst.1, worst.3);
+        eprintln!(
+            "max VISIBLE lateral cliff exposure in 3×3 chunk window = {} blocks at column ({},{}) top y={}, dir={}",
+            max_run, worst.0, worst.2, worst.1, worst.3
+        );
         // Print the column profile at the worst spot so we can see exactly
         // which blocks form the cliff.
         let (wx, _wy, wz, dir_idx) = worst;
@@ -948,7 +1032,8 @@ mod surface_diagnostics {
              A cave or overhang is exposing too many vertically-stacked block faces. \
              Push CAVE_MIN_DEPTH further from the surface, reduce OVERHANG_STRENGTH, \
              or reduce CAVE_THRESHOLD to make caves rarer.",
-            max_run, MAX_LATERAL_EXPOSURE
+            max_run,
+            MAX_LATERAL_EXPOSURE
         );
     }
 
@@ -985,15 +1070,24 @@ mod surface_diagnostics {
                 let h = grid[gx * n + gz];
                 if gx + 1 < n {
                     let d = (grid[(gx + 1) * n + gz] - h).abs();
-                    if d > max_delta { max_delta = d; worst = (gx, gz); }
+                    if d > max_delta {
+                        max_delta = d;
+                        worst = (gx, gz);
+                    }
                 }
                 if gz + 1 < n {
                     let d = (grid[gx * n + gz + 1] - h).abs();
-                    if d > max_delta { max_delta = d; worst = (gx, gz); }
+                    if d > max_delta {
+                        max_delta = d;
+                        worst = (gx, gz);
+                    }
                 }
             }
         }
-        eprintln!("GROUND-TRUTH full-face scan: max adjacent delta = {:.1} at ({},{})", max_delta, worst.0, worst.1);
+        eprintln!(
+            "GROUND-TRUTH full-face scan: max adjacent delta = {:.1} at ({},{})",
+            max_delta, worst.0, worst.1
+        );
         let (wx, wz) = worst;
         eprintln!("--- 9×9 window of TRUE surface heights around worst ---");
         for dz in -4i32..=4 {
@@ -1039,15 +1133,24 @@ mod surface_diagnostics {
             for z in 0..48 {
                 if x + 1 < 48 {
                     let d = (grid[x + 1][z] - grid[x][z]).abs();
-                    if d > max_delta { max_delta = d; worst = (x, z); }
+                    if d > max_delta {
+                        max_delta = d;
+                        worst = (x, z);
+                    }
                 }
                 if z + 1 < 48 {
                     let d = (grid[x][z + 1] - grid[x][z]).abs();
-                    if d > max_delta { max_delta = d; worst = (x, z); }
+                    if d > max_delta {
+                        max_delta = d;
+                        worst = (x, z);
+                    }
                 }
             }
         }
-        eprintln!("ground-truth max adjacent delta in 3×3 chunk window = {:.1} at ({},{})", max_delta, worst.0, worst.1);
+        eprintln!(
+            "ground-truth max adjacent delta in 3×3 chunk window = {:.1} at ({},{})",
+            max_delta, worst.0, worst.1
+        );
         // Print 9×9 window around the worst spot for inspection.
         let (wx, wz) = worst;
         eprintln!("--- 9×9 window of TRUE surface heights around worst ---");
@@ -1083,9 +1186,13 @@ mod surface_diagnostics {
                 for cz in clo..chi {
                     for lx in 0..16 {
                         for lz in 0..16 {
-                            let h = topmost_solid_radius(face, cx, cz, lx as i32, lz as i32, &noises).unwrap_or(0.0);
-                            if h > hi { hi = h; }
-                            if h < lo { lo = h; }
+                            let h = topmost_solid_radius(face, cx, cz, lx, lz, &noises).unwrap_or(0.0);
+                            if h > hi {
+                                hi = h;
+                            }
+                            if h < lo {
+                                lo = h;
+                            }
                         }
                     }
                 }
@@ -1094,16 +1201,27 @@ mod surface_diagnostics {
             let (d, gx, gz) = measure_max_adjacent_delta(face, &noises);
             eprintln!(
                 "face {:?}: max adjacent delta = {:.1} at ({},{}); surface range [{:.0} .. {:.0}] (sea_level = {})",
-                face, d, gx, gz, lo, hi, sphere::SURFACE_RADIUS_BLOCKS
+                face,
+                d,
+                gx,
+                gz,
+                lo,
+                hi,
+                sphere::SURFACE_RADIUS_BLOCKS
             );
-            if d > worst_face_delta { worst_face_delta = d; worst_face = face; }
+            if d > worst_face_delta {
+                worst_face_delta = d;
+                worst_face = face;
+            }
         }
         assert!(
             worst_face_delta <= MAX_ADJACENT_DELTA,
             "max adjacent-column height delta = {:.1} blocks on face {:?}, threshold {:.1}. \
              Reduce noise amplitudes (mountain/detail/weirdness/continental) so that \
              amplitude × 2π × frequency stays under ~0.3 per contribution.",
-            worst_face_delta, worst_face, MAX_ADJACENT_DELTA
+            worst_face_delta,
+            worst_face,
+            MAX_ADJACENT_DELTA
         );
     }
 
@@ -1126,10 +1244,10 @@ mod surface_diagnostics {
             // direction (in face-A tangent space) and the column index inside
             // face A that's right next to the edge.
             let edges: [(glam::DVec3, i32, i32); 4] = [
-                ( tu.as_dvec3(),  FACE_SIDE_CHUNKS - 1, 15), // +u edge
-                (-tu.as_dvec3(),  0, 0),                      // -u edge
-                ( tv.as_dvec3(),  FACE_SIDE_CHUNKS - 1, 15), // +v edge (cz)
-                (-tv.as_dvec3(),  0, 0),                      // -v edge (cz)
+                (tu.as_dvec3(), FACE_SIDE_CHUNKS - 1, 15), // +u edge
+                (-tu.as_dvec3(), 0, 0),                    // -u edge
+                (tv.as_dvec3(), FACE_SIDE_CHUNKS - 1, 15), // +v edge (cz)
+                (-tv.as_dvec3(), 0, 0),                    // -v edge (cz)
             ];
             // Sample only a centered window of columns along each edge —
             // enough to surface seam discontinuities without paying for the
@@ -1139,8 +1257,8 @@ mod surface_diagnostics {
                 for cz_or_cx in clo..chi {
                     for lz_or_lx in 0..16 {
                         let (cx, cz, lx, lz) = match edge_idx {
-                            0 | 1 => (*edge_chunk, cz_or_cx, *edge_block, lz_or_lx as i32),
-                            2 | 3 => (cz_or_cx, *edge_chunk, lz_or_lx as i32, *edge_block),
+                            0 | 1 => (*edge_chunk, cz_or_cx, *edge_block, lz_or_lx),
+                            2 | 3 => (cz_or_cx, *edge_chunk, lz_or_lx, *edge_block),
                             _ => unreachable!(),
                         };
                         let h_a = topmost_solid_radius(face_a, cx, cz, lx, lz, &noises).unwrap_or(0.0);
@@ -1152,15 +1270,7 @@ mod surface_diagnostics {
                         let test_point = probe_a + *out_dir * nudge;
                         if let Some((nb_cp, nlx, _nly, nlz)) = sphere::world_to_chunk_local(test_point) {
                             if nb_cp.face != face_a {
-                                let h_b = topmost_solid_radius(
-                                    nb_cp.face,
-                                    nb_cp.cx,
-                                    nb_cp.cz,
-                                    nlx as i32,
-                                    nlz as i32,
-                                    &noises,
-                                )
-                                .unwrap_or(0.0);
+                                let h_b = topmost_solid_radius(nb_cp.face, nb_cp.cx, nb_cp.cz, nlx as i32, nlz as i32, &noises).unwrap_or(0.0);
                                 let d = (h_a - h_b).abs();
                                 if d > max_delta {
                                     max_delta = d;
@@ -1181,19 +1291,8 @@ mod surface_diagnostics {
             "max cross-seam height delta = {:.1} blocks, threshold {:.1}. \
              A discontinuity at the cube edge means columns on opposite sides \
              of the seam sample noise at noticeably different directions.",
-            max_delta, MAX_ADJACENT_DELTA + 1.0
+            max_delta,
+            MAX_ADJACENT_DELTA + 1.0
         );
-    }
-}
-
-/// A flat 64³ voxel grid for LOD super-chunk generation.
-pub struct LodVoxelGrid {
-    blocks: Vec<BlockType>,
-    size: usize,
-}
-
-impl super::svdag::VoxelSource for LodVoxelGrid {
-    fn get(&self, x: usize, y: usize, z: usize) -> BlockType {
-        self.blocks[x + z * self.size + y * self.size * self.size]
     }
 }

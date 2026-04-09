@@ -16,11 +16,7 @@ const WORKER_COUNT: usize = 8;
 /// Interior texels `[1..TILE_GRID_POSTS]` map to the tile's face-local
 /// block range; border texels 0 and `TILE_GRID_POSTS + 1` oversample by
 /// one post step into the neighboring tile's territory.
-pub fn generate_tile_heights(
-    node: QuadNode,
-    seed: u32,
-    erosion_map: Option<&ErosionMap>,
-) -> TileHeightsData {
+pub fn generate_tile_heights(node: QuadNode, seed: u32, erosion_map: Option<&ErosionMap>) -> TileHeightsData {
     use super::heightmap_quadtree::TILE_GRID_POSTS;
     let noises = WorldNoises::new(seed);
     let stride = HEIGHT_PAGE_SIZE as usize;
@@ -95,13 +91,24 @@ impl HeightsGenerator {
             workers.push(thread::spawn(move || {
                 while let Ok(req) = rx.recv() {
                     let data = generate_tile_heights(req.node, req.seed, emap.as_deref());
-                    if tx.send(HeightsResult { node: req.node, heights: data.heights, materials: data.materials }).is_err() {
+                    if tx
+                        .send(HeightsResult {
+                            node: req.node,
+                            heights: data.heights,
+                            materials: data.materials,
+                        })
+                        .is_err()
+                    {
                         break;
                     }
                 }
             }));
         }
-        Self { request_tx, result_rx, _workers: workers }
+        Self {
+            request_tx,
+            result_rx,
+            _workers: workers,
+        }
     }
 
     pub fn request(&self, req: HeightsRequest) {
@@ -140,7 +147,12 @@ mod tests {
     #[test]
     fn generate_tile_heights_matches_surface_radius_at_world() {
         use crate::voxel::sphere::{face_local_to_world, CUBE_HALF_BLOCKS};
-        let node = QuadNode { face: Face::PosY, level: 3, ix: 2, iy: 5 };
+        let node = QuadNode {
+            face: Face::PosY,
+            level: 3,
+            ix: 2,
+            iy: 5,
+        };
         let data = generate_tile_heights(node, 99, None);
         let noises = WorldNoises::new(99);
         let stride = HEIGHT_PAGE_SIZE as usize;
@@ -152,11 +164,12 @@ mod tests {
         let (r, _) = terrain::surface_radius_at_world(&noises, probe, None);
         let sea = SEA_LEVEL as f64 + PLANET_RADIUS_BLOCKS as f64;
         let expected = (r.max(sea) - PLANET_RADIUS_BLOCKS as f64) as f32;
-        let actual = data.heights[1 + 1 * stride];
+        let actual = data.heights[1 + stride];
         assert!(
             (actual - expected).abs() < 0.01,
             "corner height mismatch: actual={} expected={}",
-            actual, expected
+            actual,
+            expected
         );
     }
 }

@@ -79,9 +79,7 @@ impl VoxelPool {
     pub unsafe fn new(max_slots: u32, device: &Device, instance: &Instance, data: &mut VulkanApplicationData) -> anyhow::Result<Self> {
         let host_visible = super::host_visible_coherent();
         let ssbo_flags = vk::BufferUsageFlags::STORAGE_BUFFER;
-        let indirect_flags = vk::BufferUsageFlags::STORAGE_BUFFER
-            | vk::BufferUsageFlags::INDIRECT_BUFFER
-            | vk::BufferUsageFlags::TRANSFER_DST;
+        let indirect_flags = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::INDIRECT_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
 
         let voxel_size = (max_slots as usize * VOXEL_CHUNK_BYTES) as u64;
         let (voxel_buffer, voxel_memory, voxel_ptr) = allocate_buffer::<u8>(voxel_size, ssbo_flags, device, instance, data, host_visible)?;
@@ -294,7 +292,12 @@ impl VoxelPool {
         // no boundary faces there — this hides the seam without yet
         // remapping the slice through the edge transition rotation.
 
-        let same_face = |dx: i32, dy: i32, dz: i32| ChunkPos { face, cx: cx + dx, cy: cy + dy, cz: cz + dz };
+        let same_face = |dx: i32, dy: i32, dz: i32| ChunkPos {
+            face,
+            cx: cx + dx,
+            cy: cy + dy,
+            cz: cz + dz,
+        };
 
         self.write_boundary_face_or_solid(base, 0, world, same_face(1, 0, 0), |c, u, v| c.get(0, v, u));
         self.write_boundary_face_or_solid(base, 1, world, same_face(-1, 0, 0), |c, u, v| c.get(CHUNK_SIZE - 1, v, u));

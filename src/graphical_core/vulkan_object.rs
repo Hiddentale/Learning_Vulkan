@@ -25,7 +25,7 @@ use crate::storage::region::RegionStore;
 use crate::voxel::chunk::{Chunk, CHUNK_SIZE};
 use crate::voxel::erosion::ErosionMap;
 use crate::voxel::heightmap_generator::{HeightsGenerator, HeightsRequest};
-use crate::voxel::heightmap_quadtree::{GpuTileDesc, Quadtree, MAX_RESIDENT_TILES};
+use crate::voxel::heightmap_quadtree::{Quadtree, MAX_RESIDENT_TILES};
 use crate::voxel::svdag_compressor::SvdagCompressor;
 use crate::voxel::world::World;
 use crate::vr::{VrContext, VrSession, VrSwapchain};
@@ -89,11 +89,14 @@ const MESH_DISTANCE: i32 = 8;
 const LOD0_DISTANCE: i32 = 24; // 384m
 const LOD1_DISTANCE: i32 = 48; // 768m
 const LOD2_DISTANCE: i32 = 96; // 1536m
+#[allow(dead_code)] // future LOD tiers
 const LOD3_DISTANCE: i32 = 192; // 3072m
+#[allow(dead_code)] // future LOD tiers
 const LOD4_DISTANCE: i32 = 384; // 6144m (>5km)
 /// World generates terrain out to this distance (raw chunks for LOD-0 super-chunk building).
 pub const WORLD_DISTANCE: i32 = LOD0_DISTANCE + 8 + 4;
 /// Maximum SVDAG render distance across all LOD levels.
+#[allow(dead_code)] // future SVDAG pipeline
 const SVDAG_DISTANCE: i32 = LOD4_DISTANCE;
 /// Sized to hold the working set: a `(2·WORLD_DISTANCE+1)²` column window
 /// around the player times the radial column height, with generous slack.
@@ -191,12 +194,42 @@ fn neighbors_all_opaque(world: &World, cp: crate::voxel::sphere::ChunkPos) -> bo
         }
     };
     let neighbors = [
-        ChunkPos { face: cp.face, cx: cp.cx + 1, cy: cp.cy, cz: cp.cz },
-        ChunkPos { face: cp.face, cx: cp.cx - 1, cy: cp.cy, cz: cp.cz },
-        ChunkPos { face: cp.face, cx: cp.cx, cy: cp.cy + 1, cz: cp.cz },
-        ChunkPos { face: cp.face, cx: cp.cx, cy: cp.cy - 1, cz: cp.cz },
-        ChunkPos { face: cp.face, cx: cp.cx, cy: cp.cy, cz: cp.cz + 1 },
-        ChunkPos { face: cp.face, cx: cp.cx, cy: cp.cy, cz: cp.cz - 1 },
+        ChunkPos {
+            face: cp.face,
+            cx: cp.cx + 1,
+            cy: cp.cy,
+            cz: cp.cz,
+        },
+        ChunkPos {
+            face: cp.face,
+            cx: cp.cx - 1,
+            cy: cp.cy,
+            cz: cp.cz,
+        },
+        ChunkPos {
+            face: cp.face,
+            cx: cp.cx,
+            cy: cp.cy + 1,
+            cz: cp.cz,
+        },
+        ChunkPos {
+            face: cp.face,
+            cx: cp.cx,
+            cy: cp.cy - 1,
+            cz: cp.cz,
+        },
+        ChunkPos {
+            face: cp.face,
+            cx: cp.cx,
+            cy: cp.cy,
+            cz: cp.cz + 1,
+        },
+        ChunkPos {
+            face: cp.face,
+            cx: cp.cx,
+            cy: cp.cy,
+            cz: cp.cz - 1,
+        },
     ];
     neighbors.iter().all(|&n| neighbor_solid(n))
 }
@@ -345,7 +378,7 @@ impl VulkanApplication {
         let spawn = glam::DVec3::new(0.0, crate::voxel::sphere::SURFACE_RADIUS_BLOCKS as f64, 0.0);
         world.update(spawn);
 
-        let mut voxel_pool = VoxelPool::new(
+        let voxel_pool = VoxelPool::new(
             MAX_MESH_CHUNKS as u32,
             &self.device,
             &self.vulkan_instance,
@@ -366,12 +399,8 @@ impl VulkanApplication {
         }
 
         let heightmap_atlas = HeightmapAtlas::new(&self.device, &self.vulkan_instance, &mut self.vulkan_application_data)?;
-        let heightmap_tile_pipeline = HeightmapTilePipeline::create(
-            &self.device,
-            &self.vulkan_instance,
-            &mut self.vulkan_application_data,
-            &heightmap_atlas,
-        )?;
+        let heightmap_tile_pipeline =
+            HeightmapTilePipeline::create(&self.device, &self.vulkan_instance, &mut self.vulkan_application_data, &heightmap_atlas)?;
         let heightmap_quadtree = Quadtree::new();
         let heights_generator = HeightsGenerator::new(erosion_map.clone());
 
@@ -588,8 +617,12 @@ impl VulkanApplication {
             Some((
                 CullPush {
                     planes: [
-                        frustum.plane(0), frustum.plane(1), frustum.plane(2),
-                        frustum.plane(3), frustum.plane(4), frustum.plane(5),
+                        frustum.plane(0),
+                        frustum.plane(1),
+                        frustum.plane(2),
+                        frustum.plane(3),
+                        frustum.plane(4),
+                        frustum.plane(5),
                     ],
                     total_chunks: svdag_chunk_count,
                     _padding: [0; 3],
@@ -623,20 +656,24 @@ impl VulkanApplication {
             camera_pos: camera.position.to_array(),
             tile_count: wr.heightmap_tile_pipeline_active_count,
             planet_radius: crate::voxel::sphere::PLANET_RADIUS_BLOCKS as f32,
-            _pad0: 0.0, _pad1: 0.0, _pad2: 0.0,
+            _pad0: 0.0,
+            _pad1: 0.0,
+            _pad2: 0.0,
         };
         let hm_tile_push = HmTilePush {
             camera_pos: camera.position.to_array(),
             atlas_cols: crate::graphical_core::heightmap_atlas::ATLAS_COLS,
             face_side_blocks: crate::voxel::sphere::FACE_SIDE_BLOCKS as f32,
-            _pad0: 0.0, _pad1: 0.0, _pad2: 0.0,
+            _pad0: 0.0,
+            _pad1: 0.0,
+            _pad2: 0.0,
         };
         let t2 = std::time::Instant::now();
         // Drop the immutable borrow on `wr` and re-take it mutably so the
         // heightmap atlas can be passed as `&mut`. The svdag pipeline ref
         // is constructed from the freshly mut-borrowed `wr` at the call
         // site, so disjoint field borrows let it coexist with `&mut wr.heightmap_atlas`.
-        drop(wr);
+        let _ = wr;
         let wr = self.wr.as_mut().unwrap();
         let svdag_arg = svdag_pushes.as_ref().map(|(c, t, m)| (&wr.svdag_pipeline, c, t, m));
         record_mesh_shader_command_buffer(
@@ -711,9 +748,20 @@ impl VulkanApplication {
             n: u32,
         }
         static PERF: std::sync::Mutex<PerfAccum> = std::sync::Mutex::new(PerfAccum {
-            update_chunks: 0, acquire: 0, record: 0, submit: 0, present: 0, total: 0,
-            gpu_sky: 0.0, gpu_phase1: 0.0, gpu_pyramid: 0.0, gpu_phase2: 0.0,
-            gpu_svdag: 0.0, gpu_ui: 0.0, gpu_total: 0.0, n: 0,
+            update_chunks: 0,
+            acquire: 0,
+            record: 0,
+            submit: 0,
+            present: 0,
+            total: 0,
+            gpu_sky: 0.0,
+            gpu_phase1: 0.0,
+            gpu_pyramid: 0.0,
+            gpu_phase2: 0.0,
+            gpu_svdag: 0.0,
+            gpu_ui: 0.0,
+            gpu_total: 0.0,
+            n: 0,
         });
         let mut p = PERF.lock().unwrap();
         p.update_chunks += dt_update_chunks.as_micros();
@@ -753,9 +801,20 @@ impl VulkanApplication {
             );
             let _ = std::fs::write("debug.log", &msg);
             *p = PerfAccum {
-                update_chunks: 0, acquire: 0, record: 0, submit: 0, present: 0, total: 0,
-                gpu_sky: 0.0, gpu_phase1: 0.0, gpu_pyramid: 0.0, gpu_phase2: 0.0,
-                gpu_svdag: 0.0, gpu_ui: 0.0, gpu_total: 0.0, n: 0,
+                update_chunks: 0,
+                acquire: 0,
+                record: 0,
+                submit: 0,
+                present: 0,
+                total: 0,
+                gpu_sky: 0.0,
+                gpu_phase1: 0.0,
+                gpu_pyramid: 0.0,
+                gpu_phase2: 0.0,
+                gpu_svdag: 0.0,
+                gpu_ui: 0.0,
+                gpu_total: 0.0,
+                n: 0,
             };
         }
         Ok(())
@@ -866,12 +925,42 @@ impl VulkanApplication {
         let mut to_evict: std::collections::HashSet<ChunkPos> = Default::default();
         for &cp in &newly_opaque {
             let neighbors = [
-                ChunkPos { face: cp.face, cx: cp.cx + 1, cy: cp.cy, cz: cp.cz },
-                ChunkPos { face: cp.face, cx: cp.cx - 1, cy: cp.cy, cz: cp.cz },
-                ChunkPos { face: cp.face, cx: cp.cx, cy: cp.cy + 1, cz: cp.cz },
-                ChunkPos { face: cp.face, cx: cp.cx, cy: cp.cy - 1, cz: cp.cz },
-                ChunkPos { face: cp.face, cx: cp.cx, cy: cp.cy, cz: cp.cz + 1 },
-                ChunkPos { face: cp.face, cx: cp.cx, cy: cp.cy, cz: cp.cz - 1 },
+                ChunkPos {
+                    face: cp.face,
+                    cx: cp.cx + 1,
+                    cy: cp.cy,
+                    cz: cp.cz,
+                },
+                ChunkPos {
+                    face: cp.face,
+                    cx: cp.cx - 1,
+                    cy: cp.cy,
+                    cz: cp.cz,
+                },
+                ChunkPos {
+                    face: cp.face,
+                    cx: cp.cx,
+                    cy: cp.cy + 1,
+                    cz: cp.cz,
+                },
+                ChunkPos {
+                    face: cp.face,
+                    cx: cp.cx,
+                    cy: cp.cy - 1,
+                    cz: cp.cz,
+                },
+                ChunkPos {
+                    face: cp.face,
+                    cx: cp.cx,
+                    cy: cp.cy,
+                    cz: cp.cz + 1,
+                },
+                ChunkPos {
+                    face: cp.face,
+                    cx: cp.cx,
+                    cy: cp.cy,
+                    cz: cp.cz - 1,
+                },
             ];
             for n in neighbors {
                 if !wr.voxel_pool.has_chunk(&n) {
@@ -1023,69 +1112,69 @@ unsafe fn schedule_lod_generation(wr: &mut WorldResources, player_cx: i32, playe
     return false;
     #[allow(unreachable_code)]
     {
-    if wr.lod_in_flight.len() >= MAX_LOD_IN_FLIGHT {
-        return true;
-    }
-    let mut total_submitted = 0usize;
-    for &(align, voxel_size, lod_level, min_dist, max_dist) in LOD_BANDS {
-        let half = max_dist / align + 1;
-        let pcx = player_cx.div_euclid(align) * align;
-        let pcy = player_cy.div_euclid(align) * align;
-        let pcz = player_cz.div_euclid(align) * align;
-        let mut submitted = 0;
+        if wr.lod_in_flight.len() >= MAX_LOD_IN_FLIGHT {
+            return true;
+        }
+        let mut total_submitted = 0usize;
+        for &(align, voxel_size, lod_level, min_dist, max_dist) in LOD_BANDS {
+            let half = max_dist / align + 1;
+            let pcx = player_cx.div_euclid(align) * align;
+            let pcy = player_cy.div_euclid(align) * align;
+            let pcz = player_cz.div_euclid(align) * align;
+            let mut submitted = 0;
 
-        for ring in 0..=half {
-            if submitted >= LOD_SUBMISSIONS_PER_FRAME {
-                break;
-            }
-            for dz in -ring..=ring {
-                for dy in -ring..=ring {
-                    for dx in -ring..=ring {
-                        // Only process the shell border of this ring
-                        if dx.abs() != ring && dy.abs() != ring && dz.abs() != ring {
-                            continue;
+            for ring in 0..=half {
+                if submitted >= LOD_SUBMISSIONS_PER_FRAME {
+                    break;
+                }
+                for dz in -ring..=ring {
+                    for dy in -ring..=ring {
+                        for dx in -ring..=ring {
+                            // Only process the shell border of this ring
+                            if dx.abs() != ring && dy.abs() != ring && dz.abs() != ring {
+                                continue;
+                            }
+                            let gx = pcx + dx * align;
+                            let gy = pcy + dy * align;
+                            let gz = pcz + dz * align;
+                            if !in_lod_band(gx, gy, gz, player_cx, player_cy, player_cz, min_dist, max_dist) {
+                                continue;
+                            }
+                            // Skip LOD chunks whose AABB overlaps the mesh shader cube.
+                            // The mesh is authoritative in its area; LOD fallbacks are
+                            // only needed beyond it.
+                            let mesh_lo = [player_cx - MESH_DISTANCE, player_cy - MESH_DISTANCE, player_cz - MESH_DISTANCE];
+                            let mesh_hi = [player_cx + MESH_DISTANCE, player_cy + MESH_DISTANCE, player_cz + MESH_DISTANCE];
+                            let overlaps_mesh = gx <= mesh_hi[0]
+                                && gx + align > mesh_lo[0]
+                                && gy <= mesh_hi[1]
+                                && gy + align > mesh_lo[1]
+                                && gz <= mesh_hi[2]
+                                && gz + align > mesh_lo[2];
+                            if overlaps_mesh {
+                                continue;
+                            }
+                            let pos = [gx, gy, gz];
+                            if wr.svdag_pool.has_chunk(&pos) || wr.lod_in_flight.contains(&pos) || wr.lod_empty.contains(&pos) {
+                                continue;
+                            }
+                            if try_load_cached_lod(wr, pos, lod_level) {
+                                continue;
+                            }
+                            if submitted >= LOD_SUBMISSIONS_PER_FRAME {
+                                break;
+                            }
+                            let origin = [gx * CHUNK_SIZE as i32, gy * CHUNK_SIZE as i32, gz * CHUNK_SIZE as i32];
+                            wr.svdag_compressor.request_lod_generate(pos, origin, voxel_size, lod_level, wr.seed);
+                            wr.lod_in_flight.insert(pos);
+                            submitted += 1;
                         }
-                        let gx = pcx + dx * align;
-                        let gy = pcy + dy * align;
-                        let gz = pcz + dz * align;
-                        if !in_lod_band(gx, gy, gz, player_cx, player_cy, player_cz, min_dist, max_dist) {
-                            continue;
-                        }
-                        // Skip LOD chunks whose AABB overlaps the mesh shader cube.
-                        // The mesh is authoritative in its area; LOD fallbacks are
-                        // only needed beyond it.
-                        let mesh_lo = [player_cx - MESH_DISTANCE, player_cy - MESH_DISTANCE, player_cz - MESH_DISTANCE];
-                        let mesh_hi = [player_cx + MESH_DISTANCE, player_cy + MESH_DISTANCE, player_cz + MESH_DISTANCE];
-                        let overlaps_mesh = gx <= mesh_hi[0]
-                            && gx + align > mesh_lo[0]
-                            && gy <= mesh_hi[1]
-                            && gy + align > mesh_lo[1]
-                            && gz <= mesh_hi[2]
-                            && gz + align > mesh_lo[2];
-                        if overlaps_mesh {
-                            continue;
-                        }
-                        let pos = [gx, gy, gz];
-                        if wr.svdag_pool.has_chunk(&pos) || wr.lod_in_flight.contains(&pos) || wr.lod_empty.contains(&pos) {
-                            continue;
-                        }
-                        if try_load_cached_lod(wr, pos, lod_level) {
-                            continue;
-                        }
-                        if submitted >= LOD_SUBMISSIONS_PER_FRAME {
-                            break;
-                        }
-                        let origin = [gx * CHUNK_SIZE as i32, gy * CHUNK_SIZE as i32, gz * CHUNK_SIZE as i32];
-                        wr.svdag_compressor.request_lod_generate(pos, origin, voxel_size, lod_level, wr.seed);
-                        wr.lod_in_flight.insert(pos);
-                        submitted += 1;
                     }
                 }
             }
+            total_submitted += submitted;
         }
-        total_submitted += submitted;
-    }
-    total_submitted > 0
+        total_submitted > 0
     }
 }
 
@@ -1111,21 +1200,11 @@ unsafe fn try_load_cached_lod(wr: &mut WorldResources, pos: [i32; 3], lod_level:
     true
 }
 
-/// Heightmap tile bands: (tile_chunks_per_side, grid_posts, coarse_grid_posts,
-/// extra_min_angle, extra_max_angle). The actual angular range is computed
-/// at runtime as `chunked_arc + extra_*`, where `chunked_arc = WORLD_DISTANCE
-/// * CHUNK_SIZE / PLANET_RADIUS` is the angular reach of the mesh-shader
-/// chunk renderer. Tiles never overlap chunk geometry: the inner band starts
-/// exactly where chunks stop. On a small planet where the chunk reach
 /// Per-frame update for the SSE quadtree heightmap path. Drains finished
 /// heights pages from the worker pool, runs the quadtree's SSE descent +
 /// restrict + morph, streams loads/evicts against the GPU atlas, and packs
 /// the active set into the host-visible TileDesc buffer.
-unsafe fn update_heightmap_quadtree(
-    wr: &mut WorldResources,
-    camera: &crate::graphical_core::camera::Camera,
-    screen_height_px: f32,
-) {
+unsafe fn update_heightmap_quadtree(wr: &mut WorldResources, camera: &crate::graphical_core::camera::Camera, screen_height_px: f32) {
     // 1. Receive completed pages and insert into the atlas.
     for result in wr.heights_generator.receive() {
         let morton = result.node.morton();
@@ -1134,11 +1213,7 @@ unsafe fn update_heightmap_quadtree(
     }
 
     // 2. Drive the SSE descent at the current camera pose.
-    let camera_world = glam::DVec3::new(
-        camera.position.x as f64,
-        camera.position.y as f64,
-        camera.position.z as f64,
-    );
+    let camera_world = glam::DVec3::new(camera.position.x as f64, camera.position.y as f64, camera.position.z as f64);
     let fov_y_rad = crate::graphical_core::camera::FOV_DEGREES.to_radians();
     wr.heightmap_quadtree.update(camera_world, screen_height_px, fov_y_rad);
 
@@ -1149,9 +1224,8 @@ unsafe fn update_heightmap_quadtree(
     //     overlap without an angular guess or load-in flicker.
     let loaded_columns: std::collections::HashSet<(crate::voxel::sphere::Face, i32, i32)> =
         wr.voxel_pool.chunk_positions().into_iter().map(|p| (p.face, p.cx, p.cz)).collect();
-    wr.heightmap_quadtree.prune_masked_columns(|face, cx, cz| {
-        loaded_columns.contains(&(face, cx, cz))
-    });
+    wr.heightmap_quadtree
+        .prune_masked_columns(|face, cx, cz| loaded_columns.contains(&(face, cx, cz)));
 
     // 3. Stream loads/evicts. Each new tile gets an immediate zero-filled
     //    placeholder page in the atlas so the GPU has coverage on the very
@@ -1185,10 +1259,7 @@ unsafe fn update_heightmap_quadtree(
         if let Some(page) = wr.heightmap_atlas.page_of(tile.node.morton()) {
             if (count as usize) < MAX_RESIDENT_TILES {
                 let gpu = tile.to_gpu(page);
-                std::ptr::write(
-                    wr.heightmap_tile_pipeline.buffers.tile_desc_ptr.add(count as usize),
-                    gpu,
-                );
+                std::ptr::write(wr.heightmap_tile_pipeline.buffers.tile_desc_ptr.add(count as usize), gpu);
                 count += 1;
             }
         }
@@ -1380,4 +1451,3 @@ impl VulkanApplication {
         self.vulkan_instance.destroy_instance(None);
     }
 }
-

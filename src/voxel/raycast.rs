@@ -78,7 +78,7 @@ fn chunk_in_face_range(cp: ChunkPos) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::voxel::chunk::{Chunk, CHUNK_SIZE};
+    use crate::voxel::chunk::Chunk;
     use crate::voxel::sphere::Face;
 
     fn empty_world() -> World {
@@ -97,7 +97,12 @@ mod tests {
     fn raycast_hits_a_solid_block_directly_below_pole() {
         // Place a solid stone block at the +Y pole and shoot a ray down at it.
         let mut world = empty_world();
-        let cp = ChunkPos { face: Face::PosY, cx: sphere::FACE_SIDE_CHUNKS / 2, cy: 5, cz: sphere::FACE_SIDE_CHUNKS / 2 };
+        let cp = ChunkPos {
+            face: Face::PosY,
+            cx: sphere::FACE_SIDE_CHUNKS / 2,
+            cy: 5,
+            cz: sphere::FACE_SIDE_CHUNKS / 2,
+        };
         let mut chunk = Chunk::new(BlockType::Air);
         chunk.set(8, 8, 8, BlockType::Stone);
         world.chunks_mut_for_test().insert(cp, chunk);

@@ -17,10 +17,7 @@
 
 #![allow(dead_code)] // Wired up incrementally across phases.
 
-use super::sphere::{
-    face_basis, face_for_cube_point, face_local_to_world, ALL_FACES, Face, EdgeDir,
-    CUBE_HALF_BLOCKS, FACE_SIDE_BLOCKS,
-};
+use super::sphere::{face_basis, face_for_cube_point, face_local_to_world, EdgeDir, Face, ALL_FACES, CUBE_HALF_BLOCKS, FACE_SIDE_BLOCKS};
 use glam::DVec3;
 
 /// Side length, in blocks, of the finest (deepest) quadtree leaf. Determines
@@ -67,7 +64,12 @@ pub struct QuadNode {
 
 impl QuadNode {
     pub fn root(face: Face) -> Self {
-        Self { face, level: 0, ix: 0, iy: 0 }
+        Self {
+            face,
+            level: 0,
+            ix: 0,
+            iy: 0,
+        }
     }
 
     /// Number of tiles per side at this level.
@@ -103,10 +105,30 @@ impl QuadNode {
         let bx = self.ix * 2;
         let by = self.iy * 2;
         Some([
-            QuadNode { face: self.face, level, ix: bx,     iy: by },
-            QuadNode { face: self.face, level, ix: bx + 1, iy: by },
-            QuadNode { face: self.face, level, ix: bx,     iy: by + 1 },
-            QuadNode { face: self.face, level, ix: bx + 1, iy: by + 1 },
+            QuadNode {
+                face: self.face,
+                level,
+                ix: bx,
+                iy: by,
+            },
+            QuadNode {
+                face: self.face,
+                level,
+                ix: bx + 1,
+                iy: by,
+            },
+            QuadNode {
+                face: self.face,
+                level,
+                ix: bx,
+                iy: by + 1,
+            },
+            QuadNode {
+                face: self.face,
+                level,
+                ix: bx + 1,
+                iy: by + 1,
+            },
         ])
     }
 
@@ -155,7 +177,9 @@ impl QuadNode {
         for &(u, v) in &[(u0, v0), (u1, v0), (u0, v1), (u1, v1)] {
             let p = face_local_to_world(self.face, u, v, max_terrain_amplitude);
             let d2 = (p - center).length_squared();
-            if d2 > max_d2 { max_d2 = d2; }
+            if d2 > max_d2 {
+                max_d2 = d2;
+            }
         }
         max_d2.sqrt() + max_terrain_amplitude
     }
@@ -284,14 +308,15 @@ impl Quadtree {
         }
     }
 
-    pub fn active(&self) -> &[TileDesc] { &self.active }
+    pub fn active(&self) -> &[TileDesc] {
+        &self.active
+    }
 
     /// Diff this frame's active set against the resident GPU set. The
     /// streamer should pass `to_load` to the heights generator and free
     /// `to_evict` pages, then call [`Self::commit_stream`].
     pub fn stream(&self) -> StreamDelta {
-        let active_set: std::collections::HashSet<u64> =
-            self.active.iter().map(|t| t.node.morton()).collect();
+        let active_set: std::collections::HashSet<u64> = self.active.iter().map(|t| t.node.morton()).collect();
         let mut to_load = Vec::new();
         for tile in &self.active {
             let m = tile.node.morton();
@@ -320,7 +345,9 @@ impl Quadtree {
         }
     }
 
-    pub fn resident_count(&self) -> usize { self.resident.len() }
+    pub fn resident_count(&self) -> usize {
+        self.resident.len()
+    }
 
     /// Hide tiles whose footprint is fully covered by loaded mesh chunks.
     /// Samples 5 points (4 corners + center) of each tile in face-local cube
@@ -330,10 +357,7 @@ impl Quadtree {
     /// mesh, mesh wins via depth test). Coarse tiles larger than the mesh
     /// streaming radius can never be fully covered, so they pass through
     /// untouched at no extra cost beyond 5 hashset lookups.
-    pub fn prune_masked_columns(
-        &mut self,
-        is_column_loaded: impl Fn(Face, i32, i32) -> bool,
-    ) {
+    pub fn prune_masked_columns(&mut self, is_column_loaded: impl Fn(Face, i32, i32) -> bool) {
         use crate::voxel::chunk::CHUNK_SIZE;
         let cs = CHUNK_SIZE as f64;
         let half = CUBE_HALF_BLOCKS;
@@ -345,11 +369,11 @@ impl Quadtree {
             // Inset by 1 block so corner samples land squarely inside the tile.
             let inset = 1.0_f64.min(side * 0.25);
             let samples = [
-                (u0 + inset,         v0 + inset),
-                (u0 + side - inset,  v0 + inset),
-                (u0 + inset,         v0 + side - inset),
-                (u0 + side - inset,  v0 + side - inset),
-                (u0 + side * 0.5,    v0 + side * 0.5),
+                (u0 + inset, v0 + inset),
+                (u0 + side - inset, v0 + inset),
+                (u0 + inset, v0 + side - inset),
+                (u0 + side - inset, v0 + side - inset),
+                (u0 + side * 0.5, v0 + side * 0.5),
             ];
             for (u, v) in samples {
                 let cx = ((u + half) / cs).floor() as i32;
@@ -392,24 +416,29 @@ impl Quadtree {
             projected_px: f32,
         }
         impl PartialEq for Pending {
-            fn eq(&self, other: &Self) -> bool { self.projected_px == other.projected_px }
+            fn eq(&self, other: &Self) -> bool {
+                self.projected_px == other.projected_px
+            }
         }
         impl Eq for Pending {}
         impl PartialOrd for Pending {
-            fn partial_cmp(&self, other: &Self) -> Option<Ordering> { Some(self.cmp(other)) }
+            fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+                Some(self.cmp(other))
+            }
         }
         impl Ord for Pending {
             fn cmp(&self, other: &Self) -> Ordering {
-                self.projected_px
-                    .partial_cmp(&other.projected_px)
-                    .unwrap_or(Ordering::Equal)
+                self.projected_px.partial_cmp(&other.projected_px).unwrap_or(Ordering::Equal)
             }
         }
 
         let mut heap: BinaryHeap<Pending> = BinaryHeap::with_capacity(MAX_RESIDENT_TILES * 4);
         for face in ALL_FACES {
             let root = QuadNode::root(face);
-            heap.push(Pending { node: root, projected_px: self.projected_pixel_error(root) });
+            heap.push(Pending {
+                node: root,
+                projected_px: self.projected_pixel_error(root),
+            });
         }
 
         while let Some(Pending { node, projected_px }) = heap.pop() {
@@ -420,7 +449,10 @@ impl Quadtree {
             if should_split {
                 if let Some(children) = node.children() {
                     for child in children {
-                        heap.push(Pending { node: child, projected_px: self.projected_pixel_error(child) });
+                        heap.push(Pending {
+                            node: child,
+                            projected_px: self.projected_pixel_error(child),
+                        });
                     }
                     continue;
                 }
@@ -495,7 +527,9 @@ impl Quadtree {
                     }
                 }
             }
-            if !changed { break; }
+            if !changed {
+                break;
+            }
         }
         // Re-emit active set at the levels map (subdividing coarse nodes
         // whose level was bumped). Walk roots and descend to whichever level
@@ -505,10 +539,7 @@ impl Quadtree {
             reemit_recursive(QuadNode::root(face), &levels, &mut new_active);
         }
         // Re-fill neighbor_levels for the new set.
-        let new_levels: std::collections::HashMap<u64, u8> = new_active
-            .iter()
-            .map(|t| (t.node.morton(), t.node.level))
-            .collect();
+        let new_levels: std::collections::HashMap<u64, u8> = new_active.iter().map(|t| (t.node.morton(), t.node.level)).collect();
         for tile in &mut new_active {
             for (edge_idx, dir) in [EdgeDir::NegU, EdgeDir::PosU, EdgeDir::NegV, EdgeDir::PosV].iter().enumerate() {
                 if let Some(nb) = neighbor_node(tile.node, *dir) {
@@ -540,7 +571,9 @@ impl Quadtree {
 }
 
 impl Default for Quadtree {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Record `level` for `node` and every ancestor up to root, taking max
@@ -606,7 +639,12 @@ pub fn neighbor_node(node: QuadNode, dir: EdgeDir) -> Option<QuadNode> {
         EdgeDir::PosV => ny += 1,
     }
     if nx >= 0 && nx < n && ny >= 0 && ny < n {
-        return Some(QuadNode { face: node.face, level: node.level, ix: nx as u32, iy: ny as u32 });
+        return Some(QuadNode {
+            face: node.face,
+            level: node.level,
+            ix: nx as u32,
+            iy: ny as u32,
+        });
     }
     // Cross-face: convert tile (ix, iy) to a face-local cube point in
     // blocks, project onto the cube edge, re-resolve which face owns it,
@@ -655,13 +693,18 @@ fn cross_face_tile(node: QuadNode, dir: EdgeDir) -> Option<QuadNode> {
     // point error. The tile that owns the projected point is the floor.
     let new_ix = (new_ix_f.floor() as i32).clamp(0, n as i32 - 1) as u32;
     let new_iy = (new_iy_f.floor() as i32).clamp(0, n as i32 - 1) as u32;
-    Some(QuadNode { face: new_face, level: node.level, ix: new_ix, iy: new_iy })
+    Some(QuadNode {
+        face: new_face,
+        level: node.level,
+        ix: new_ix,
+        iy: new_iy,
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::sphere::PLANET_RADIUS_BLOCKS;
+    use super::*;
 
     #[test]
     fn morton_is_unique() {
@@ -693,7 +736,12 @@ mod tests {
 
     #[test]
     fn max_level_leaf_has_no_children() {
-        let leaf = QuadNode { face: Face::PosY, level: MAX_LEVEL, ix: 0, iy: 0 };
+        let leaf = QuadNode {
+            face: Face::PosY,
+            level: MAX_LEVEL,
+            ix: 0,
+            iy: 0,
+        };
         assert!(leaf.children().is_none());
     }
 
@@ -717,7 +765,11 @@ mod tests {
         let max_level = qt.active().iter().map(|t| t.node.level).max().unwrap();
         assert!(max_level <= 3, "expected shallow tree at 10R altitude, got max level {}", max_level);
         // And the tree should be much smaller than the cap.
-        assert!(qt.active().len() < 200, "active set unexpectedly large at 10R altitude: {}", qt.active().len());
+        assert!(
+            qt.active().len() < 200,
+            "active set unexpectedly large at 10R altitude: {}",
+            qt.active().len()
+        );
     }
 
     #[test]
@@ -748,7 +800,9 @@ mod tests {
                 assert!(
                     qt.active().len() <= MAX_RESIDENT_TILES,
                     "active set {} exceeds MAX_RESIDENT_TILES {} at cam={:?}",
-                    qt.active().len(), MAX_RESIDENT_TILES, cam
+                    qt.active().len(),
+                    MAX_RESIDENT_TILES,
+                    cam
                 );
             }
         }
@@ -756,9 +810,22 @@ mod tests {
 
     #[test]
     fn within_face_neighbors_round_trip() {
-        let node = QuadNode { face: Face::PosY, level: 4, ix: 5, iy: 7 };
+        let node = QuadNode {
+            face: Face::PosY,
+            level: 4,
+            ix: 5,
+            iy: 7,
+        };
         let east = neighbor_node(node, EdgeDir::PosU).unwrap();
-        assert_eq!(east, QuadNode { face: Face::PosY, level: 4, ix: 6, iy: 7 });
+        assert_eq!(
+            east,
+            QuadNode {
+                face: Face::PosY,
+                level: 4,
+                ix: 6,
+                iy: 7
+            }
+        );
         let back = neighbor_node(east, EdgeDir::NegU).unwrap();
         assert_eq!(back, node);
     }
@@ -768,7 +835,12 @@ mod tests {
         // Tile on the +U edge of PosY at level 2 must have a cross-face
         // neighbor on a different face.
         let n = 1u32 << 2;
-        let edge_tile = QuadNode { face: Face::PosY, level: 2, ix: n - 1, iy: 1 };
+        let edge_tile = QuadNode {
+            face: Face::PosY,
+            level: 2,
+            ix: n - 1,
+            iy: 1,
+        };
         let nb = neighbor_node(edge_tile, EdgeDir::PosU).expect("cross-face neighbor");
         assert_ne!(nb.face, Face::PosY);
         assert_eq!(nb.level, edge_tile.level);
@@ -823,7 +895,9 @@ mod tests {
             let n = 1u32 << level;
             for face in ALL_FACES {
                 for &(ix, iy) in &[(0u32, 0u32), (n - 1, 0), (0, n - 1), (n - 1, n - 1), (n / 2, 0)] {
-                    if n == 1 && (ix > 0 || iy > 0) { continue; }
+                    if n == 1 && (ix > 0 || iy > 0) {
+                        continue;
+                    }
                     let node = QuadNode { face, level, ix, iy };
                     for &dir in &[EdgeDir::NegU, EdgeDir::PosU, EdgeDir::NegV, EdgeDir::PosV] {
                         let on_edge = match dir {
@@ -832,7 +906,9 @@ mod tests {
                             EdgeDir::NegV => iy == 0,
                             EdgeDir::PosV => iy == n - 1,
                         };
-                        if !on_edge { continue; }
+                        if !on_edge {
+                            continue;
+                        }
                         let nb = neighbor_node(node, dir).expect("cross-face neighbor exists");
                         assert_ne!(nb.face, node.face, "cross-face dir {:?} kept same face", dir);
                         assert_eq!(nb.level, level);
@@ -858,7 +934,12 @@ mod tests {
     fn morph_target_matches_parent_grid() {
         // Pick a non-root child tile on each face.
         for face in ALL_FACES {
-            let child = QuadNode { face, level: 4, ix: 3, iy: 5 };
+            let child = QuadNode {
+                face,
+                level: 4,
+                ix: 3,
+                iy: 5,
+            };
             let parent = child.parent().unwrap();
 
             let child_side = child.side_blocks();
@@ -875,7 +956,9 @@ mod tests {
             // Sample a few posts: even-indexed posts in the child grid.
             for &post_x in &[0u32, 2, 16, 32, 64] {
                 for &post_y in &[0u32, 2, 16, 32, 64] {
-                    if post_x >= posts as u32 || post_y >= posts as u32 { continue; }
+                    if post_x >= posts as u32 || post_y >= posts as u32 {
+                        continue;
+                    }
                     // Child's coarse position (snapped to even).
                     let snapped_x = post_x & !1;
                     let snapped_y = post_y & !1;
@@ -899,9 +982,19 @@ mod tests {
                         "morph target mismatch on face {:?}: child post ({},{}) snapped ({},{}) \
                          -> child uv ({:.3},{:.3}) vs parent post ({},{}) -> parent uv ({:.3},{:.3}), \
                          delta=({:.6},{:.6})",
-                        face, post_x, post_y, snapped_x, snapped_y,
-                        child_u, child_v, parent_post_x, parent_post_y,
-                        parent_u, parent_v, du, dv
+                        face,
+                        post_x,
+                        post_y,
+                        snapped_x,
+                        snapped_y,
+                        child_u,
+                        child_v,
+                        parent_post_x,
+                        parent_post_y,
+                        parent_u,
+                        parent_v,
+                        du,
+                        dv
                     );
                 }
             }

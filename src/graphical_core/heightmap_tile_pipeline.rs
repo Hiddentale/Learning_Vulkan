@@ -15,13 +15,13 @@
 
 #![allow(dead_code)] // Phase 3: created but not yet dispatched.
 
-use crate::graphical_core::camera::UniformBufferObject;
 use crate::graphical_core::buffers::allocate_buffer;
-use crate::voxel::material::MaterialPalette;
+use crate::graphical_core::camera::UniformBufferObject;
 use crate::graphical_core::heightmap_atlas::HeightmapAtlas;
 use crate::graphical_core::shaders::create_shader_module;
 use crate::graphical_core::vulkan_object::VulkanApplicationData;
 use crate::voxel::heightmap_quadtree::{GpuTileDesc, MAX_RESIDENT_TILES};
+use crate::voxel::material::MaterialPalette;
 use vk::Handle;
 use vulkan_rust::{vk, Device, Instance};
 
@@ -81,14 +81,20 @@ impl HeightmapTileBuffers {
         let (tile_desc_buffer, tile_desc_memory, tile_desc_ptr) = allocate_buffer::<GpuTileDesc>(
             tile_desc_size,
             vk::BufferUsageFlags::STORAGE_BUFFER,
-            device, instance, data, super::host_visible_coherent(),
+            device,
+            instance,
+            data,
+            super::host_visible_coherent(),
         )?;
 
         let visible_size = (MAX_RESIDENT_TILES * 4) as u64;
         let (visible_tiles_buffer, visible_tiles_memory, _ignored) = allocate_buffer::<u32>(
             visible_size,
             vk::BufferUsageFlags::STORAGE_BUFFER,
-            device, instance, data, super::host_visible_coherent(),
+            device,
+            instance,
+            data,
+            super::host_visible_coherent(),
         )?;
 
         // Indirect args buffer: 3 u32s, used as both an SSBO (compute writes
@@ -98,7 +104,10 @@ impl HeightmapTileBuffers {
         let (indirect_args_buffer, indirect_args_memory, indirect_args_ptr) = allocate_buffer::<u32>(
             args_size,
             vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::INDIRECT_BUFFER,
-            device, instance, data, super::host_visible_coherent(),
+            device,
+            instance,
+            data,
+            super::host_visible_coherent(),
         )?;
         // groupCountX is cleared each frame via cmd_fill_buffer; Y/Z stay 1.
         std::ptr::write(indirect_args_ptr.add(0), 0);
@@ -106,9 +115,14 @@ impl HeightmapTileBuffers {
         std::ptr::write(indirect_args_ptr.add(2), 1);
 
         Ok(Self {
-            tile_desc_buffer, tile_desc_memory, tile_desc_ptr,
-            visible_tiles_buffer, visible_tiles_memory,
-            indirect_args_buffer, indirect_args_memory, indirect_args_ptr,
+            tile_desc_buffer,
+            tile_desc_memory,
+            tile_desc_ptr,
+            visible_tiles_buffer,
+            visible_tiles_memory,
+            indirect_args_buffer,
+            indirect_args_memory,
+            indirect_args_ptr,
         })
     }
 
@@ -138,12 +152,7 @@ pub struct HeightmapTilePipeline {
 }
 
 impl HeightmapTilePipeline {
-    pub unsafe fn create(
-        device: &Device,
-        instance: &Instance,
-        data: &mut VulkanApplicationData,
-        atlas: &HeightmapAtlas,
-    ) -> anyhow::Result<Self> {
+    pub unsafe fn create(device: &Device, instance: &Instance, data: &mut VulkanApplicationData, atlas: &HeightmapAtlas) -> anyhow::Result<Self> {
         let buffers = HeightmapTileBuffers::new(device, instance, data)?;
         let descriptor_set_layout = create_descriptor_layout(device)?;
         let descriptor_pool = create_descriptor_pool(device)?;
@@ -258,9 +267,15 @@ unsafe fn create_descriptor_layout(device: &Device) -> anyhow::Result<vk::Descri
 
 unsafe fn create_descriptor_pool(device: &Device) -> anyhow::Result<vk::DescriptorPool> {
     let sizes = [
-        *vk::DescriptorPoolSize::builder().descriptor_count(3).r#type(vk::DescriptorType::STORAGE_BUFFER),
-        *vk::DescriptorPoolSize::builder().descriptor_count(2).r#type(vk::DescriptorType::UNIFORM_BUFFER), // camera + palette
-        *vk::DescriptorPoolSize::builder().descriptor_count(3).r#type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER), // height + material + texArray
+        *vk::DescriptorPoolSize::builder()
+            .descriptor_count(3)
+            .r#type(vk::DescriptorType::STORAGE_BUFFER),
+        *vk::DescriptorPoolSize::builder()
+            .descriptor_count(2)
+            .r#type(vk::DescriptorType::UNIFORM_BUFFER), // camera + palette
+        *vk::DescriptorPoolSize::builder()
+            .descriptor_count(3)
+            .r#type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER), // height + material + texArray
     ];
     let info = vk::DescriptorPoolCreateInfo::builder().max_sets(1).pool_sizes(&sizes);
     Ok(device.create_descriptor_pool(&info, None)?)
@@ -281,8 +296,12 @@ unsafe fn write_descriptors(
     data: &VulkanApplicationData,
 ) {
     let tile_info = [*vk::DescriptorBufferInfo::builder().buffer(buffers.tile_desc_buffer).range(vk::WHOLE_SIZE)];
-    let visible_info = [*vk::DescriptorBufferInfo::builder().buffer(buffers.visible_tiles_buffer).range(vk::WHOLE_SIZE)];
-    let args_info = [*vk::DescriptorBufferInfo::builder().buffer(buffers.indirect_args_buffer).range(vk::WHOLE_SIZE)];
+    let visible_info = [*vk::DescriptorBufferInfo::builder()
+        .buffer(buffers.visible_tiles_buffer)
+        .range(vk::WHOLE_SIZE)];
+    let args_info = [*vk::DescriptorBufferInfo::builder()
+        .buffer(buffers.indirect_args_buffer)
+        .range(vk::WHOLE_SIZE)];
     let ubo_info = [*vk::DescriptorBufferInfo::builder()
         .buffer(data.uniform_buffer)
         .range(std::mem::size_of::<UniformBufferObject>() as u64)];
@@ -303,14 +322,46 @@ unsafe fn write_descriptors(
         .range(std::mem::size_of::<MaterialPalette>() as u64)];
 
     let writes = [
-        *vk::WriteDescriptorSet::builder().dst_set(set).dst_binding(0).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&tile_info),
-        *vk::WriteDescriptorSet::builder().dst_set(set).dst_binding(1).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&visible_info),
-        *vk::WriteDescriptorSet::builder().dst_set(set).dst_binding(2).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&args_info),
-        *vk::WriteDescriptorSet::builder().dst_set(set).dst_binding(3).descriptor_type(vk::DescriptorType::UNIFORM_BUFFER).buffer_info(&ubo_info),
-        *vk::WriteDescriptorSet::builder().dst_set(set).dst_binding(4).descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER).image_info(&atlas_info),
-        *vk::WriteDescriptorSet::builder().dst_set(set).dst_binding(5).descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER).image_info(&mat_atlas_info),
-        *vk::WriteDescriptorSet::builder().dst_set(set).dst_binding(6).descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER).image_info(&tex_array_info),
-        *vk::WriteDescriptorSet::builder().dst_set(set).dst_binding(7).descriptor_type(vk::DescriptorType::UNIFORM_BUFFER).buffer_info(&palette_info),
+        *vk::WriteDescriptorSet::builder()
+            .dst_set(set)
+            .dst_binding(0)
+            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+            .buffer_info(&tile_info),
+        *vk::WriteDescriptorSet::builder()
+            .dst_set(set)
+            .dst_binding(1)
+            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+            .buffer_info(&visible_info),
+        *vk::WriteDescriptorSet::builder()
+            .dst_set(set)
+            .dst_binding(2)
+            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+            .buffer_info(&args_info),
+        *vk::WriteDescriptorSet::builder()
+            .dst_set(set)
+            .dst_binding(3)
+            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+            .buffer_info(&ubo_info),
+        *vk::WriteDescriptorSet::builder()
+            .dst_set(set)
+            .dst_binding(4)
+            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .image_info(&atlas_info),
+        *vk::WriteDescriptorSet::builder()
+            .dst_set(set)
+            .dst_binding(5)
+            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .image_info(&mat_atlas_info),
+        *vk::WriteDescriptorSet::builder()
+            .dst_set(set)
+            .dst_binding(6)
+            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .image_info(&tex_array_info),
+        *vk::WriteDescriptorSet::builder()
+            .dst_set(set)
+            .dst_binding(7)
+            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+            .buffer_info(&palette_info),
     ];
     device.update_descriptor_sets(&writes, &[] as &[vk::CopyDescriptorSet]);
 }
@@ -327,18 +378,23 @@ unsafe fn create_cull_pipeline(device: &Device, layout: vk::PipelineLayout) -> a
     Ok(pipeline)
 }
 
-unsafe fn create_tile_graphics_pipeline(
-    device: &Device,
-    data: &VulkanApplicationData,
-    layout: vk::PipelineLayout,
-) -> anyhow::Result<vk::Pipeline> {
+unsafe fn create_tile_graphics_pipeline(device: &Device, data: &VulkanApplicationData, layout: vk::PipelineLayout) -> anyhow::Result<vk::Pipeline> {
     let task_module = create_shader_module(device, include_bytes!("../shaders/heightmap_tile.task.spv"))?;
     let mesh_module = create_shader_module(device, include_bytes!("../shaders/heightmap_tile.mesh.spv"))?;
     let frag_module = create_shader_module(device, include_bytes!("../shaders/heightmap_tile.frag.spv"))?;
 
-    let task_stage = *vk::PipelineShaderStageCreateInfo::builder().stage(TASK_STAGE).module(task_module).name(c"main");
-    let mesh_stage = *vk::PipelineShaderStageCreateInfo::builder().stage(MESH_STAGE).module(mesh_module).name(c"main");
-    let frag_stage = *vk::PipelineShaderStageCreateInfo::builder().stage(vk::ShaderStageFlags::FRAGMENT).module(frag_module).name(c"main");
+    let task_stage = *vk::PipelineShaderStageCreateInfo::builder()
+        .stage(TASK_STAGE)
+        .module(task_module)
+        .name(c"main");
+    let mesh_stage = *vk::PipelineShaderStageCreateInfo::builder()
+        .stage(MESH_STAGE)
+        .module(mesh_module)
+        .name(c"main");
+    let frag_stage = *vk::PipelineShaderStageCreateInfo::builder()
+        .stage(vk::ShaderStageFlags::FRAGMENT)
+        .module(frag_module)
+        .name(c"main");
 
     let vertex_input_state = vk::PipelineVertexInputStateCreateInfo::builder();
     let input_assembly_state = vk::PipelineInputAssemblyStateCreateInfo::builder().topology(vk::PrimitiveTopology::TRIANGLE_LIST);

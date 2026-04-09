@@ -72,7 +72,11 @@ impl ChunkGenerator {
     pub fn receive(&mut self) -> Vec<GeneratedColumn> {
         let mut results = Vec::new();
         while let Ok(col) = self.result_rx.try_recv() {
-            self.pending.remove(&ColumnKey { face: col.face, cx: col.cx, cz: col.cz });
+            self.pending.remove(&ColumnKey {
+                face: col.face,
+                cx: col.cx,
+                cz: col.cz,
+            });
             results.push(col);
         }
         results

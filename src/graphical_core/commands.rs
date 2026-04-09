@@ -1,11 +1,9 @@
 use crate::graphical_core::compute_cull::{CullPushConstants, DepthPyramidResources, DepthReducePush};
 use crate::graphical_core::cull_compact::CullCompactPipeline;
 use crate::graphical_core::heightmap_atlas::HeightmapAtlas;
-use crate::graphical_core::heightmap_tile_pipeline::{
-    CullPush as HmCullPush, HeightmapTilePipeline, TilePush as HmTilePush,
-};
-use crate::graphical_core::voxel_pool::VoxelPool;
+use crate::graphical_core::heightmap_tile_pipeline::{CullPush as HmCullPush, HeightmapTilePipeline, TilePush as HmTilePush};
 use crate::graphical_core::svdag_pipeline::{CullPush, RaymarchPush, SvdagPipeline, TileAssignPush};
+use crate::graphical_core::voxel_pool::VoxelPool;
 use crate::graphical_core::vulkan_object::VulkanApplicationData;
 use crate::graphical_core::{self, MAX_FRAMES_IN_FLIGHT};
 use vk::Handle;
@@ -269,9 +267,7 @@ pub unsafe fn record_mesh_shader_command_buffer(
     draw_sky(device, cmd, data);
     device.cmd_write_timestamp(cmd, vk::PipelineStageFlags::BOTTOM_OF_PIPE, timing_query_pool, 1);
 
-    bind_mesh_pipeline_and_draw_indirect(
-        device, cmd, mesh_pipeline, voxel_pool, cull_push, 1, task_mesh_flags,
-    );
+    bind_mesh_pipeline_and_draw_indirect(device, cmd, mesh_pipeline, voxel_pool, cull_push, 1, task_mesh_flags);
 
     device.cmd_end_render_pass(cmd);
     device.cmd_write_timestamp(cmd, vk::PipelineStageFlags::BOTTOM_OF_PIPE, timing_query_pool, 2);
@@ -287,22 +283,16 @@ pub unsafe fn record_mesh_shader_command_buffer(
     // Runs OUTSIDE the render pass: image transitions and the cull compute
     // dispatch both need to be at top-level. The result feeds the indirect
     // mesh task draw below.
-    record_heightmap_quadtree_prepass(
-        device, cmd, heightmap_pipeline, heightmap_atlas, heightmap_cull_push,
-    );
+    record_heightmap_quadtree_prepass(device, cmd, heightmap_pipeline, heightmap_atlas, heightmap_cull_push);
 
     // === Phase 2 mesh draw: previously invisible chunks (with occlusion test) ===
     begin_render_pass_no_clear(device, cmd, data, image_index);
 
-    bind_mesh_pipeline_and_draw_indirect(
-        device, cmd, mesh_pipeline, voxel_pool, cull_push, 2, task_mesh_flags,
-    );
+    bind_mesh_pipeline_and_draw_indirect(device, cmd, mesh_pipeline, voxel_pool, cull_push, 2, task_mesh_flags);
 
     // === Heightmap quadtree mesh shader draw ===
     if heightmap_cull_push.tile_count > 0 {
-        record_heightmap_quadtree_draw(
-            device, cmd, heightmap_pipeline, heightmap_tile_push, task_mesh_flags,
-        );
+        record_heightmap_quadtree_draw(device, cmd, heightmap_pipeline, heightmap_tile_push, task_mesh_flags);
     }
 
     device.cmd_end_render_pass(cmd);
@@ -371,10 +361,7 @@ pub(crate) unsafe fn record_cull_compact_pass(
     );
     let mut push = *cull_push;
     push.phase = phase;
-    let push_bytes: &[u8] = std::slice::from_raw_parts(
-        &push as *const CullPushConstants as *const u8,
-        std::mem::size_of::<CullPushConstants>(),
-    );
+    let push_bytes: &[u8] = std::slice::from_raw_parts(&push as *const CullPushConstants as *const u8, std::mem::size_of::<CullPushConstants>());
     device.cmd_push_constants(cmd, cull_compact.pipeline_layout, vk::ShaderStageFlags::COMPUTE, 0, push_bytes);
     let workgroups = cull_push.chunk_count.div_ceil(64);
     device.cmd_dispatch(cmd, workgroups, 1, 1);
@@ -424,10 +411,7 @@ pub(crate) unsafe fn bind_mesh_pipeline_and_draw_indirect(
     );
     let mut push = *cull_push;
     push.phase = phase;
-    let push_bytes: &[u8] = std::slice::from_raw_parts(
-        &push as *const CullPushConstants as *const u8,
-        std::mem::size_of::<CullPushConstants>(),
-    );
+    let push_bytes: &[u8] = std::slice::from_raw_parts(&push as *const CullPushConstants as *const u8, std::mem::size_of::<CullPushConstants>());
     device.cmd_push_constants(cmd, mesh_pipeline.pipeline_layout, task_mesh_flags, 0, push_bytes);
     let args_buf = voxel_pool.indirect_args_buffer[(phase - 1) as usize];
     device.cmd_draw_mesh_tasks_indirect_ext(cmd, args_buf, 0, 1, 12);
@@ -484,10 +468,7 @@ unsafe fn record_heightmap_quadtree_prepass(
         &[pipeline.descriptor_set],
         &[],
     );
-    let push_bytes: &[u8] = std::slice::from_raw_parts(
-        cull_push as *const HmCullPush as *const u8,
-        std::mem::size_of::<HmCullPush>(),
-    );
+    let push_bytes: &[u8] = std::slice::from_raw_parts(cull_push as *const HmCullPush as *const u8, std::mem::size_of::<HmCullPush>());
     device.cmd_push_constants(cmd, pipeline.cull_pipeline_layout, vk::ShaderStageFlags::COMPUTE, 0, push_bytes);
     let workgroups = cull_push.tile_count.div_ceil(64);
     device.cmd_dispatch(cmd, workgroups, 1, 1);
@@ -532,10 +513,7 @@ unsafe fn record_heightmap_quadtree_draw(
         &[pipeline.descriptor_set],
         &[],
     );
-    let push_bytes: &[u8] = std::slice::from_raw_parts(
-        tile_push as *const HmTilePush as *const u8,
-        std::mem::size_of::<HmTilePush>(),
-    );
+    let push_bytes: &[u8] = std::slice::from_raw_parts(tile_push as *const HmTilePush as *const u8, std::mem::size_of::<HmTilePush>());
     device.cmd_push_constants(cmd, pipeline.tile_pipeline_layout, task_mesh_flags, 0, push_bytes);
     // One workgroup per visible tile; group_count_x is the count written by
     // the cull compute pass.

@@ -26,7 +26,7 @@ pub const BYTES_PER_PAGE: usize = FLOATS_PER_PAGE * 4;
 /// remainder lives in subsequent rows. Chosen as the ceiling square root
 /// of `MAX_RESIDENT_TILES` so the image stays roughly square.
 pub const ATLAS_COLS: u32 = 32;
-pub const ATLAS_ROWS: u32 = (MAX_RESIDENT_TILES as u32 + ATLAS_COLS - 1) / ATLAS_COLS;
+pub const ATLAS_ROWS: u32 = (MAX_RESIDENT_TILES as u32).div_ceil(ATLAS_COLS);
 /// Number of pages addressable by the atlas. Sized to the quadtree's
 /// `MAX_RESIDENT_TILES` working set.
 pub const ATLAS_PAGE_COUNT: usize = (ATLAS_COLS * ATLAS_ROWS) as usize;
@@ -66,8 +66,12 @@ impl PageAllocator {
         }
     }
 
-    pub fn resident(&self) -> usize { self.morton_to_page.len() }
-    pub fn page_of(&self, morton: u64) -> Option<u32> { self.morton_to_page.get(&morton).copied() }
+    pub fn resident(&self) -> usize {
+        self.morton_to_page.len()
+    }
+    pub fn page_of(&self, morton: u64) -> Option<u32> {
+        self.morton_to_page.get(&morton).copied()
+    }
 
     /// Returns `(page_index, evicted_morton)`. `evicted_morton` is `Some`
     /// when an LRU eviction happened to make room for `morton`.
@@ -112,7 +116,9 @@ impl PageAllocator {
 }
 
 impl Default for PageAllocator {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 pub struct HeightmapAtlas {
@@ -217,8 +223,12 @@ impl HeightmapAtlas {
         device.free_memory(self.mat_staging_memory, None);
     }
 
-    pub fn resident(&self) -> usize { self.allocator.resident() }
-    pub fn page_of(&self, morton: u64) -> Option<u32> { self.allocator.page_of(morton) }
+    pub fn resident(&self) -> usize {
+        self.allocator.resident()
+    }
+    pub fn page_of(&self, morton: u64) -> Option<u32> {
+        self.allocator.page_of(morton)
+    }
 
     /// Insert a heights + material page for `morton`. Allocates a page
     /// (evicting LRU if full), writes into both staging buffers, and
@@ -257,21 +267,43 @@ impl HeightmapAtlas {
             (vk::AccessFlags::empty(), vk::PipelineStageFlags::TOP_OF_PIPE)
         };
         // Transition both atlases to TRANSFER_DST.
-        transition_image(device, cmd, self.image,
-            old_layout, vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            src_access, vk::AccessFlags::TRANSFER_WRITE,
-            src_stage, vk::PipelineStageFlags::TRANSFER);
-        transition_image(device, cmd, self.mat_image,
-            old_layout, vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            src_access, vk::AccessFlags::TRANSFER_WRITE,
-            src_stage, vk::PipelineStageFlags::TRANSFER);
+        transition_image(
+            device,
+            cmd,
+            self.image,
+            old_layout,
+            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            src_access,
+            vk::AccessFlags::TRANSFER_WRITE,
+            src_stage,
+            vk::PipelineStageFlags::TRANSFER,
+        );
+        transition_image(
+            device,
+            cmd,
+            self.mat_image,
+            old_layout,
+            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            src_access,
+            vk::AccessFlags::TRANSFER_WRITE,
+            src_stage,
+            vk::PipelineStageFlags::TRANSFER,
+        );
         for &page in &self.pending {
             let (px, py) = page_origin_texels(page);
             let subresource = *vk::ImageSubresourceLayers::builder()
                 .aspect_mask(vk::ImageAspectFlags::COLOR)
                 .layer_count(1);
-            let offset = vk::Offset3D { x: px as i32, y: py as i32, z: 0 };
-            let extent = vk::Extent3D { width: HEIGHT_PAGE_SIZE, height: HEIGHT_PAGE_SIZE, depth: 1 };
+            let offset = vk::Offset3D {
+                x: px as i32,
+                y: py as i32,
+                z: 0,
+            };
+            let extent = vk::Extent3D {
+                width: HEIGHT_PAGE_SIZE,
+                height: HEIGHT_PAGE_SIZE,
+                depth: 1,
+            };
             // Height page.
             let h_region = *vk::BufferImageCopy::builder()
                 .buffer_offset(page as u64 * BYTES_PER_PAGE as u64)
@@ -285,17 +317,37 @@ impl HeightmapAtlas {
                 .image_subresource(subresource)
                 .image_offset(offset)
                 .image_extent(extent);
-            device.cmd_copy_buffer_to_image(cmd, self.mat_staging_buffer, self.mat_image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[m_region]);
+            device.cmd_copy_buffer_to_image(
+                cmd,
+                self.mat_staging_buffer,
+                self.mat_image,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                &[m_region],
+            );
         }
         // Transition both atlases back to SHADER_READ_ONLY.
-        transition_image(device, cmd, self.image,
-            vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            vk::AccessFlags::TRANSFER_WRITE, vk::AccessFlags::SHADER_READ,
-            vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER);
-        transition_image(device, cmd, self.mat_image,
-            vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            vk::AccessFlags::TRANSFER_WRITE, vk::AccessFlags::SHADER_READ,
-            vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER);
+        transition_image(
+            device,
+            cmd,
+            self.image,
+            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            vk::AccessFlags::TRANSFER_WRITE,
+            vk::AccessFlags::SHADER_READ,
+            vk::PipelineStageFlags::TRANSFER,
+            vk::PipelineStageFlags::FRAGMENT_SHADER,
+        );
+        transition_image(
+            device,
+            cmd,
+            self.mat_image,
+            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            vk::AccessFlags::TRANSFER_WRITE,
+            vk::AccessFlags::SHADER_READ,
+            vk::PipelineStageFlags::TRANSFER,
+            vk::PipelineStageFlags::FRAGMENT_SHADER,
+        );
         self.pending.clear();
         self.initial_layout_done = true;
     }
@@ -317,11 +369,20 @@ fn page_origin_texels(page: u32) -> (u32, u32) {
     (px * HEIGHT_PAGE_SIZE, py * HEIGHT_PAGE_SIZE)
 }
 
-unsafe fn create_atlas_image(device: &Device, instance: &Instance, data: &VulkanApplicationData, format: vk::Format) -> anyhow::Result<(vk::Image, vk::DeviceMemory)> {
+unsafe fn create_atlas_image(
+    device: &Device,
+    instance: &Instance,
+    data: &VulkanApplicationData,
+    format: vk::Format,
+) -> anyhow::Result<(vk::Image, vk::DeviceMemory)> {
     let info = vk::ImageCreateInfo::builder()
         .image_type(vk::ImageType::_2D)
         .format(format)
-        .extent(vk::Extent3D { width: ATLAS_WIDTH, height: ATLAS_HEIGHT, depth: 1 })
+        .extent(vk::Extent3D {
+            width: ATLAS_WIDTH,
+            height: ATLAS_HEIGHT,
+            depth: 1,
+        })
         .mip_levels(1)
         .array_layers(1)
         .samples(vk::SampleCountFlags::_1)
@@ -344,10 +405,12 @@ unsafe fn create_atlas_view(device: &Device, image: vk::Image, format: vk::Forma
         .image(image)
         .format(format)
         .view_type(vk::ImageViewType::_2D)
-        .subresource_range(*vk::ImageSubresourceRange::builder()
-            .aspect_mask(vk::ImageAspectFlags::COLOR)
-            .level_count(1)
-            .layer_count(1));
+        .subresource_range(
+            *vk::ImageSubresourceRange::builder()
+                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                .level_count(1)
+                .layer_count(1),
+        );
     Ok(device.create_image_view(&info, None)?)
 }
 
@@ -363,6 +426,42 @@ unsafe fn create_atlas_sampler(device: &Device, filter: vk::Filter) -> anyhow::R
         .compare_enable(false)
         .mipmap_mode(vk::SamplerMipmapMode::NEAREST);
     Ok(device.create_sampler(&info, None)?)
+}
+
+unsafe fn transition_image(
+    device: &Device,
+    cmd: vk::CommandBuffer,
+    image: vk::Image,
+    old_layout: vk::ImageLayout,
+    new_layout: vk::ImageLayout,
+    src_access: vk::AccessFlags,
+    dst_access: vk::AccessFlags,
+    src_stage: vk::PipelineStageFlags,
+    dst_stage: vk::PipelineStageFlags,
+) {
+    let barrier = vk::ImageMemoryBarrier::builder()
+        .src_access_mask(src_access)
+        .dst_access_mask(dst_access)
+        .old_layout(old_layout)
+        .new_layout(new_layout)
+        .image(image)
+        .subresource_range(
+            *vk::ImageSubresourceRange::builder()
+                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                .level_count(1)
+                .layer_count(1),
+        )
+        .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED);
+    device.cmd_pipeline_barrier(
+        cmd,
+        src_stage,
+        dst_stage,
+        vk::DependencyFlags::empty(),
+        &[] as &[vk::MemoryBarrier],
+        &[] as &[vk::BufferMemoryBarrier],
+        &[*barrier],
+    );
 }
 
 #[cfg(test)]
@@ -430,35 +529,4 @@ mod tests {
         let (i2, _) = a.alloc(2);
         assert_ne!(i1, i2);
     }
-}
-
-unsafe fn transition_image(
-    device: &Device,
-    cmd: vk::CommandBuffer,
-    image: vk::Image,
-    old_layout: vk::ImageLayout,
-    new_layout: vk::ImageLayout,
-    src_access: vk::AccessFlags,
-    dst_access: vk::AccessFlags,
-    src_stage: vk::PipelineStageFlags,
-    dst_stage: vk::PipelineStageFlags,
-) {
-    let barrier = vk::ImageMemoryBarrier::builder()
-        .src_access_mask(src_access)
-        .dst_access_mask(dst_access)
-        .old_layout(old_layout)
-        .new_layout(new_layout)
-        .image(image)
-        .subresource_range(*vk::ImageSubresourceRange::builder()
-            .aspect_mask(vk::ImageAspectFlags::COLOR)
-            .level_count(1)
-            .layer_count(1))
-        .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED);
-    device.cmd_pipeline_barrier(
-        cmd, src_stage, dst_stage, vk::DependencyFlags::empty(),
-        &[] as &[vk::MemoryBarrier],
-        &[] as &[vk::BufferMemoryBarrier],
-        &[*barrier],
-    );
 }

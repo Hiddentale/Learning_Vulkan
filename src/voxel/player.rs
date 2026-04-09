@@ -78,7 +78,12 @@ impl Player {
     }
 
     pub fn chunk_pos(&self) -> ChunkPos {
-        ChunkPos { face: self.face, cx: self.cx, cy: self.cy, cz: self.cz }
+        ChunkPos {
+            face: self.face,
+            cx: self.cx,
+            cy: self.cy,
+            cz: self.cz,
+        }
     }
 
     /// Cartesian body-center position. Always derived; never stored.
@@ -321,9 +326,6 @@ impl Player {
         }
     }
 
-    /// Toggle between walk and fly modes. When entering walk mode, snap the
-    /// basis horizontal so any roll picked up in fly mode disappears.
-
     /// Apply radial gravity. Sticky `on_ground` is verified each frame by
     /// probing the block below the feet.
     pub fn apply_physics(&mut self, dt: f32, world: &World) {
@@ -346,23 +348,6 @@ impl Player {
         if !moved {
             self.radial_velocity = 0.0;
             self.on_ground = true;
-        }
-    }
-
-    /// Attempt a move by `(du, dd, dv)` (face-local block units). Each axis
-    /// is tried independently so the player can slide along walls instead of
-    /// stopping dead the moment any axis collides.
-    fn try_move(&mut self, du: f32, dd: f32, dv: f32, world: &World) {
-        let moved_lateral = (du != 0.0 || dv != 0.0) && {
-            let a = self.try_axis(du, 0.0, 0.0, world);
-            let b = self.try_axis(0.0, 0.0, dv, world);
-            a || b
-        };
-        if dd != 0.0 {
-            self.try_axis(0.0, dd, 0.0, world);
-        }
-        if moved_lateral {
-            self.reorthogonalize_forward();
         }
     }
 
@@ -391,6 +376,7 @@ impl Player {
 
     /// Re-tangent-project `forward` against the new local up. Preserves
     /// the world-space pitch component, just realigns the horizontal.
+    #[cfg(test)]
     fn reorthogonalize_forward(&mut self) {
         let up = self.up();
         let dot = self.forward.dot(up);
@@ -404,14 +390,35 @@ impl Player {
     fn carry(&mut self) {
         let cs = CHUNK_SIZE as f32;
         // ly is radial — clamp at 0 (planet core) and TERRAIN_MAX_CY top.
-        while self.lx >= cs { self.lx -= cs; self.cx += 1; }
-        while self.lx < 0.0 { self.lx += cs; self.cx -= 1; }
-        while self.lz >= cs { self.lz -= cs; self.cz += 1; }
-        while self.lz < 0.0 { self.lz += cs; self.cz -= 1; }
-        while self.ly >= cs { self.ly -= cs; self.cy += 1; }
-        while self.ly < 0.0 { self.ly += cs; self.cy -= 1; }
+        while self.lx >= cs {
+            self.lx -= cs;
+            self.cx += 1;
+        }
+        while self.lx < 0.0 {
+            self.lx += cs;
+            self.cx -= 1;
+        }
+        while self.lz >= cs {
+            self.lz -= cs;
+            self.cz += 1;
+        }
+        while self.lz < 0.0 {
+            self.lz += cs;
+            self.cz -= 1;
+        }
+        while self.ly >= cs {
+            self.ly -= cs;
+            self.cy += 1;
+        }
+        while self.ly < 0.0 {
+            self.ly += cs;
+            self.cy -= 1;
+        }
         // Clamp cy so the player can't fall to -infinity.
-        if self.cy < 0 { self.cy = 0; self.ly = 0.0; }
+        if self.cy < 0 {
+            self.cy = 0;
+            self.ly = 0.0;
+        }
 
         // Cross-face transition if cx/cz left the face range.
         let n = sphere::FACE_SIDE_CHUNKS;
@@ -465,11 +472,7 @@ impl Player {
 /// resolves to the same block as `(target, ix, iy, iz)`. Carries across
 /// chunk boundaries within the same face only — for placement guarding,
 /// this is enough since the player capsule never spans more than one face.
-fn same_block(
-    face: Face, cx: i32, cy: i32, cz: i32,
-    sx: i32, sy: i32, sz: i32,
-    target: ChunkPos, ix: usize, iy: usize, iz: usize,
-) -> bool {
+fn same_block(face: Face, cx: i32, cy: i32, cz: i32, sx: i32, sy: i32, sz: i32, target: ChunkPos, ix: usize, iy: usize, iz: usize) -> bool {
     let cs = CHUNK_SIZE as i32;
     let mut acx = cx;
     let mut acy = cy;
@@ -477,19 +480,31 @@ fn same_block(
     let mut aix = sx;
     let mut aiy = sy;
     let mut aiz = sz;
-    while aix >= cs { aix -= cs; acx += 1; }
-    while aix < 0 { aix += cs; acx -= 1; }
-    while aiz >= cs { aiz -= cs; acz += 1; }
-    while aiz < 0 { aiz += cs; acz -= 1; }
-    while aiy >= cs { aiy -= cs; acy += 1; }
-    while aiy < 0 { aiy += cs; acy -= 1; }
-    target.face == face
-        && target.cx == acx
-        && target.cy == acy
-        && target.cz == acz
-        && ix == aix as usize
-        && iy == aiy as usize
-        && iz == aiz as usize
+    while aix >= cs {
+        aix -= cs;
+        acx += 1;
+    }
+    while aix < 0 {
+        aix += cs;
+        acx -= 1;
+    }
+    while aiz >= cs {
+        aiz -= cs;
+        acz += 1;
+    }
+    while aiz < 0 {
+        aiz += cs;
+        acz -= 1;
+    }
+    while aiy >= cs {
+        aiy -= cs;
+        acy += 1;
+    }
+    while aiy < 0 {
+        aiy += cs;
+        acy -= 1;
+    }
+    target.face == face && target.cx == acx && target.cy == acy && target.cz == acz && ix == aix as usize && iy == aiy as usize && iz == aiz as usize
 }
 
 /// Sample one specific integer block at face-local indices `(ix, iy, iz)`
@@ -500,12 +515,30 @@ fn same_block(
 fn sample_block_solid(face: Face, mut cx: i32, mut cy: i32, mut cz: i32, mut ix: i32, mut iy: i32, mut iz: i32, world: &World) -> bool {
     let cs = CHUNK_SIZE as i32;
     // Integer chunk carry.
-    while ix >= cs { ix -= cs; cx += 1; }
-    while ix < 0 { ix += cs; cx -= 1; }
-    while iz >= cs { iz -= cs; cz += 1; }
-    while iz < 0 { iz += cs; cz -= 1; }
-    while iy >= cs { iy -= cs; cy += 1; }
-    while iy < 0 { iy += cs; cy -= 1; }
+    while ix >= cs {
+        ix -= cs;
+        cx += 1;
+    }
+    while ix < 0 {
+        ix += cs;
+        cx -= 1;
+    }
+    while iz >= cs {
+        iz -= cs;
+        cz += 1;
+    }
+    while iz < 0 {
+        iz += cs;
+        cz -= 1;
+    }
+    while iy >= cs {
+        iy -= cs;
+        cy += 1;
+    }
+    while iy < 0 {
+        iy += cs;
+        cy -= 1;
+    }
     if cy < 0 {
         return true; // below planet core — pin the player.
     }
@@ -518,7 +551,12 @@ fn sample_block_solid(face: Face, mut cx: i32, mut cy: i32, mut cz: i32, mut ix:
         }
         ix = new_ix;
         iz = new_iz;
-        ChunkPos { face: new_face, cx: new_cx, cy, cz: new_cz }
+        ChunkPos {
+            face: new_face,
+            cx: new_cx,
+            cy,
+            cz: new_cz,
+        }
     } else {
         ChunkPos { face, cx, cy, cz }
     };
@@ -541,11 +579,21 @@ fn remap_block_to_neighbor(face: Face, cx: i32, cz: i32, ix: i32, iz: i32) -> (F
     let ay = cube_pt.y.abs();
     let az = cube_pt.z.abs();
     let new_face = if ax >= ay && ax >= az {
-        if cube_pt.x > 0.0 { Face::PosX } else { Face::NegX }
+        if cube_pt.x > 0.0 {
+            Face::PosX
+        } else {
+            Face::NegX
+        }
     } else if ay >= az {
-        if cube_pt.y > 0.0 { Face::PosY } else { Face::NegY }
+        if cube_pt.y > 0.0 {
+            Face::PosY
+        } else {
+            Face::NegY
+        }
+    } else if cube_pt.z > 0.0 {
+        Face::PosZ
     } else {
-        if cube_pt.z > 0.0 { Face::PosZ } else { Face::NegZ }
+        Face::NegZ
     };
     if new_face == face {
         return (face, cx, ix, cz, iz);
@@ -700,8 +748,12 @@ mod tests {
         let mut p = Player::new();
         p.fly_mode = true;
         p.face = Face::PosY;
-        p.cx = 1; p.cy = 8; p.cz = 1;
-        p.lx = 8.0; p.ly = 8.0; p.lz = 8.0;
+        p.cx = 1;
+        p.cy = 8;
+        p.cz = 1;
+        p.lx = 8.0;
+        p.ly = 8.0;
+        p.lz = 8.0;
         let start_world = p.world_pos();
         let (tu, _, _) = sphere::face_basis(p.face);
         let n_steps = 5;
@@ -736,10 +788,30 @@ mod tests {
                 p.ly = 8.0;
                 let n = sphere::FACE_SIDE_CHUNKS;
                 match edge {
-                    sphere::EdgeDir::PosU => { p.cx = n - 1; p.lx = (CHUNK_SIZE - 1) as f32; p.cz = 1; p.lz = 8.0; }
-                    sphere::EdgeDir::NegU => { p.cx = 0; p.lx = 0.5; p.cz = 1; p.lz = 8.0; }
-                    sphere::EdgeDir::PosV => { p.cz = n - 1; p.lz = (CHUNK_SIZE - 1) as f32; p.cx = 1; p.lx = 8.0; }
-                    sphere::EdgeDir::NegV => { p.cz = 0; p.lz = 0.5; p.cx = 1; p.lx = 8.0; }
+                    sphere::EdgeDir::PosU => {
+                        p.cx = n - 1;
+                        p.lx = (CHUNK_SIZE - 1) as f32;
+                        p.cz = 1;
+                        p.lz = 8.0;
+                    }
+                    sphere::EdgeDir::NegU => {
+                        p.cx = 0;
+                        p.lx = 0.5;
+                        p.cz = 1;
+                        p.lz = 8.0;
+                    }
+                    sphere::EdgeDir::PosV => {
+                        p.cz = n - 1;
+                        p.lz = (CHUNK_SIZE - 1) as f32;
+                        p.cx = 1;
+                        p.lx = 8.0;
+                    }
+                    sphere::EdgeDir::NegV => {
+                        p.cz = 0;
+                        p.lz = 0.5;
+                        p.cx = 1;
+                        p.lx = 8.0;
+                    }
                 }
                 let start_radius = p.world_pos().length();
                 let expected_face = sphere::edge_transition(start_face, edge).neighbor;
@@ -751,13 +823,26 @@ mod tests {
                     sphere::EdgeDir::NegV => -tv * 30.0,
                 };
                 p.fly_move(push);
-                assert_eq!(p.face, expected_face, "edge {:?} {:?}: landed on {:?}, expected {:?}", start_face, edge, p.face, expected_face);
+                assert_eq!(
+                    p.face, expected_face,
+                    "edge {:?} {:?}: landed on {:?}, expected {:?}",
+                    start_face, edge, p.face, expected_face
+                );
                 let end_pos = p.world_pos();
-                assert!(end_pos.x.is_finite() && end_pos.y.is_finite() && end_pos.z.is_finite(), "non-finite position");
+                assert!(
+                    end_pos.x.is_finite() && end_pos.y.is_finite() && end_pos.z.is_finite(),
+                    "non-finite position"
+                );
                 // Tangent fly_move legitimately leaves the sphere shell; we
                 // only assert the result is on the same order as the start.
                 let radius_drift = (end_pos.length() - start_radius).abs();
-                assert!(radius_drift < 50.0, "edge {:?} {:?}: radius drifted by {}", start_face, edge, radius_drift);
+                assert!(
+                    radius_drift < 50.0,
+                    "edge {:?} {:?}: radius drifted by {}",
+                    start_face,
+                    edge,
+                    radius_drift
+                );
                 let _ = start_radius;
             }
         }
@@ -798,14 +883,14 @@ mod tests {
         assert!(p.on_ground, "player did not land");
         // Feet should be at the top of the solid floor (ly=8).
         let feet_ly = p.ly - PLAYER_HEIGHT;
-        assert!(feet_ly >= 7.9 && feet_ly <= 8.5, "feet at unexpected ly: {}", feet_ly);
+        assert!((7.9..=8.5).contains(&feet_ly), "feet at unexpected ly: {}", feet_ly);
     }
 
     #[test]
     fn fly_through_solid_planet_never_returns_inside_it() {
         // Fly mode bypasses collision; verify the player can pass through
         // a solid block without crashing or producing NaN positions.
-        let world = solid_planet();
+        let _world = solid_planet();
         let mut p = Player::new();
         p.fly_mode = true;
         for _ in 0..100 {
@@ -813,7 +898,11 @@ mod tests {
             p.fly_move(-n * 1.0); // dive radially inward
         }
         let pos = p.world_pos();
-        assert!(pos.x.is_finite() && pos.y.is_finite() && pos.z.is_finite(), "position became non-finite: {:?}", pos);
+        assert!(
+            pos.x.is_finite() && pos.y.is_finite() && pos.z.is_finite(),
+            "position became non-finite: {:?}",
+            pos
+        );
     }
 
     // ----- (5) Forward vector stability under walking -----
@@ -833,7 +922,10 @@ mod tests {
         for _ in 0..200 {
             let (tu, _, _) = sphere::face_basis(p.face);
             p.fly_move(tu * 0.3);
-            assert!(p.forward.x.is_finite() && p.forward.y.is_finite() && p.forward.z.is_finite(), "forward became NaN");
+            assert!(
+                p.forward.x.is_finite() && p.forward.y.is_finite() && p.forward.z.is_finite(),
+                "forward became NaN"
+            );
             assert!((p.forward.length() - 1.0).abs() < 0.01, "forward not unit length: {}", p.forward.length());
         }
     }
@@ -902,7 +994,12 @@ mod tests {
     #[test]
     fn block_render_position_matches_collision_lookup() {
         // Test a chunk near the +Y pole — interior of one face, no edge effects.
-        let cp = ChunkPos { face: Face::PosY, cx: 1, cy: 5, cz: 1 };
+        let cp = ChunkPos {
+            face: Face::PosY,
+            cx: 1,
+            cy: 5,
+            cz: 1,
+        };
         for ix in 1..15 {
             for iy in 1..15 {
                 for iz in 1..15 {
@@ -954,7 +1051,12 @@ mod tests {
         let pos_after = p.world_pos();
         let pos_jump = (pos_after - pos_before).length();
         // Should be approximately the step magnitude — no extra teleport on top.
-        assert!(pos_jump < step as f32 * 1.5 + 0.1, "world position teleported by {} blocks across face edge (step was {})", pos_jump, step);
+        assert!(
+            pos_jump < step * 1.5 + 0.1,
+            "world position teleported by {} blocks across face edge (step was {})",
+            pos_jump,
+            step
+        );
         let forward_jump = (p.forward - forward_before).length();
         assert!(forward_jump < 0.2, "forward vector teleported by {} across face edge", forward_jump);
     }
@@ -993,10 +1095,30 @@ mod tests {
                 p.ly = 8.0;
                 let n = sphere::FACE_SIDE_CHUNKS;
                 match edge {
-                    sphere::EdgeDir::PosU => { p.cx = n - 1; p.lx = 15.5; p.cz = 1; p.lz = 8.0; }
-                    sphere::EdgeDir::NegU => { p.cx = 0; p.lx = 0.5; p.cz = 1; p.lz = 8.0; }
-                    sphere::EdgeDir::PosV => { p.cz = n - 1; p.lz = 15.5; p.cx = 1; p.lx = 8.0; }
-                    sphere::EdgeDir::NegV => { p.cz = 0; p.lz = 0.5; p.cx = 1; p.lx = 8.0; }
+                    sphere::EdgeDir::PosU => {
+                        p.cx = n - 1;
+                        p.lx = 15.5;
+                        p.cz = 1;
+                        p.lz = 8.0;
+                    }
+                    sphere::EdgeDir::NegU => {
+                        p.cx = 0;
+                        p.lx = 0.5;
+                        p.cz = 1;
+                        p.lz = 8.0;
+                    }
+                    sphere::EdgeDir::PosV => {
+                        p.cz = n - 1;
+                        p.lz = 15.5;
+                        p.cx = 1;
+                        p.lx = 8.0;
+                    }
+                    sphere::EdgeDir::NegV => {
+                        p.cz = 0;
+                        p.lz = 0.5;
+                        p.cx = 1;
+                        p.lx = 8.0;
+                    }
                 }
                 let (tu, tv, _) = sphere::face_basis(start_face);
                 let push = match edge {
@@ -1006,7 +1128,11 @@ mod tests {
                     sphere::EdgeDir::NegV => -tv * 30.0,
                 };
                 p.fly_move(push);
-                assert_eq!(p.face, expected, "edge {:?} {:?}: player landed on {:?}, table says {:?}", start_face, edge, p.face, expected);
+                assert_eq!(
+                    p.face, expected,
+                    "edge {:?} {:?}: player landed on {:?}, table says {:?}",
+                    start_face, edge, p.face, expected
+                );
             }
         }
         let _ = world;

@@ -72,7 +72,12 @@ pub struct ChunkPos {
 impl ChunkPos {
     /// Construct a chunk position on the +Y face. Phase A uses this everywhere.
     pub const fn posy(cx: i32, cy: i32, cz: i32) -> Self {
-        Self { face: Face::PosY, cx, cy, cz }
+        Self {
+            face: Face::PosY,
+            cx,
+            cy,
+            cz,
+        }
     }
 
     /// Raw integer grid coordinates `[cx, cy, cz]`, discarding the face.
@@ -335,8 +340,12 @@ pub fn chunk_world_aabb(cp: ChunkPos) -> ([f32; 3], [f32; 3]) {
                 let w = chunk_to_world(cp, Vec3::new(lx, ly, lz));
                 let p = [w.x as f32, w.y as f32, w.z as f32];
                 for k in 0..3 {
-                    if p[k] < min[k] { min[k] = p[k]; }
-                    if p[k] > max[k] { max[k] = p[k]; }
+                    if p[k] < min[k] {
+                        min[k] = p[k];
+                    }
+                    if p[k] > max[k] {
+                        max[k] = p[k];
+                    }
                 }
             }
         }
@@ -373,7 +382,9 @@ pub fn chunk_bounding_sphere(cp: ChunkPos) -> (Vec3, f32) {
                 let w = chunk_to_world(cp, Vec3::new(lx, ly, lz));
                 let p = Vec3::new(w.x as f32, w.y as f32, w.z as f32);
                 let d2 = (p - center).length_squared();
-                if d2 > max_d2 { max_d2 = d2; }
+                if d2 > max_d2 {
+                    max_d2 = d2;
+                }
             }
         }
     }
@@ -382,14 +393,7 @@ pub fn chunk_bounding_sphere(cp: ChunkPos) -> (Vec3, f32) {
 
 /// All faces in their `Face::*` discriminant order — used for enumerating
 /// the planet during chunk generation and bounded iteration.
-pub const ALL_FACES: [Face; 6] = [
-    Face::PosX,
-    Face::NegX,
-    Face::PosY,
-    Face::NegY,
-    Face::PosZ,
-    Face::NegZ,
-];
+pub const ALL_FACES: [Face; 6] = [Face::PosX, Face::NegX, Face::PosY, Face::NegY, Face::PosZ, Face::NegZ];
 
 /// Numeric id matching GLSL: shader-side face basis table is indexed by this.
 pub fn face_id(face: Face) -> u32 {
@@ -463,7 +467,11 @@ pub fn edge_transition(face: Face, dir: EdgeDir) -> EdgeTransition {
     } else {
         -std::f32::consts::FRAC_PI_2
     };
-    EdgeTransition { neighbor, edge_axis, rotation }
+    EdgeTransition {
+        neighbor,
+        edge_axis,
+        rotation,
+    }
 }
 
 /// Pick the cube face whose outward normal axis dominates `point`. Used by
@@ -473,11 +481,21 @@ pub fn face_for_cube_point(point: DVec3) -> Face {
     let ay = point.y.abs();
     let az = point.z.abs();
     if ax >= ay && ax >= az {
-        if point.x > 0.0 { Face::PosX } else { Face::NegX }
+        if point.x > 0.0 {
+            Face::PosX
+        } else {
+            Face::NegX
+        }
     } else if ay >= az {
-        if point.y > 0.0 { Face::PosY } else { Face::NegY }
+        if point.y > 0.0 {
+            Face::PosY
+        } else {
+            Face::NegY
+        }
+    } else if point.z > 0.0 {
+        Face::PosZ
     } else {
-        if point.z > 0.0 { Face::PosZ } else { Face::NegZ }
+        Face::NegZ
     }
 }
 
@@ -525,11 +543,21 @@ fn face_for_axis(axis: Vec3) -> Face {
     let ay = axis.y.abs();
     let az = axis.z.abs();
     if ax >= ay && ax >= az {
-        if axis.x > 0.0 { Face::PosX } else { Face::NegX }
+        if axis.x > 0.0 {
+            Face::PosX
+        } else {
+            Face::NegX
+        }
     } else if ay >= az {
-        if axis.y > 0.0 { Face::PosY } else { Face::NegY }
+        if axis.y > 0.0 {
+            Face::PosY
+        } else {
+            Face::NegY
+        }
+    } else if axis.z > 0.0 {
+        Face::PosZ
     } else {
-        if axis.z > 0.0 { Face::PosZ } else { Face::NegZ }
+        Face::NegZ
     }
 }
 
@@ -619,7 +647,11 @@ mod edge_table_tests {
         assert_eq!(expected.len(), 24);
         for &((face, dir), neighbor) in expected {
             let actual = edge_transition(face, dir);
-            assert_eq!(actual.neighbor, neighbor, "{:?} {:?}: expected {:?}, got {:?}", face, dir, neighbor, actual.neighbor);
+            assert_eq!(
+                actual.neighbor, neighbor,
+                "{:?} {:?}: expected {:?}, got {:?}",
+                face, dir, neighbor, actual.neighbor
+            );
         }
     }
 
@@ -666,7 +698,14 @@ mod edge_table_tests {
                 };
                 let rotated = rotate(walk, t.edge_axis, t.rotation);
                 let expected = -face_normal(face);
-                assert!((rotated - expected).length() < 1e-3, "walk dir wrong for {:?} {:?}: rotated={:?} expected={:?}", face, dir, rotated, expected);
+                assert!(
+                    (rotated - expected).length() < 1e-3,
+                    "walk dir wrong for {:?} {:?}: rotated={:?} expected={:?}",
+                    face,
+                    dir,
+                    rotated,
+                    expected
+                );
             }
         }
     }
@@ -708,11 +747,21 @@ pub fn cross_face_neighbor(cp: ChunkPos) -> Option<ChunkPos> {
     let ay = cube_pt.y.abs();
     let az = cube_pt.z.abs();
     let new_face = if ax >= ay && ax >= az {
-        if cube_pt.x > 0.0 { Face::PosX } else { Face::NegX }
+        if cube_pt.x > 0.0 {
+            Face::PosX
+        } else {
+            Face::NegX
+        }
     } else if ay >= az {
-        if cube_pt.y > 0.0 { Face::PosY } else { Face::NegY }
+        if cube_pt.y > 0.0 {
+            Face::PosY
+        } else {
+            Face::NegY
+        }
+    } else if cube_pt.z > 0.0 {
+        Face::PosZ
     } else {
-        if cube_pt.z > 0.0 { Face::PosZ } else { Face::NegZ }
+        Face::NegZ
     };
     if new_face == cp.face {
         return None;
@@ -726,7 +775,12 @@ pub fn cross_face_neighbor(cp: ChunkPos) -> Option<ChunkPos> {
     // Clamp to face range — corners can land just outside due to fp.
     let new_cx = new_cx.clamp(0, n - 1);
     let new_cz = new_cz.clamp(0, n - 1);
-    Some(ChunkPos { face: new_face, cx: new_cx, cy: cp.cy, cz: new_cz })
+    Some(ChunkPos {
+        face: new_face,
+        cx: new_cx,
+        cy: cp.cy,
+        cz: new_cz,
+    })
 }
 
 #[cfg(test)]
@@ -735,7 +789,12 @@ mod transition_tests {
 
     #[test]
     fn in_range_returns_none() {
-        let cp = ChunkPos { face: Face::PosY, cx: 1, cy: 0, cz: 1 };
+        let cp = ChunkPos {
+            face: Face::PosY,
+            cx: 1,
+            cy: 0,
+            cz: 1,
+        };
         assert!(cross_face_neighbor(cp).is_none());
     }
 
@@ -747,9 +806,9 @@ mod transition_tests {
         for face in ALL_FACES {
             let edges = [
                 ChunkPos { face, cx: -1, cy: 0, cz: 1 },
-                ChunkPos { face, cx: n,  cy: 0, cz: 1 },
-                ChunkPos { face, cx: 1,  cy: 0, cz: -1 },
-                ChunkPos { face, cx: 1,  cy: 0, cz: n },
+                ChunkPos { face, cx: n, cy: 0, cz: 1 },
+                ChunkPos { face, cx: 1, cy: 0, cz: -1 },
+                ChunkPos { face, cx: 1, cy: 0, cz: n },
             ];
             for e in edges {
                 let nb = cross_face_neighbor(e).unwrap_or_else(|| panic!("no neighbor for {:?}", e));
@@ -766,9 +825,16 @@ mod aabb_tests {
     use super::*;
     #[test]
     fn aabb_contains_chunk_corners() {
-        let cp = ChunkPos { face: Face::PosY, cx: 1, cy: 0, cz: 1 };
+        let cp = ChunkPos {
+            face: Face::PosY,
+            cx: 1,
+            cy: 0,
+            cz: 1,
+        };
         let (mn, mx) = chunk_world_aabb(cp);
-        for k in 0..3 { assert!(mn[k] <= mx[k]); }
+        for k in 0..3 {
+            assert!(mn[k] <= mx[k]);
+        }
     }
     #[test]
     fn each_face_center_chunk_has_finite_aabb() {
@@ -809,7 +875,13 @@ mod aabb_tests {
                                 assert!(
                                     p[axis] >= mn[axis] - 1e-3 && p[axis] <= mx[axis] + 1e-3,
                                     "face={:?} chunk=({},{}) sample {:?} outside AABB axis {} ({}..{})",
-                                    face, cx, cz, p, axis, mn[axis], mx[axis]
+                                    face,
+                                    cx,
+                                    cz,
+                                    p,
+                                    axis,
+                                    mn[axis],
+                                    mx[axis]
                                 );
                             }
                         }
@@ -849,7 +921,12 @@ mod aabb_tests {
     fn chunk_bounding_sphere_radius_is_reasonable() {
         let diag = (CHUNK_SIZE as f32) * 3.0_f32.sqrt();
         for face in ALL_FACES {
-            let cp = ChunkPos { face, cx: FACE_SIDE_CHUNKS / 2, cy: 0, cz: FACE_SIDE_CHUNKS / 2 };
+            let cp = ChunkPos {
+                face,
+                cx: FACE_SIDE_CHUNKS / 2,
+                cy: 0,
+                cz: FACE_SIDE_CHUNKS / 2,
+            };
             let (_, r) = chunk_bounding_sphere(cp);
             assert!(r < diag * 2.0, "face {:?}: bounding radius {} > 2 * diagonal {}", face, r, diag);
         }
@@ -870,7 +947,12 @@ mod projection_tests {
             for &t in &[-1.0_f64, 1.0] {
                 for &u in &[-1.0_f64, 1.0] {
                     let p = cube_to_sphere_unit(DVec3::new(s, t, u));
-                    assert!((p.length() - 1.0).abs() < 1e-9, "corner {:?} not on unit sphere: |p|={}", (s, t, u), p.length());
+                    assert!(
+                        (p.length() - 1.0).abs() < 1e-9,
+                        "corner {:?} not on unit sphere: |p|={}",
+                        (s, t, u),
+                        p.length()
+                    );
                 }
             }
         }
@@ -961,7 +1043,12 @@ mod tests {
         // the cube face. Tangent step should equal radial step there.
         let mid = FACE_SIDE_CHUNKS / 2;
         let surface_cy = 4; // ~4 chunks * 16 blocks = 64 blocks above the cube face
-        let cp = ChunkPos { face: Face::PosY, cx: mid, cy: surface_cy, cz: mid };
+        let cp = ChunkPos {
+            face: Face::PosY,
+            cx: mid,
+            cy: surface_cy,
+            cz: mid,
+        };
         let center = chunk_to_world(cp, Vec3::new(0.0, 0.0, 0.0));
         let tangent = chunk_to_world(cp, Vec3::new(1.0, 0.0, 0.0));
         let radial = chunk_to_world(cp, Vec3::new(0.0, 1.0, 0.0));

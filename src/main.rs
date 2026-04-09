@@ -12,7 +12,6 @@ use graphical_core::ui_pipeline::UiPipeline;
 use graphical_core::vulkan_object::VulkanApplication;
 use log::info;
 use std::time::Instant;
-use voxel::block::BlockType;
 use voxel::player::Player;
 use voxel::raycast;
 use vr::{VrContext, VrSupport};

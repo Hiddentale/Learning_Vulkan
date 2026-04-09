@@ -133,19 +133,21 @@ unsafe fn create_layout(device: &Device) -> anyhow::Result<vk::DescriptorSetLayo
 unsafe fn create_pool(device: &Device) -> anyhow::Result<vk::DescriptorPool> {
     // 2 sets × bindings: 8 storage buffers, 2 samplers, 2 ubos.
     let sizes = [
-        *vk::DescriptorPoolSize::builder().descriptor_count(8).r#type(vk::DescriptorType::STORAGE_BUFFER),
-        *vk::DescriptorPoolSize::builder().descriptor_count(2).r#type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER),
-        *vk::DescriptorPoolSize::builder().descriptor_count(2).r#type(vk::DescriptorType::UNIFORM_BUFFER),
+        *vk::DescriptorPoolSize::builder()
+            .descriptor_count(8)
+            .r#type(vk::DescriptorType::STORAGE_BUFFER),
+        *vk::DescriptorPoolSize::builder()
+            .descriptor_count(2)
+            .r#type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER),
+        *vk::DescriptorPoolSize::builder()
+            .descriptor_count(2)
+            .r#type(vk::DescriptorType::UNIFORM_BUFFER),
     ];
     let info = vk::DescriptorPoolCreateInfo::builder().max_sets(2).pool_sizes(&sizes);
     Ok(device.create_descriptor_pool(&info, None)?)
 }
 
-unsafe fn allocate_sets(
-    device: &Device,
-    pool: vk::DescriptorPool,
-    layout: vk::DescriptorSetLayout,
-) -> anyhow::Result<[vk::DescriptorSet; 2]> {
+unsafe fn allocate_sets(device: &Device, pool: vk::DescriptorPool, layout: vk::DescriptorSetLayout) -> anyhow::Result<[vk::DescriptorSet; 2]> {
     let layouts = [layout, layout];
     let info = vk::DescriptorSetAllocateInfo::builder().descriptor_pool(pool).set_layouts(&layouts);
     let sets = device.allocate_descriptor_sets(&info)?;
@@ -153,11 +155,15 @@ unsafe fn allocate_sets(
 }
 
 unsafe fn write_descriptors(device: &Device, sets: [vk::DescriptorSet; 2], data: &VulkanApplicationData, pool: &VoxelPool) {
-    for phase in 0..2 {
+    for (phase, &set) in sets.iter().enumerate() {
         let chunk_info = [*vk::DescriptorBufferInfo::builder().buffer(pool.chunk_info_buffer).range(vk::WHOLE_SIZE)];
         let vis = [*vk::DescriptorBufferInfo::builder().buffer(pool.visibility_buffer).range(vk::WHOLE_SIZE)];
-        let visible = [*vk::DescriptorBufferInfo::builder().buffer(pool.visible_chunks_buffer[phase]).range(vk::WHOLE_SIZE)];
-        let args = [*vk::DescriptorBufferInfo::builder().buffer(pool.indirect_args_buffer[phase]).range(vk::WHOLE_SIZE)];
+        let visible = [*vk::DescriptorBufferInfo::builder()
+            .buffer(pool.visible_chunks_buffer[phase])
+            .range(vk::WHOLE_SIZE)];
+        let args = [*vk::DescriptorBufferInfo::builder()
+            .buffer(pool.indirect_args_buffer[phase])
+            .range(vk::WHOLE_SIZE)];
         let depth = [*vk::DescriptorImageInfo::builder()
             .image_view(data.depth_pyramid_full_view)
             .sampler(data.depth_pyramid_sampler)
@@ -168,32 +174,32 @@ unsafe fn write_descriptors(device: &Device, sets: [vk::DescriptorSet; 2], data:
 
         let writes = [
             *vk::WriteDescriptorSet::builder()
-                .dst_set(sets[phase])
+                .dst_set(set)
                 .dst_binding(0)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .buffer_info(&chunk_info),
             *vk::WriteDescriptorSet::builder()
-                .dst_set(sets[phase])
+                .dst_set(set)
                 .dst_binding(1)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .buffer_info(&vis),
             *vk::WriteDescriptorSet::builder()
-                .dst_set(sets[phase])
+                .dst_set(set)
                 .dst_binding(2)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .buffer_info(&visible),
             *vk::WriteDescriptorSet::builder()
-                .dst_set(sets[phase])
+                .dst_set(set)
                 .dst_binding(3)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .buffer_info(&args),
             *vk::WriteDescriptorSet::builder()
-                .dst_set(sets[phase])
+                .dst_set(set)
                 .dst_binding(4)
                 .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                 .image_info(&depth),
             *vk::WriteDescriptorSet::builder()
-                .dst_set(sets[phase])
+                .dst_set(set)
                 .dst_binding(5)
                 .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
                 .buffer_info(&ubo),

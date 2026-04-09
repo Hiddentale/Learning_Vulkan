@@ -85,19 +85,20 @@ impl World {
         // Build the set of valid (face, cx, cz) columns once. Iterate the
         // 2D Chebyshev square around the player; out-of-range columns are
         // remapped to the neighboring face via `cross_face_neighbor`.
-        let mut target_columns: std::collections::HashSet<(sphere::Face, i32, i32)> =
-            std::collections::HashSet::new();
+        let mut target_columns: std::collections::HashSet<(sphere::Face, i32, i32)> = std::collections::HashSet::new();
         if rd >= 0 {
             for dz in -rd..=rd {
                 for dx in -rd..=rd {
                     let cx = player_cx + dx;
                     let cz = player_cz + dz;
-                    let col = if cx < 0 || cx >= sphere::FACE_SIDE_CHUNKS
-                        || cz < 0 || cz >= sphere::FACE_SIDE_CHUNKS
-                    {
-                        let oob = ChunkPos { face: player_face, cx, cy: 0, cz };
-                        sphere::cross_face_neighbor(oob)
-                            .map(|p| (p.face, p.cx, p.cz))
+                    let col = if !(0..sphere::FACE_SIDE_CHUNKS).contains(&cx) || !(0..sphere::FACE_SIDE_CHUNKS).contains(&cz) {
+                        let oob = ChunkPos {
+                            face: player_face,
+                            cx,
+                            cy: 0,
+                            cz,
+                        };
+                        sphere::cross_face_neighbor(oob).map(|p| (p.face, p.cx, p.cz))
                     } else {
                         Some((player_face, cx, cz))
                     };
@@ -108,9 +109,7 @@ impl World {
             }
         }
 
-        let in_set = |pos: ChunkPos| -> bool {
-            target_columns.contains(&(pos.face, pos.cx, pos.cz))
-        };
+        let in_set = |pos: ChunkPos| -> bool { target_columns.contains(&(pos.face, pos.cx, pos.cz)) };
 
         // Evict anything outside the 2D column working set.
         let keys: Vec<ChunkPos> = self.chunks.keys().copied().collect();
@@ -123,8 +122,7 @@ impl World {
 
         // Request every in-set column not yet loaded or pending.
         for &(face, cx, cz) in &target_columns {
-            let any_loaded = (TERRAIN_MIN_CY..=TERRAIN_MAX_CY)
-                .any(|cy| self.chunks.contains_key(&ChunkPos { face, cx, cy, cz }));
+            let any_loaded = (TERRAIN_MIN_CY..=TERRAIN_MAX_CY).any(|cy| self.chunks.contains_key(&ChunkPos { face, cx, cy, cz }));
             if !any_loaded && !self.generator.is_pending(face, cx, cz) {
                 self.generator.request(face, cx, cz);
             }
@@ -137,7 +135,12 @@ impl World {
         for col in self.generator.receive() {
             for (i, chunk) in col.chunks.into_iter().enumerate() {
                 let cy = TERRAIN_MIN_CY + i as i32;
-                let key = ChunkPos { face: col.face, cx: col.cx, cy, cz: col.cz };
+                let key = ChunkPos {
+                    face: col.face,
+                    cx: col.cx,
+                    cy,
+                    cz: col.cz,
+                };
                 if !in_set(key) {
                     continue;
                 }
@@ -194,17 +197,6 @@ impl World {
         self.chunks.keys().copied()
     }
 
-    #[cfg(test)]
-    pub fn insert_empty_chunk(&mut self, cx: i32, cy: i32, cz: i32) {
-        self.chunks.insert(ChunkPos::posy(cx, cy, cz), Chunk::new(BlockType::Air));
-    }
-
-    /// Test-only: insert a fully-stone chunk at the given face/chunk position.
-    #[cfg(test)]
-    pub fn insert_solid_chunk(&mut self, cp: ChunkPos) {
-        self.chunks.insert(cp, Chunk::new(BlockType::Stone));
-    }
-
     /// Test-only: insert an empty chunk at any face.
     #[cfg(test)]
     pub fn insert_empty_chunk_at(&mut self, cp: ChunkPos) {
@@ -223,7 +215,6 @@ impl World {
         &mut self.chunks
     }
 }
-
 
 /// 3D Chebyshev distance from a chunk to the player position.
 pub fn chunk_distance(cx: i32, cy: i32, cz: i32, px: i32, py: i32, pz: i32) -> i32 {
@@ -314,11 +305,16 @@ mod tests {
 
         // Move the player far enough on the +Y face that none of the
         // initial chunks remain in the working set.
-        let shift_chunks = (2 * render_distance + 2) as i32;
+        let shift_chunks = 2 * render_distance + 2;
         let cx = sphere::FACE_SIDE_CHUNKS / 2 + shift_chunks;
         let cz = sphere::FACE_SIDE_CHUNKS / 2;
         let moved = sphere::chunk_to_world(
-            ChunkPos { face: sphere::Face::PosY, cx, cy: TERRAIN_MAX_CY / 2, cz },
+            ChunkPos {
+                face: sphere::Face::PosY,
+                cx,
+                cy: TERRAIN_MAX_CY / 2,
+                cz,
+            },
             glam::Vec3::splat(8.0),
         );
         let delta = world.update(moved);
@@ -336,9 +332,19 @@ mod tests {
     #[test]
     fn unloaded_terrain_chunks_are_solid() {
         let world = World::new(2, 0, None);
-        let in_band = ChunkPos { face: sphere::Face::PosY, cx: 0, cy: 5, cz: 0 };
+        let in_band = ChunkPos {
+            face: sphere::Face::PosY,
+            cx: 0,
+            cy: 5,
+            cz: 0,
+        };
         assert!(world.block_solid(in_band, 0, 0, 0));
-        let above_band = ChunkPos { face: sphere::Face::PosY, cx: 0, cy: TERRAIN_MAX_CY + 5, cz: 0 };
+        let above_band = ChunkPos {
+            face: sphere::Face::PosY,
+            cx: 0,
+            cy: TERRAIN_MAX_CY + 5,
+            cz: 0,
+        };
         assert!(!world.block_solid(above_band, 0, 0, 0));
     }
 
@@ -372,7 +378,12 @@ mod tests {
     #[test]
     fn set_then_read_block() {
         let mut world = World::new(2, 0, None);
-        let cp = ChunkPos { face: sphere::Face::PosY, cx: 0, cy: 5, cz: 0 };
+        let cp = ChunkPos {
+            face: sphere::Face::PosY,
+            cx: 0,
+            cy: 5,
+            cz: 0,
+        };
         world.insert_empty_chunk_at(cp);
         assert!(!world.block_solid(cp, 1, 1, 1));
         world.set_block_at(cp, 1, 1, 1, BlockType::Stone);

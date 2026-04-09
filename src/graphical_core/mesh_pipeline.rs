@@ -202,8 +202,12 @@ unsafe fn write_descriptors(device: &Device, set: vk::DescriptorSet, data: &Vulk
         .image_layout(vk::ImageLayout::GENERAL)];
 
     // Bindings 8/9: per-phase visible chunk lists.
-    let visible_p1 = [*vk::DescriptorBufferInfo::builder().buffer(pool.visible_chunks_buffer[0]).range(vk::WHOLE_SIZE)];
-    let visible_p2 = [*vk::DescriptorBufferInfo::builder().buffer(pool.visible_chunks_buffer[1]).range(vk::WHOLE_SIZE)];
+    let visible_p1 = [*vk::DescriptorBufferInfo::builder()
+        .buffer(pool.visible_chunks_buffer[0])
+        .range(vk::WHOLE_SIZE)];
+    let visible_p2 = [*vk::DescriptorBufferInfo::builder()
+        .buffer(pool.visible_chunks_buffer[1])
+        .range(vk::WHOLE_SIZE)];
 
     let writes = [
         *vk::WriteDescriptorSet::builder()

@@ -21,6 +21,7 @@ const PLANE_COUNT: usize = 6;
 /// `α = asin(radius / |center|)` is visible iff its angle from the camera's
 /// direction (planet-center → camera) is at most `A + α`. Computed via the
 /// exact `cos(A + α)` so the test is tight.
+#[allow(dead_code)] // CPU mirror of GLSL cull math, tested below
 pub fn horizon_visible(cam_pos: Vec3, chunk_center: Vec3, chunk_radius: f32, planet_radius: f32) -> bool {
     let cam_dist = cam_pos.length();
     if cam_dist <= planet_radius {
@@ -45,6 +46,7 @@ pub fn horizon_visible(cam_pos: Vec3, chunk_center: Vec3, chunk_radius: f32, pla
 /// `max_extent_pixels` along the larger axis. Picks the smallest mip whose
 /// 2×2 gather covers the AABB. Matches `niagara`/zeux: `ceil(log2(extent/2))`,
 /// floored at 0.
+#[allow(dead_code)] // CPU mirror of GLSL cull math, tested below
 pub fn mip_for_extent_pixels(max_extent_pixels: f32) -> i32 {
     if max_extent_pixels <= 2.0 {
         return 0;
@@ -62,6 +64,7 @@ pub fn mip_for_extent_pixels(max_extent_pixels: f32) -> i32 {
 ///   is in front of (= smaller depth than) the pyramid's nearest occluder).
 ///
 /// Coplanar (`==`) is treated as visible to avoid self-occlusion.
+#[allow(dead_code)] // CPU mirror of GLSL cull math, tested below
 pub fn hiz_occluded(chunk_z: f32, hiz_value: f32, reverse_z: bool) -> bool {
     if reverse_z {
         chunk_z < hiz_value
@@ -76,6 +79,7 @@ pub fn hiz_occluded(chunk_z: f32, hiz_value: f32, reverse_z: bool) -> bool {
 /// `max` under reverse-Z). When any corner is at or behind the camera, the
 /// rect expands to the full screen and the depth becomes the most permissive
 /// value (so the occlusion test cannot cull a chunk that may be visible).
+#[allow(dead_code)] // CPU mirror of GLSL cull math, tested below
 pub fn project_aabb_screen_rect(vp: &Mat4, aabb_min: Vec3, aabb_max: Vec3, reverse_z: bool) -> (Vec2, Vec2, f32) {
     let mut uv_min = Vec2::splat(f32::INFINITY);
     let mut uv_max = Vec2::splat(f32::NEG_INFINITY);
@@ -184,21 +188,10 @@ impl Frustum {
         }
     }
 
-    /// Test whether a sphere intersects the frustum (cheaper than AABB; useful
-    /// after horizon culling has narrowed the candidate set).
-    pub fn intersects_sphere(&self, center: Vec3, radius: f32) -> bool {
-        for plane in &self.planes {
-            let normal = Vec3::new(plane.x, plane.y, plane.z);
-            if normal.dot(center) + plane.w < -radius {
-                return false;
-            }
-        }
-        true
-    }
-
     /// Returns true if an axis-aligned bounding box is at least partially inside the frustum.
     /// Uses the "p-vertex" test: for each plane, find the box corner most aligned with
     /// the plane normal. If that corner is outside, the entire box is outside.
+    #[allow(dead_code)] // CPU mirror of GLSL cull math, tested below
     pub fn intersects_aabb(&self, min: Vec3, max: Vec3) -> bool {
         for plane in &self.planes {
             let normal = Vec3::new(plane.x, plane.y, plane.z);

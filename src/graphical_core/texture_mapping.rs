@@ -13,7 +13,10 @@ const ATLAS_HEIGHT: u32 = 16;
 const MIP_LEVELS: u32 = {
     let mut n = if ATLAS_WIDTH > ATLAS_HEIGHT { ATLAS_WIDTH } else { ATLAS_HEIGHT };
     let mut levels = 1u32;
-    while n > 1 { n /= 2; levels += 1; }
+    while n > 1 {
+        n /= 2;
+        levels += 1;
+    }
     levels
 };
 
@@ -178,11 +181,20 @@ fn transfer_array_image(
         )?;
 
         // Transition ALL mip levels: UNDEFINED -> TRANSFER_DST
-        transition_mip_layout(device, cmd, image,
-            vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            vk::AccessFlags::empty(), vk::AccessFlags::TRANSFER_WRITE,
-            vk::PipelineStageFlags::TOP_OF_PIPE, vk::PipelineStageFlags::TRANSFER,
-            0, MIP_LEVELS, layer_count);
+        transition_mip_layout(
+            device,
+            cmd,
+            image,
+            vk::ImageLayout::UNDEFINED,
+            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            vk::AccessFlags::empty(),
+            vk::AccessFlags::TRANSFER_WRITE,
+            vk::PipelineStageFlags::TOP_OF_PIPE,
+            vk::PipelineStageFlags::TRANSFER,
+            0,
+            MIP_LEVELS,
+            layer_count,
+        );
 
         // Copy each layer's mip 0 from staging buffer.
         let layer_size = (ATLAS_WIDTH * ATLAS_HEIGHT * BYTES_PER_PIXEL) as u64;
@@ -209,33 +221,47 @@ fn transfer_array_image(
         let mut mip_h = ATLAS_HEIGHT as i32;
         for level in 1..MIP_LEVELS {
             // Transition level-1 from TRANSFER_DST to TRANSFER_SRC.
-            transition_mip_layout(device, cmd, image,
-                vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-                vk::AccessFlags::TRANSFER_WRITE, vk::AccessFlags::TRANSFER_READ,
-                vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::TRANSFER,
-                level - 1, 1, layer_count);
+            transition_mip_layout(
+                device,
+                cmd,
+                image,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                vk::AccessFlags::TRANSFER_WRITE,
+                vk::AccessFlags::TRANSFER_READ,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::TRANSFER,
+                level - 1,
+                1,
+                layer_count,
+            );
 
             let next_w = (mip_w / 2).max(1);
             let next_h = (mip_h / 2).max(1);
             let blit = *vk::ImageBlit::builder()
-                .src_subresource(*vk::ImageSubresourceLayers::builder()
-                    .aspect_mask(vk::ImageAspectFlags::COLOR)
-                    .mip_level(level - 1)
-                    .layer_count(layer_count))
-                .src_offsets([
-                    vk::Offset3D { x: 0, y: 0, z: 0 },
-                    vk::Offset3D { x: mip_w, y: mip_h, z: 1 },
-                ])
-                .dst_subresource(*vk::ImageSubresourceLayers::builder()
-                    .aspect_mask(vk::ImageAspectFlags::COLOR)
-                    .mip_level(level)
-                    .layer_count(layer_count))
-                .dst_offsets([
-                    vk::Offset3D { x: 0, y: 0, z: 0 },
-                    vk::Offset3D { x: next_w, y: next_h, z: 1 },
-                ]);
-            device.cmd_blit_image(cmd, image, vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-                image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[blit], vk::Filter::LINEAR);
+                .src_subresource(
+                    *vk::ImageSubresourceLayers::builder()
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .mip_level(level - 1)
+                        .layer_count(layer_count),
+                )
+                .src_offsets([vk::Offset3D { x: 0, y: 0, z: 0 }, vk::Offset3D { x: mip_w, y: mip_h, z: 1 }])
+                .dst_subresource(
+                    *vk::ImageSubresourceLayers::builder()
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .mip_level(level)
+                        .layer_count(layer_count),
+                )
+                .dst_offsets([vk::Offset3D { x: 0, y: 0, z: 0 }, vk::Offset3D { x: next_w, y: next_h, z: 1 }]);
+            device.cmd_blit_image(
+                cmd,
+                image,
+                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                image,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                &[blit],
+                vk::Filter::LINEAR,
+            );
 
             mip_w = next_w;
             mip_h = next_h;
@@ -243,16 +269,34 @@ fn transfer_array_image(
 
         // Transition remaining TRANSFER_DST (last mip) and all TRANSFER_SRC
         // levels to SHADER_READ_ONLY.
-        transition_mip_layout(device, cmd, image,
-            vk::ImageLayout::TRANSFER_SRC_OPTIMAL, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            vk::AccessFlags::TRANSFER_READ, vk::AccessFlags::SHADER_READ,
-            vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER,
-            0, MIP_LEVELS - 1, layer_count);
-        transition_mip_layout(device, cmd, image,
-            vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            vk::AccessFlags::TRANSFER_WRITE, vk::AccessFlags::SHADER_READ,
-            vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER,
-            MIP_LEVELS - 1, 1, layer_count);
+        transition_mip_layout(
+            device,
+            cmd,
+            image,
+            vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            vk::AccessFlags::TRANSFER_READ,
+            vk::AccessFlags::SHADER_READ,
+            vk::PipelineStageFlags::TRANSFER,
+            vk::PipelineStageFlags::FRAGMENT_SHADER,
+            0,
+            MIP_LEVELS - 1,
+            layer_count,
+        );
+        transition_mip_layout(
+            device,
+            cmd,
+            image,
+            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            vk::AccessFlags::TRANSFER_WRITE,
+            vk::AccessFlags::SHADER_READ,
+            vk::PipelineStageFlags::TRANSFER,
+            vk::PipelineStageFlags::FRAGMENT_SHADER,
+            MIP_LEVELS - 1,
+            1,
+            layer_count,
+        );
 
         device.end_command_buffer(cmd)?;
     }
