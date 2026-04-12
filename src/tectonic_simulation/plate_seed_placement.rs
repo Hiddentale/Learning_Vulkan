@@ -1,6 +1,8 @@
-use std::collections::VecDeque;
+use std::cmp::Ordering;
+use std::collections::{BinaryHeap, VecDeque};
 
 use glam::DVec3;
+use noise::{Fbm, MultiFractal, NoiseFn, Perlin};
 
 use super::fibonnaci_spiral::SphericalFibonacci;
 use super::spherical_delaunay_triangulation::SphericalDelaunay;
@@ -53,17 +55,55 @@ impl Adjacency {
     }
 }
 
+/// Controls how noise warps the flood-fill distances to produce irregular plate boundaries.
+pub struct WarpParams {
+    /// How strongly noise distorts the boundaries. 0 = uniform Voronoi, 1 = heavily warped.
+    pub amplitude: f64,
+    /// Base frequency of the noise field. Higher values produce smaller-scale irregularity.
+    pub frequency: f64,
+    /// Number of FBM octaves. More octaves add finer detail to boundary shapes.
+    pub octaves: usize,
+    /// Noise seed — independent of the plate seed placement seed.
+    pub noise_seed: u32,
+    /// Per-plate growth speed range [min, max]. Each plate gets a random multiplier in this
+    /// range — low values grow fast (large plates), high values grow slow (small plates).
+    /// Use [1.0, 1.0] for uniform growth.
+    pub speed_range: [f64; 2],
+}
+
+impl Default for WarpParams {
+    fn default() -> Self {
+        Self {
+            amplitude: 0.7,
+            frequency: 2.0,
+            octaves: 4,
+            noise_seed: 0,
+            speed_range: [0.3, 1.7],
+        }
+    }
+}
+
 const UNASSIGNED: u32 = u32::MAX;
 
 /// Picks `plate_count` seed indices spread across the sphere via farthest-point sampling,
-/// then flood-fills the adjacency graph to assign every point to its nearest seed's plate.
-pub fn assign_plates(points: &[DVec3], fibonacci: &SphericalFibonacci, delaunay: &SphericalDelaunay, plate_count: u32, seed: u64) -> PlateAssignment {
+/// then Dijkstra flood-fills with noise-warped edge weights to assign every point to a plate.
+///
+/// The noise warp distorts effective distances so plate boundaries become irregular,
+/// producing organic continent-like shapes instead of uniform Voronoi cells.
+pub fn assign_plates(
+    points: &[DVec3],
+    fibonacci: &SphericalFibonacci,
+    delaunay: &SphericalDelaunay,
+    plate_count: u32,
+    seed: u64,
+    warp: &WarpParams,
+) -> PlateAssignment {
     assert!(plate_count >= 2, "need at least 2 plates");
     assert!((plate_count as usize) <= points.len(), "more plates than points");
 
     let adjacency = Adjacency::from_delaunay(points.len(), delaunay);
     let seeds = pick_seeds(points, fibonacci, plate_count, seed);
-    let plate_ids = flood_fill(points.len(), &adjacency, &seeds);
+    let plate_ids = flood_fill(points, &adjacency, &seeds, warp);
 
     PlateAssignment { plate_ids, seeds }
 }
@@ -119,27 +159,94 @@ fn update_distances(points: &[DVec3], new_seed: u32, min_dot: &mut [f64]) {
     }
 }
 
-/// Simultaneous BFS from all seeds — each point is claimed by the first seed that reaches it.
-fn flood_fill(point_count: usize, adjacency: &Adjacency, seeds: &[u32]) -> Vec<u32> {
-    let mut plate_ids = vec![UNASSIGNED; point_count];
-    let mut queue = VecDeque::with_capacity(point_count);
+struct Entry {
+    cost: f64,
+    point: u32,
+}
+
+impl PartialEq for Entry {
+    fn eq(&self, other: &Self) -> bool {
+        self.cost == other.cost
+    }
+}
+
+impl Eq for Entry {}
+
+impl Ord for Entry {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // Reverse for min-heap (BinaryHeap is max-heap by default).
+        other.cost.partial_cmp(&self.cost).unwrap_or(Ordering::Equal)
+    }
+}
+
+impl PartialOrd for Entry {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Dijkstra flood-fill from all seeds with noise-warped edge weights.
+/// Edge cost = `arc_distance(a, b) * speed[plate] * (1 + amplitude * noise(midpoint))`.
+/// Each plate's speed is drawn from `warp.speed_range` — low speed = fast growth = large plate.
+fn flood_fill(points: &[DVec3], adjacency: &Adjacency, seeds: &[u32], warp: &WarpParams) -> Vec<u32> {
+    let fbm: Fbm<Perlin> = Fbm::new(warp.noise_seed)
+        .set_octaves(warp.octaves)
+        .set_frequency(warp.frequency);
+
+    let plate_speeds = generate_plate_speeds(seeds.len(), warp);
+
+    let mut plate_ids = vec![UNASSIGNED; points.len()];
+    let mut costs = vec![f64::INFINITY; points.len()];
+    let mut heap = BinaryHeap::with_capacity(points.len());
 
     for (plate, &seed) in seeds.iter().enumerate() {
         plate_ids[seed as usize] = plate as u32;
-        queue.push_back(seed);
+        costs[seed as usize] = 0.0;
+        heap.push(Entry { cost: 0.0, point: seed });
     }
 
-    while let Some(current) = queue.pop_front() {
-        let plate = plate_ids[current as usize];
-        for &neighbor in adjacency.neighbors_of(current) {
-            if plate_ids[neighbor as usize] == UNASSIGNED {
+    while let Some(Entry { cost, point }) = heap.pop() {
+        if cost > costs[point as usize] {
+            continue;
+        }
+
+        let plate = plate_ids[point as usize];
+        let speed = plate_speeds[plate as usize];
+        let p = points[point as usize];
+
+        for &neighbor in adjacency.neighbors_of(point) {
+            let q = points[neighbor as usize];
+            let edge_cost = speed * warped_edge_cost(p, q, warp.amplitude, &fbm);
+            let new_cost = cost + edge_cost;
+
+            if new_cost < costs[neighbor as usize] {
+                costs[neighbor as usize] = new_cost;
                 plate_ids[neighbor as usize] = plate;
-                queue.push_back(neighbor);
+                heap.push(Entry { cost: new_cost, point: neighbor });
             }
         }
     }
 
     plate_ids
+}
+
+fn generate_plate_speeds(plate_count: usize, warp: &WarpParams) -> Vec<f64> {
+    let [lo, hi] = warp.speed_range;
+    let mut rng_state = splitmix64(warp.noise_seed as u64 ^ 0xDEAD_BEEF);
+    (0..plate_count)
+        .map(|_| {
+            rng_state = splitmix64(rng_state);
+            let t = (rng_state as f64) / (u64::MAX as f64);
+            lo + t * (hi - lo)
+        })
+        .collect()
+}
+
+fn warped_edge_cost(a: DVec3, b: DVec3, amplitude: f64, fbm: &Fbm<Perlin>) -> f64 {
+    let arc = a.dot(b).clamp(-1.0, 1.0).acos();
+    let mid = (a + b).normalize();
+    let warp = 1.0 + amplitude * fbm.get([mid.x, mid.y, mid.z]);
+    arc * warp.max(0.1)
 }
 
 fn splitmix64(mut x: u64) -> u64 {
@@ -157,7 +264,7 @@ mod tests {
         let fib = SphericalFibonacci::new(point_count);
         let points = fib.all_points();
         let del = SphericalDelaunay::from_points(&points);
-        let assignment = assign_plates(&points, &fib, &del, plate_count, 42);
+        let assignment = assign_plates(&points, &fib, &del, plate_count, 42, &WarpParams::default());
         (points, assignment)
     }
 
@@ -210,15 +317,15 @@ mod tests {
         let fib = SphericalFibonacci::new(200);
         let points = fib.all_points();
         let del = SphericalDelaunay::from_points(&points);
-        let a = assign_plates(&points, &fib, &del, 6, 42);
-        let b = assign_plates(&points, &fib, &del, 6, 99);
+        let warp = WarpParams::default();
+        let a = assign_plates(&points, &fib, &del, 6, 42, &warp);
+        let b = assign_plates(&points, &fib, &del, 6, 99, &warp);
         assert_ne!(a.seeds, b.seeds);
     }
 
     #[test]
     fn seeds_are_well_separated() {
         let (points, assignment) = make_test_assignment(1000, 10);
-        // With farthest-point sampling, no two seeds should be very close.
         let mut min_dot = f64::INFINITY;
         for (i, &a) in assignment.seeds.iter().enumerate() {
             for &b in &assignment.seeds[i + 1..] {
@@ -228,19 +335,15 @@ mod tests {
                 }
             }
         }
-        // min_dot < ~0.5 means seeds are at least ~60° apart for 10 plates on a sphere.
         assert!(min_dot < 0.5, "seeds too clustered: min dot product {min_dot}");
     }
 
     #[test]
     fn plates_are_contiguous() {
-        let fib = SphericalFibonacci::new(500);
-        let points = fib.all_points();
+        let (points, assignment) = make_test_assignment(500, 8);
         let del = SphericalDelaunay::from_points(&points);
-        let assignment = assign_plates(&points, &fib, &del, 8, 42);
         let adjacency = Adjacency::from_delaunay(points.len(), &del);
 
-        // BFS from each seed should reach every point in its plate without crossing plates.
         for plate in 0..8u32 {
             let seed = assignment.seeds[plate as usize];
             let mut visited = vec![false; points.len()];
@@ -272,5 +375,15 @@ mod tests {
             let count = assignment.plate_ids.iter().filter(|&&p| p == plate).count();
             assert!(count > 0, "plate {plate} empty");
         }
+    }
+
+    #[test]
+    fn different_noise_seed_different_shapes() {
+        let fib = SphericalFibonacci::new(1000);
+        let points = fib.all_points();
+        let del = SphericalDelaunay::from_points(&points);
+        let a = assign_plates(&points, &fib, &del, 10, 42, &WarpParams { noise_seed: 1, ..Default::default() });
+        let b = assign_plates(&points, &fib, &del, 10, 42, &WarpParams { noise_seed: 2, ..Default::default() });
+        assert_ne!(a.plate_ids, b.plate_ids);
     }
 }
