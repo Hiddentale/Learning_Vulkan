@@ -23,8 +23,7 @@ fn frac_mul(a: f64, b: f64) -> f64 {
 
 /// The spiral's azimuth step for a given Fibonacci-number spacing.
 fn basis_vector_azimuth(fibonacci_number: f64) -> f64 {
-    2.0 * PI * frac_mul(fibonacci_number + 1.0, GOLDEN_RATIO_INVERSE)
-        - 2.0 * PI * GOLDEN_RATIO_INVERSE
+    2.0 * PI * frac_mul(fibonacci_number + 1.0, GOLDEN_RATIO_INVERSE) - 2.0 * PI * GOLDEN_RATIO_INVERSE
 }
 
 /// Which pair of basis vectors produces the most square grid cells at this latitude.
@@ -33,8 +32,7 @@ fn dominant_zone(cos_polar: f64, point_count: f64) -> u32 {
     if sin_squared < POLAR_EPSILON {
         return MIN_ZONE;
     }
-    let raw = (SQRT_5 * point_count * PI * sin_squared).ln()
-        / (GOLDEN_RATIO * GOLDEN_RATIO).ln();
+    let raw = (SQRT_5 * point_count * PI * sin_squared).ln() / (GOLDEN_RATIO * GOLDEN_RATIO).ln();
     (raw.floor() as u32).max(MIN_ZONE)
 }
 
@@ -50,11 +48,7 @@ fn z_to_index(z: f64, point_count: f64) -> u32 {
 
 fn to_cartesian(azimuth: f64, z: f64) -> DVec3 {
     let sin_polar = (1.0 - z * z).sqrt();
-    DVec3::new(
-        azimuth.cos() * sin_polar,
-        azimuth.sin() * sin_polar,
-        z,
-    )
+    DVec3::new(azimuth.cos() * sin_polar, azimuth.sin() * sin_polar, z)
 }
 
 /// Nearly uniform point distribution on the unit sphere using a golden-ratio spiral.
