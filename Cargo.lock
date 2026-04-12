@@ -3,26 +3,6 @@
 version = 4
 
 [[package]]
-name = "Vulkan-Minecraft-Clone"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "crossbeam-channel",
- "glam",
- "image",
- "log",
- "lz4_flex",
- "memmap2",
- "memoffset",
- "noise",
- "openxr",
- "pretty_env_logger",
- "thiserror 1.0.69",
- "vulkan-rust",
- "winit",
-]
-
-[[package]]
 name = "ab_glyph"
 version = "0.2.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -975,6 +955,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "373f5eceeeab7925e0c1098212f2fbc4d416adec9d35051a6ab251e824c1854a"
 dependencies = [
  "twox-hash",
+]
+
+[[package]]
+name = "manifold"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "crossbeam-channel",
+ "glam",
+ "image",
+ "log",
+ "lz4_flex",
+ "memmap2",
+ "memoffset",
+ "noise",
+ "openxr",
+ "pretty_env_logger",
+ "thiserror 1.0.69",
+ "vulkan-rust",
+ "winit",
 ]
 
 [[package]]
