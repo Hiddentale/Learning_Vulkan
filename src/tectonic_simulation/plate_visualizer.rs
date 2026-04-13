@@ -5,12 +5,14 @@ use glam::DVec3;
 use image::{Rgb, RgbImage};
 
 use super::fibonnaci_spiral::SphericalFibonacci;
+use super::plate_initializer::{initialize_plates, InitParams};
 use super::plate_seed_placement::{assign_plates, PlateAssignment, WarpParams};
+use super::plates::{CrustType, Plate};
 use super::spherical_delaunay_triangulation::SphericalDelaunay;
 
 const IMAGE_WIDTH: u32 = 2048;
 const IMAGE_HEIGHT: u32 = 1024;
-const POINT_COUNT: u32 = 10_000;
+const POINT_COUNT: u32 = 250_000;
 const PLATE_COUNT: u32 = 20;
 
 /// Distinct, saturated colors for up to 40 plates.
@@ -110,6 +112,141 @@ pub fn generate_and_save(seed: u64, output: &Path) {
     println!("  {} points, {} plates, seed {seed}", POINT_COUNT, PLATE_COUNT);
 }
 
+const CONTINENTAL_COLOR: [u8; 3] = [255, 255, 255];
+const OCEANIC_COLOR: [u8; 3] = [160, 200, 240];
+const ARROW_COLOR: [u8; 3] = [0, 0, 0];
+const ARROW_LENGTH: f64 = 40.0;
+const ARROW_HEAD_LENGTH: f64 = 10.0;
+const ARROW_HEAD_HALF_WIDTH: f64 = 5.0;
+
+/// Renders plates colored by crust type with velocity arrows at each plate center.
+pub fn render_initialized_plates(
+    fibonacci: &SphericalFibonacci,
+    assignment: &PlateAssignment,
+    plates: &[Plate],
+) -> RgbImage {
+    let mut img = RgbImage::new(IMAGE_WIDTH, IMAGE_HEIGHT);
+
+    // Build point -> plate lookup for crust type coloring.
+    let mut point_crust = vec![CrustType::Oceanic; fibonacci.point_count() as usize];
+    for plate in plates {
+        for (i, &pi) in plate.point_indices.iter().enumerate() {
+            point_crust[pi as usize] = plate.crust[i].crust_type;
+        }
+    }
+
+    // Pre-compute plate ID per pixel for border detection.
+    let mut pixel_plate = vec![0u32; (IMAGE_WIDTH * IMAGE_HEIGHT) as usize];
+    for py in 0..IMAGE_HEIGHT {
+        let lat = PI / 2.0 - (py as f64 + 0.5) / IMAGE_HEIGHT as f64 * PI;
+        for px in 0..IMAGE_WIDTH {
+            let lon = (px as f64 + 0.5) / IMAGE_WIDTH as f64 * 2.0 * PI - PI;
+            let dir = latlon_to_direction(lat, lon);
+            let nearest = fibonacci.nearest_index(dir);
+            let idx = (py * IMAGE_WIDTH + px) as usize;
+            pixel_plate[idx] = assignment.plate_ids[nearest as usize];
+
+            let color = match point_crust[nearest as usize] {
+                CrustType::Continental => CONTINENTAL_COLOR,
+                CrustType::Oceanic => OCEANIC_COLOR,
+            };
+            img.put_pixel(px, py, Rgb(color));
+        }
+    }
+
+    // Draw plate borders: any pixel whose neighbor belongs to a different plate.
+    let border_color = Rgb([0u8, 0, 0]);
+    for py in 0..IMAGE_HEIGHT {
+        for px in 0..IMAGE_WIDTH {
+            let idx = (py * IMAGE_WIDTH + px) as usize;
+            let plate = pixel_plate[idx];
+            let on_border = [(1i32, 0i32), (0, 1)].iter().any(|&(dx, dy)| {
+                let nx = (px as i32 + dx).rem_euclid(IMAGE_WIDTH as i32) as u32;
+                let ny = (py as i32 + dy).clamp(0, IMAGE_HEIGHT as i32 - 1) as u32;
+                let ni = (ny * IMAGE_WIDTH + nx) as usize;
+                pixel_plate[ni] != plate
+            });
+            if on_border {
+                img.put_pixel(px, py, border_color);
+            }
+        }
+    }
+
+    // Draw velocity arrows at each plate's seed point.
+    for (plate_idx, plate) in plates.iter().enumerate() {
+        let seed_3d = fibonacci.index_to_point(assignment.seeds[plate_idx]);
+        let velocity = plate.surface_velocity(seed_3d);
+        if velocity.length() < 1e-12 {
+            continue;
+        }
+        draw_velocity_arrow(&mut img, seed_3d, velocity);
+    }
+
+    img
+}
+
+/// Project a 3D velocity vector to 2D pixel displacement on the equirectangular map,
+/// then draw an arrow (line + head).
+fn draw_velocity_arrow(img: &mut RgbImage, origin: DVec3, velocity: DVec3) {
+    let lat = origin.z.asin();
+    let lon = origin.y.atan2(origin.x);
+    let cx = (lon + PI) / (2.0 * PI) * IMAGE_WIDTH as f64;
+    let cy = (PI / 2.0 - lat) / PI * IMAGE_HEIGHT as f64;
+
+    // Local east and north tangent vectors.
+    let east = DVec3::new(-origin.y, origin.x, 0.0).normalize_or_zero();
+    let north = origin.cross(east);
+    let ve = velocity.dot(east);
+    let vn = velocity.dot(north);
+    let mag = (ve * ve + vn * vn).sqrt();
+    if mag < 1e-12 {
+        return;
+    }
+
+    // Pixel direction: east = +x, north = -y.
+    let dx = ve / mag;
+    let dy = -vn / mag;
+
+    let tip_x = cx + dx * ARROW_LENGTH;
+    let tip_y = cy + dy * ARROW_LENGTH;
+
+    draw_line(img, cx, cy, tip_x, tip_y, ARROW_COLOR);
+
+    // Arrowhead: two lines from tip angled back.
+    let back_x = -dx;
+    let back_y = -dy;
+    let perp_x = -dy;
+    let perp_y = dx;
+    for sign in [-1.0, 1.0] {
+        let hx = tip_x + back_x * ARROW_HEAD_LENGTH + perp_x * ARROW_HEAD_HALF_WIDTH * sign;
+        let hy = tip_y + back_y * ARROW_HEAD_LENGTH + perp_y * ARROW_HEAD_HALF_WIDTH * sign;
+        draw_line(img, tip_x, tip_y, hx, hy, ARROW_COLOR);
+    }
+}
+
+fn draw_line(img: &mut RgbImage, x0: f64, y0: f64, x1: f64, y1: f64, color: [u8; 3]) {
+    let dx = x1 - x0;
+    let dy = y1 - y0;
+    let steps = dx.abs().max(dy.abs()).ceil() as usize;
+    if steps == 0 {
+        return;
+    }
+    let sx = dx / steps as f64;
+    let sy = dy / steps as f64;
+    for i in 0..=steps {
+        let x = (x0 + sx * i as f64).round() as i32;
+        let y = (y0 + sy * i as f64).round() as i32;
+        let px = x.rem_euclid(IMAGE_WIDTH as i32) as u32;
+        if y >= 0 && y < IMAGE_HEIGHT as i32 {
+            // Thicken line to 2px for visibility.
+            for oy in 0..2i32 {
+                let py = (y + oy).clamp(0, IMAGE_HEIGHT as i32 - 1) as u32;
+                img.put_pixel(px, py, Rgb(color));
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -119,5 +256,22 @@ mod tests {
     fn plate_visualizer() {
         let output = Path::new("src/tectonic_simulation/plate_map.png");
         generate_and_save(42, output);
+    }
+
+    #[test]
+    #[ignore] // Run with: cargo test --release initialized_plate_map -- --ignored --nocapture
+    fn initialized_plate_map() {
+        let fibonacci = SphericalFibonacci::new(POINT_COUNT);
+        let points = fibonacci.all_points();
+        let delaunay = SphericalDelaunay::from_points(&points);
+        let assignment = assign_plates(
+            &points, &fibonacci, &delaunay, PLATE_COUNT, 42, &WarpParams::default(),
+        );
+        let plates = initialize_plates(&points, &delaunay, &assignment, &InitParams::default());
+
+        let img = render_initialized_plates(&fibonacci, &assignment, &plates);
+        let output = Path::new("src/tectonic_simulation/initialized_plates.png");
+        img.save(output).expect("failed to save initialized plate map");
+        println!("Saved initialized plate map to {}", output.display());
     }
 }

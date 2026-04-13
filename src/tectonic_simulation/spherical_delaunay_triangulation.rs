@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BinaryHeap, HashMap};
 
 use glam::DVec3;
 
@@ -69,20 +69,59 @@ impl SphericalDelaunay {
     }
 }
 
+#[derive(Clone, Copy)]
+struct FacetPriority {
+    dist: f64,
+    index: u32,
+}
+
+impl PartialEq for FacetPriority {
+    fn eq(&self, other: &Self) -> bool {
+        self.dist.total_cmp(&other.dist) == std::cmp::Ordering::Equal
+    }
+}
+
+impl Eq for FacetPriority {}
+
+impl PartialOrd for FacetPriority {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for FacetPriority {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.dist.total_cmp(&other.dist)
+    }
+}
+
 struct QuickHull<'a> {
     points: &'a [DVec3],
     facets: Vec<Facet>,
+    queue: BinaryHeap<FacetPriority>,
 }
 
 impl<'a> QuickHull<'a> {
     fn new(points: &'a [DVec3]) -> Self {
-        Self { points, facets: Vec::new() }
+        Self { points, facets: Vec::new(), queue: BinaryHeap::new() }
     }
 
     fn build(&mut self) {
         self.create_initial_tetrahedron();
         self.assign_all_points();
+        self.seed_queue();
         self.expand_hull();
+    }
+
+    fn seed_queue(&mut self) {
+        for fi in 0..self.facets.len() {
+            if !self.facets[fi].conflict.is_empty() {
+                self.queue.push(FacetPriority {
+                    dist: self.facets[fi].farthest_dist,
+                    index: fi as u32,
+                });
+            }
+        }
     }
 
     fn create_initial_tetrahedron(&mut self) {
@@ -177,32 +216,31 @@ impl<'a> QuickHull<'a> {
     }
 
     fn expand_hull(&mut self) {
-        loop {
-            let mut best_facet = UNSET;
-            let mut best_dist = f64::NEG_INFINITY;
-            for (fi, facet) in self.facets.iter().enumerate() {
-                if !facet.alive || facet.conflict.is_empty() { continue; }
-                if facet.farthest_dist > best_dist {
-                    best_dist = facet.farthest_dist;
-                    best_facet = fi as u32;
-                }
-            }
-            if best_facet == UNSET { break; }
+        let mut visited = Vec::new();
 
-            let eye = self.facets[best_facet as usize].farthest_point;
+        while let Some(entry) = self.queue.pop() {
+            let fi = entry.index as usize;
+            if !self.facets[fi].alive || self.facets[fi].conflict.is_empty() {
+                continue;
+            }
+
+            let eye = self.facets[fi].farthest_point;
             let eye_point = self.points[eye as usize];
 
             let mut visible = Vec::new();
-            let mut visited = vec![false; self.facets.len()];
+            visited.resize(self.facets.len(), false);
             let mut horizon = Vec::new();
-            self.find_visible(best_facet as usize, eye_point, &mut visible, &mut visited, &mut horizon);
+            self.find_visible(fi, eye_point, &mut visible, &mut visited, &mut horizon);
+
+            // Reset visited flags for reuse.
+            for &vi in &visible { visited[vi] = false; }
 
             let mut orphans = Vec::new();
-            for &fi in &visible {
-                for pid in std::mem::take(&mut self.facets[fi].conflict) {
+            for &vi in &visible {
+                for pid in std::mem::take(&mut self.facets[vi].conflict) {
                     if pid != eye { orphans.push(pid); }
                 }
-                self.facets[fi].alive = false;
+                self.facets[vi].alive = false;
             }
 
             // Sort horizon into cyclic order: each edge's v1 == next edge's v0.
@@ -221,15 +259,52 @@ impl<'a> QuickHull<'a> {
                 self.facets.push(f);
             }
             for i in 0..horizon_len {
-                let fi = new_start + i;
-                self.facets[fi].neighbors[0] = (new_start + (i + 1) % horizon_len) as u32;
-                self.facets[fi].neighbors[1] = (new_start + (i + horizon_len - 1) % horizon_len) as u32;
+                let nfi = new_start + i;
+                self.facets[nfi].neighbors[0] = (new_start + (i + 1) % horizon_len) as u32;
+                self.facets[nfi].neighbors[1] = (new_start + (i + horizon_len - 1) % horizon_len) as u32;
                 let old_neighbor = horizon[i].2;
                 let (v0, v1) = (horizon[i].0, horizon[i].1);
-                patch_neighbor(&mut self.facets, old_neighbor, v0, v1, fi as u32);
+                patch_neighbor(&mut self.facets, old_neighbor, v0, v1, nfi as u32);
             }
 
-            for pid in orphans { self.assign_point(pid); }
+            // Conflict graph: orphans only tested against new cone facets.
+            for pid in orphans {
+                self.assign_point_to_range(pid, new_start);
+            }
+
+            // Enqueue new facets that received conflict points.
+            for nfi in new_start..self.facets.len() {
+                if !self.facets[nfi].conflict.is_empty() {
+                    self.queue.push(FacetPriority {
+                        dist: self.facets[nfi].farthest_dist,
+                        index: nfi as u32,
+                    });
+                }
+            }
+        }
+    }
+
+    /// Assign a point to the first visible facet in `facets[start..]`.
+    fn assign_point_to_range(&mut self, point_idx: u32, start: usize) {
+        let p = self.points[point_idx as usize];
+        let mut best_facet = UNSET;
+        let mut best_dist = 0.0_f64;
+        for fi in start..self.facets.len() {
+            let facet = &self.facets[fi];
+            if !facet.alive { continue; }
+            let dist = facet.distance(p);
+            if dist > best_dist {
+                best_dist = dist;
+                best_facet = fi as u32;
+            }
+        }
+        if best_facet != UNSET {
+            let f = &mut self.facets[best_facet as usize];
+            f.conflict.push(point_idx);
+            if best_dist > f.farthest_dist {
+                f.farthest_dist = best_dist;
+                f.farthest_point = point_idx;
+            }
         }
     }
 
