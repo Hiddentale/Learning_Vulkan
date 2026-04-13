@@ -8,14 +8,14 @@ use super::fibonnaci_spiral::SphericalFibonacci;
 use super::spherical_delaunay_triangulation::SphericalDelaunay;
 
 /// Point-level adjacency graph extracted from a Delaunay triangulation.
-struct Adjacency {
+pub struct Adjacency {
     /// Flat neighbor storage — `neighbors[offsets[i]..offsets[i+1]]` are i's neighbors.
     neighbors: Vec<u32>,
     offsets: Vec<u32>,
 }
 
 impl Adjacency {
-    fn from_delaunay(point_count: usize, delaunay: &SphericalDelaunay) -> Self {
+    pub fn from_delaunay(point_count: usize, delaunay: &SphericalDelaunay) -> Self {
         let mut counts = vec![0u32; point_count];
         for &v in &delaunay.triangles {
             counts[v as usize] += 2; // upper bound: each triangle adds ≤2 edges per vertex
@@ -48,7 +48,7 @@ impl Adjacency {
         Self { neighbors, offsets }
     }
 
-    fn neighbors_of(&self, point: u32) -> &[u32] {
+    pub fn neighbors_of(&self, point: u32) -> &[u32] {
         let start = self.offsets[point as usize] as usize;
         let end = self.offsets[point as usize + 1] as usize;
         &self.neighbors[start..end]

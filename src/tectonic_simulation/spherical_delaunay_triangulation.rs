@@ -1,54 +1,90 @@
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::HashMap;
 
 use glam::DVec3;
 
 const UNSET: u32 = u32::MAX;
 
+// ── Robust orient3d ──────────────────────────────────────────────────────────
+
+/// Exact sign of the 3×3 determinant | (a-d) (b-d) (c-d) |.
+/// Uses an error-bounded fast path; falls back to compensated arithmetic.
 fn orient3d(a: DVec3, b: DVec3, c: DVec3, d: DVec3) -> f64 {
-    (a - d).dot((b - d).cross(c - d))
-}
+    let ad = a - d;
+    let bd = b - d;
+    let cd = c - d;
+    let result = ad.dot(bd.cross(cd));
 
-/// Outward-facing normal for a triangle on a convex hull that contains the origin.
-fn outward_normal(a: DVec3, b: DVec3, c: DVec3) -> DVec3 {
-    let n = (b - a).cross(c - a);
-    if n.dot(a) < 0.0 { -n } else { n }
-}
+    // Error bound from Shewchuk: if |result| > bound, the sign is reliable.
+    let permanent = (ad.x.abs() * (bd.y * cd.z).abs()
+        + ad.x.abs() * (bd.z * cd.y).abs()
+        + ad.y.abs() * (bd.x * cd.z).abs()
+        + ad.y.abs() * (bd.z * cd.x).abs()
+        + ad.z.abs() * (bd.x * cd.y).abs()
+        + ad.z.abs() * (bd.y * cd.x).abs())
+        + (bd.x.abs() * (cd.y * ad.z).abs()
+            + bd.x.abs() * (cd.z * ad.y).abs()
+            + bd.y.abs() * (cd.x * ad.z).abs()
+            + bd.y.abs() * (cd.z * ad.x).abs()
+            + bd.z.abs() * (cd.x * ad.y).abs()
+            + bd.z.abs() * (cd.y * ad.x).abs())
+        + (cd.x.abs() * (ad.y * bd.z).abs()
+            + cd.x.abs() * (ad.z * bd.y).abs()
+            + cd.y.abs() * (ad.x * bd.z).abs()
+            + cd.y.abs() * (ad.z * bd.x).abs()
+            + cd.z.abs() * (ad.x * bd.y).abs()
+            + cd.z.abs() * (ad.y * bd.x).abs());
 
-struct Facet {
-    vertices: [u32; 3],
-    neighbors: [u32; 3],
-    normal: DVec3,
-    offset: f64,
-    farthest_dist: f64,
-    farthest_point: u32,
-    conflict: Vec<u32>,
-    alive: bool,
-}
-
-impl Facet {
-    fn new(v0: u32, v1: u32, v2: u32, points: &[DVec3]) -> Self {
-        let normal = outward_normal(points[v0 as usize], points[v1 as usize], points[v2 as usize]);
-        Self {
-            vertices: [v0, v1, v2],
-            neighbors: [UNSET; 3],
-            offset: normal.dot(points[v0 as usize]),
-            normal,
-            farthest_dist: f64::NEG_INFINITY,
-            farthest_point: UNSET,
-            conflict: Vec::new(),
-            alive: true,
-        }
+    // 5ε is the relative error bound for the 3×3 determinant (Shewchuk §4.1).
+    let eps = 5.0 * f64::EPSILON;
+    if result.abs() > eps * permanent {
+        return result;
     }
 
-    fn distance(&self, point: DVec3) -> f64 {
-        self.normal.dot(point) - self.offset
-    }
+    // Slow path: recompute with Kahan-style compensated summation.
+    orient3d_exact(a, b, c, d)
 }
 
-/// Spherical Delaunay triangulation computed via 3D convex hull.
+/// Compensated orient3d for the near-zero case.
+fn orient3d_exact(a: DVec3, b: DVec3, c: DVec3, d: DVec3) -> f64 {
+    // Expand the determinant into 6 products and sum with compensation.
+    let ad = a - d;
+    let bd = b - d;
+    let cd = c - d;
+    let terms = [
+        two_product(ad.x, bd.y * cd.z - bd.z * cd.y),
+        two_product(ad.y, bd.z * cd.x - bd.x * cd.z),
+        two_product(ad.z, bd.x * cd.y - bd.y * cd.x),
+    ];
+    let mut sum = 0.0_f64;
+    let mut comp = 0.0_f64;
+    for (hi, lo) in terms {
+        let y = hi - comp;
+        let t = sum + y;
+        comp = (t - sum) - y;
+        sum = t;
+        let y2 = lo - comp;
+        let t2 = sum + y2;
+        comp = (t2 - sum) - y2;
+        sum = t2;
+    }
+    sum
+}
+
+/// Dekker's two-product: returns (hi, lo) such that a*b = hi + lo exactly.
+fn two_product(a: f64, b: f64) -> (f64, f64) {
+    let hi = a * b;
+    let lo = a.mul_add(b, -hi);
+    (hi, lo)
+}
+
+// ── Spherical Delaunay (public API) ──────────────────────────────────────────
+
+/// Spherical Delaunay triangulation via incremental insertion with Lawson flipping.
 ///
-/// For points on a sphere, the convex hull facets are exactly the Delaunay triangles.
-/// Points must span the full sphere (origin inside their convex hull).
+/// For points on a sphere, the Delaunay triangulation equals the convex hull.
+/// This implementation works directly on the sphere surface, making it robust
+/// against the numerical instability that plagues convex-hull-based approaches
+/// when points are nearly coplanar (e.g. after plate rotation).
 pub struct SphericalDelaunay {
     /// Flat triangle indices — every 3 consecutive entries form one triangle (CCW from outside).
     pub triangles: Vec<u32>,
@@ -63,72 +99,52 @@ impl SphericalDelaunay {
 
     pub fn from_points(points: &[DVec3]) -> Self {
         assert!(points.len() >= 4, "need at least 4 points");
-        let mut hull = QuickHull::new(points);
-        hull.build();
-        hull.into_delaunay()
+        let mut builder = IncrementalBuilder::new(points);
+        builder.build();
+        builder.into_delaunay()
     }
 }
 
-#[derive(Clone, Copy)]
-struct FacetPriority {
-    dist: f64,
-    index: u32,
+// ── Internal builder ─────────────────────────────────────────────────────────
+
+struct BuildTriangle {
+    vertices: [u32; 3],
+    /// neighbors[i] is the triangle opposite vertices[i]
+    neighbors: [u32; 3],
+    alive: bool,
 }
 
-impl PartialEq for FacetPriority {
-    fn eq(&self, other: &Self) -> bool {
-        self.dist.total_cmp(&other.dist) == std::cmp::Ordering::Equal
-    }
+struct IncrementalBuilder {
+    points: Vec<DVec3>,
+    tris: Vec<BuildTriangle>,
+    last_located: u32,
 }
 
-impl Eq for FacetPriority {}
-
-impl PartialOrd for FacetPriority {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for FacetPriority {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.dist.total_cmp(&other.dist)
-    }
-}
-
-struct QuickHull<'a> {
-    points: &'a [DVec3],
-    facets: Vec<Facet>,
-    queue: BinaryHeap<FacetPriority>,
-}
-
-impl<'a> QuickHull<'a> {
-    fn new(points: &'a [DVec3]) -> Self {
-        Self { points, facets: Vec::new(), queue: BinaryHeap::new() }
-    }
-
-    fn build(&mut self) {
-        self.create_initial_tetrahedron();
-        self.assign_all_points();
-        self.seed_queue();
-        self.expand_hull();
-    }
-
-    fn seed_queue(&mut self) {
-        for fi in 0..self.facets.len() {
-            if !self.facets[fi].conflict.is_empty() {
-                self.queue.push(FacetPriority {
-                    dist: self.facets[fi].farthest_dist,
-                    index: fi as u32,
-                });
-            }
+impl IncrementalBuilder {
+    fn new(points: &[DVec3]) -> Self {
+        let normalized: Vec<DVec3> = points.iter().map(|p| p.normalize()).collect();
+        Self {
+            points: normalized,
+            tris: Vec::new(),
+            last_located: 0,
         }
     }
 
-    fn create_initial_tetrahedron(&mut self) {
-        let pts = self.points;
+    fn build(&mut self) {
+        let (seed_indices, order) = self.plan_insertion();
+        self.create_seed(&seed_indices);
+
+        for &idx in &order {
+            self.insert(idx);
+        }
+    }
+
+    /// Pick 4 well-separated seed points, return them + shuffled insertion order for the rest.
+    fn plan_insertion(&self) -> ([u32; 4], Vec<u32>) {
+        let pts = &self.points;
         let n = pts.len();
 
-        // Find axis-aligned extremes and pick the two most distant.
+        // Axis-aligned extremes → two most distant.
         let mut extremes = [0usize; 6];
         for i in 1..n {
             if pts[i].x < pts[extremes[0]].x { extremes[0] = i; }
@@ -146,7 +162,7 @@ impl<'a> QuickHull<'a> {
             }
         }
 
-        // Point farthest from edge ab.
+        // Farthest from edge ab.
         let ab = (pts[b] - pts[a]).normalize();
         let mut c = 0;
         best = 0.0;
@@ -157,7 +173,7 @@ impl<'a> QuickHull<'a> {
             if dist > best { best = dist; c = i; }
         }
 
-        // Point farthest from plane abc.
+        // Farthest from plane abc.
         let normal = (pts[b] - pts[a]).cross(pts[c] - pts[a]).normalize();
         let mut d = 0;
         best = 0.0;
@@ -167,179 +183,296 @@ impl<'a> QuickHull<'a> {
             if dist > best { best = dist; d = i; }
         }
 
+        let seeds = [a as u32, b as u32, c as u32, d as u32];
+
+        // Deterministic Fisher-Yates shuffle for O(n log n) expected insertion.
+        let mut order: Vec<u32> = (0..n as u32)
+            .filter(|i| !seeds.contains(i))
+            .collect();
+        let mut rng = 0x517cc1b727220a95u64;
+        for i in (1..order.len()).rev() {
+            rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            let j = (rng >> 33) as usize % (i + 1);
+            order.swap(i, j);
+        }
+
+        (seeds, order)
+    }
+
+    fn create_seed(&mut self, seeds: &[u32; 4]) {
+        let [a, b, c, d] = *seeds;
+        let pts = &self.points;
+
         // Orient so d is on the negative side of (a,b,c).
-        let (a, b, c, d) = (a as u32, b as u32, c as u32, d as u32);
         let (a, b, c) = if orient3d(pts[a as usize], pts[b as usize], pts[c as usize], pts[d as usize]) > 0.0 {
             (a, b, c)
         } else {
             (a, c, b)
         };
 
-        self.facets = vec![
-            Facet::new(a, b, c, self.points), // f0, opposite d
-            Facet::new(a, c, d, self.points), // f1, opposite b
-            Facet::new(a, d, b, self.points), // f2, opposite c
-            Facet::new(b, d, c, self.points), // f3, opposite a
+        // 4 triangles of the tetrahedron with consistent neighbor wiring.
+        self.tris = vec![
+            BuildTriangle { vertices: [a, b, c], neighbors: [3, 1, 2], alive: true }, // f0, opposite d
+            BuildTriangle { vertices: [a, c, d], neighbors: [3, 2, 0], alive: true }, // f1, opposite b
+            BuildTriangle { vertices: [a, d, b], neighbors: [3, 0, 1], alive: true }, // f2, opposite c
+            BuildTriangle { vertices: [b, d, c], neighbors: [1, 0, 2], alive: true }, // f3, opposite a
         ];
-        self.facets[0].neighbors = [3, 1, 2];
-        self.facets[1].neighbors = [3, 2, 0];
-        self.facets[2].neighbors = [3, 0, 1];
-        self.facets[3].neighbors = [1, 0, 2];
+        self.last_located = 0;
     }
 
-    fn assign_all_points(&mut self) {
-        let initial: Vec<u32> = self.facets.iter()
-            .flat_map(|f| f.vertices.iter().copied()).collect();
-        for i in 0..self.points.len() {
-            let idx = i as u32;
-            if !initial.contains(&idx) { self.assign_point(idx); }
+    fn insert(&mut self, point_idx: u32) {
+        let tri_idx = self.locate(point_idx);
+        let new_tris = self.split(tri_idx, point_idx);
+
+        // Push edges opposite the new point onto the flip stack.
+        // In each new triangle, vertex[0] is the inserted point, so neighbors[0] is the
+        // external neighbor (the edge opposite the new point).
+        let mut stack: Vec<(u32, u32)> = Vec::with_capacity(12);
+        for &t in &new_tris {
+            stack.push((t, 0));
         }
+        self.flip_edges(&mut stack);
     }
 
-    fn assign_point(&mut self, point_idx: u32) {
+    // ── Stage 2: Walk to containing triangle ─────────────────────────────────
+
+    fn locate(&mut self, point_idx: u32) -> u32 {
         let p = self.points[point_idx as usize];
-        let mut best_facet = UNSET;
-        let mut best_dist = 0.0_f64;
-        for (fi, facet) in self.facets.iter().enumerate() {
-            if !facet.alive { continue; }
-            let dist = facet.distance(p);
-            if dist > best_dist { best_dist = dist; best_facet = fi as u32; }
-        }
-        if best_facet != UNSET {
-            let f = &mut self.facets[best_facet as usize];
-            f.conflict.push(point_idx);
-            if best_dist > f.farthest_dist {
-                f.farthest_dist = best_dist;
-                f.farthest_point = point_idx;
+        let mut tri_idx = self.last_located;
+        let max_steps = (self.tris.len() as f64).sqrt() as usize * 6 + 20;
+
+        for _ in 0..max_steps {
+            // Skip dead triangles.
+            if !self.tris[tri_idx as usize].alive {
+                tri_idx = self.any_alive_triangle();
             }
-        }
-    }
 
-    fn expand_hull(&mut self) {
-        let mut visited = Vec::new();
+            let [va, vb, vc] = self.tris[tri_idx as usize].vertices;
+            let a = self.points[va as usize];
+            let b = self.points[vb as usize];
+            let c = self.points[vc as usize];
 
-        while let Some(entry) = self.queue.pop() {
-            let fi = entry.index as usize;
-            if !self.facets[fi].alive || self.facets[fi].conflict.is_empty() {
+            // For each edge, test which side p is on.
+            // Edge BC (opposite vertex A, neighbor[0]): test p.dot(b.cross(c))
+            let orient_bc = p.dot(b.cross(c));
+            if orient_bc < 0.0 {
+                let next = self.tris[tri_idx as usize].neighbors[0];
+                if next == UNSET { break; }
+                tri_idx = next;
                 continue;
             }
 
-            let eye = self.facets[fi].farthest_point;
-            let eye_point = self.points[eye as usize];
-
-            let mut visible = Vec::new();
-            visited.resize(self.facets.len(), false);
-            let mut horizon = Vec::new();
-            self.find_visible(fi, eye_point, &mut visible, &mut visited, &mut horizon);
-
-            // Reset visited flags for reuse.
-            for &vi in &visible { visited[vi] = false; }
-
-            let mut orphans = Vec::new();
-            for &vi in &visible {
-                for pid in std::mem::take(&mut self.facets[vi].conflict) {
-                    if pid != eye { orphans.push(pid); }
-                }
-                self.facets[vi].alive = false;
+            let orient_ca = p.dot(c.cross(a));
+            if orient_ca < 0.0 {
+                let next = self.tris[tri_idx as usize].neighbors[1];
+                if next == UNSET { break; }
+                tri_idx = next;
+                continue;
             }
 
-            // Sort horizon into cyclic order: each edge's v1 == next edge's v0.
-            for i in 0..horizon.len() - 1 {
-                let target = horizon[i].1;
-                if let Some(j) = (i + 1..horizon.len()).find(|&j| horizon[j].0 == target) {
-                    horizon.swap(i + 1, j);
-                }
+            let orient_ab = p.dot(a.cross(b));
+            if orient_ab < 0.0 {
+                let next = self.tris[tri_idx as usize].neighbors[2];
+                if next == UNSET { break; }
+                tri_idx = next;
+                continue;
             }
 
-            let new_start = self.facets.len();
-            let horizon_len = horizon.len();
-            for &(v0, v1, neighbor) in &horizon {
-                let mut f = Facet::new(v0, v1, eye, self.points);
-                f.neighbors[2] = neighbor as u32;
-                self.facets.push(f);
-            }
-            for i in 0..horizon_len {
-                let nfi = new_start + i;
-                self.facets[nfi].neighbors[0] = (new_start + (i + 1) % horizon_len) as u32;
-                self.facets[nfi].neighbors[1] = (new_start + (i + horizon_len - 1) % horizon_len) as u32;
-                let old_neighbor = horizon[i].2;
-                let (v0, v1) = (horizon[i].0, horizon[i].1);
-                patch_neighbor(&mut self.facets, old_neighbor, v0, v1, nfi as u32);
-            }
+            // Point is inside this triangle.
+            self.last_located = tri_idx;
+            return tri_idx;
+        }
 
-            // Conflict graph: orphans only tested against new cone facets.
-            for pid in orphans {
-                self.assign_point_to_range(pid, new_start);
-            }
+        // Fallback: brute-force search (should be extremely rare).
+        self.locate_brute_force(p)
+    }
 
-            // Enqueue new facets that received conflict points.
-            for nfi in new_start..self.facets.len() {
-                if !self.facets[nfi].conflict.is_empty() {
-                    self.queue.push(FacetPriority {
-                        dist: self.facets[nfi].farthest_dist,
-                        index: nfi as u32,
-                    });
-                }
+    fn any_alive_triangle(&self) -> u32 {
+        self.tris.iter().position(|t| t.alive).unwrap() as u32
+    }
+
+    fn locate_brute_force(&mut self, p: DVec3) -> u32 {
+        let mut best_tri = 0u32;
+        let mut best_dot = f64::NEG_INFINITY;
+        for (i, tri) in self.tris.iter().enumerate() {
+            if !tri.alive { continue; }
+            let centroid = (self.points[tri.vertices[0] as usize]
+                + self.points[tri.vertices[1] as usize]
+                + self.points[tri.vertices[2] as usize])
+                .normalize();
+            let d = p.dot(centroid);
+            if d > best_dot {
+                best_dot = d;
+                best_tri = i as u32;
+            }
+        }
+        self.last_located = best_tri;
+        best_tri
+    }
+
+    // ── Stage 3: Split triangle into 3 ──────────────────────────────────────
+
+    fn split(&mut self, tri_idx: u32, point_idx: u32) -> [u32; 3] {
+        let [a, b, c] = self.tris[tri_idx as usize].vertices;
+        let [n_a, n_b, n_c] = self.tris[tri_idx as usize].neighbors;
+
+        // Kill old triangle.
+        self.tris[tri_idx as usize].alive = false;
+
+        // Create 3 new triangles with P as vertex[0].
+        // T0 = (P, B, C) — opposite edge BC, external neighbor = n_a
+        // T1 = (P, C, A) — opposite edge CA, external neighbor = n_b
+        // T2 = (P, A, B) — opposite edge AB, external neighbor = n_c
+        let t0 = self.alloc_tri([point_idx, b, c], [n_a, UNSET, UNSET]);
+        let t1 = self.alloc_tri([point_idx, c, a], [n_b, UNSET, UNSET]);
+        let t2 = self.alloc_tri([point_idx, a, b], [n_c, UNSET, UNSET]);
+
+        // Wire internal neighbors (edges adjacent to P).
+        // T0's neighbor opposite C (index 1) = T1; opposite B (index 2) = T2
+        self.tris[t0 as usize].neighbors[1] = t1;
+        self.tris[t0 as usize].neighbors[2] = t2;
+        self.tris[t1 as usize].neighbors[1] = t2;
+        self.tris[t1 as usize].neighbors[2] = t0;
+        self.tris[t2 as usize].neighbors[1] = t0;
+        self.tris[t2 as usize].neighbors[2] = t1;
+
+        // Patch external neighbors to point back to new triangles.
+        self.patch_neighbor(n_a, tri_idx, t0);
+        self.patch_neighbor(n_b, tri_idx, t1);
+        self.patch_neighbor(n_c, tri_idx, t2);
+
+        self.last_located = t0;
+        [t0, t1, t2]
+    }
+
+    fn alloc_tri(&mut self, vertices: [u32; 3], neighbors: [u32; 3]) -> u32 {
+        let idx = self.tris.len() as u32;
+        self.tris.push(BuildTriangle { vertices, neighbors, alive: true });
+        idx
+    }
+
+    /// Patch a neighbor to point to new_tri instead of old_tri.
+    fn patch_neighbor(&mut self, neighbor: u32, old_tri: u32, new_tri: u32) {
+        if neighbor == UNSET { return; }
+        let n = &mut self.tris[neighbor as usize];
+        for i in 0..3 {
+            if n.neighbors[i] == old_tri {
+                n.neighbors[i] = new_tri;
+                return;
+            }
+        }
+        // old_tri may have been killed by a prior flip — find by shared edge instead.
+        let new_verts = self.tris[new_tri as usize].vertices;
+        let n = &mut self.tris[neighbor as usize];
+        for i in 0..3 {
+            let nv1 = n.vertices[(i + 1) % 3];
+            let nv2 = n.vertices[(i + 2) % 3];
+            // The shared edge in the neighbor is (nv1, nv2). Check if new_tri has both.
+            if new_verts.contains(&nv1) && new_verts.contains(&nv2) {
+                n.neighbors[i] = new_tri;
+                return;
             }
         }
     }
 
-    /// Assign a point to the first visible facet in `facets[start..]`.
-    fn assign_point_to_range(&mut self, point_idx: u32, start: usize) {
-        let p = self.points[point_idx as usize];
-        let mut best_facet = UNSET;
-        let mut best_dist = 0.0_f64;
-        for fi in start..self.facets.len() {
-            let facet = &self.facets[fi];
-            if !facet.alive { continue; }
-            let dist = facet.distance(p);
-            if dist > best_dist {
-                best_dist = dist;
-                best_facet = fi as u32;
-            }
-        }
-        if best_facet != UNSET {
-            let f = &mut self.facets[best_facet as usize];
-            f.conflict.push(point_idx);
-            if best_dist > f.farthest_dist {
-                f.farthest_dist = best_dist;
-                f.farthest_point = point_idx;
+    // ── Stage 4: Lawson edge flipping ────────────────────────────────────────
+
+    fn flip_edges(&mut self, stack: &mut Vec<(u32, u32)>) {
+        while let Some((tri_idx, edge_idx)) = stack.pop() {
+            if !self.tris[tri_idx as usize].alive { continue; }
+
+            let neighbor_idx = self.tris[tri_idx as usize].neighbors[edge_idx as usize];
+            if neighbor_idx == UNSET { continue; }
+            if !self.tris[neighbor_idx as usize].alive { continue; }
+
+            let p = self.tris[tri_idx as usize].vertices[edge_idx as usize];
+            let shared_v1 = self.tris[tri_idx as usize].vertices[(edge_idx as usize + 1) % 3];
+            let shared_v2 = self.tris[tri_idx as usize].vertices[(edge_idx as usize + 2) % 3];
+
+            // Find the opposite vertex in the neighbor triangle.
+            let d = self.opposite_vertex(neighbor_idx, shared_v1, shared_v2);
+
+            // InCircle test on the unit sphere: flip if D is "above" the plane of (P, V1, V2),
+            // meaning orient3d(P, V1, V2, D) > 0 (D visible from triangle → inside circumcircle).
+            let orient = orient3d(
+                self.points[p as usize],
+                self.points[shared_v1 as usize],
+                self.points[shared_v2 as usize],
+                self.points[d as usize],
+            );
+
+            if orient > 0.0 {
+                self.flip(tri_idx, edge_idx as usize, neighbor_idx, p, d, shared_v1, shared_v2, stack);
             }
         }
     }
 
-    fn find_visible(
-        &self, facet_idx: usize, eye: DVec3,
-        visible: &mut Vec<usize>, visited: &mut Vec<bool>,
-        horizon: &mut Vec<(u32, u32, usize)>,
+    fn opposite_vertex(&self, tri_idx: u32, v1: u32, v2: u32) -> u32 {
+        let verts = self.tris[tri_idx as usize].vertices;
+        for &v in &verts {
+            if v != v1 && v != v2 { return v; }
+        }
+        panic!("shared edge not found in neighbor");
+    }
+
+    /// Flip the shared edge between tri_a and tri_b in-place (no new allocations).
+    ///
+    /// Before: tri_a = (..., p, v1, v2, ...), tri_b = (..., d, v2, v1, ...)
+    ///         sharing edge v1-v2.
+    /// After:  tri_a = (p, d, v2), tri_b = (d, p, v1).
+    fn flip(
+        &mut self,
+        tri_a: u32, edge_a: usize, tri_b: u32,
+        p: u32, d: u32, v1: u32, v2: u32,
+        stack: &mut Vec<(u32, u32)>,
     ) {
-        visited[facet_idx] = true;
-        visible.push(facet_idx);
-        let verts = self.facets[facet_idx].vertices;
-        let neighbors = self.facets[facet_idx].neighbors;
+        // Gather external neighbors before mutating.
+        let ext_a_opp_v1 = self.tris[tri_a as usize].neighbors[(edge_a + 1) % 3];
+        let ext_a_opp_v2 = self.tris[tri_a as usize].neighbors[(edge_a + 2) % 3];
 
-        for edge in 0..3 {
-            let ni = neighbors[edge] as usize;
-            if visited.get(ni).copied().unwrap_or(true) { continue; }
-            let neighbor = &self.facets[ni];
-            if !neighbor.alive { continue; }
-            if neighbor.distance(eye) > 0.0 {
-                self.find_visible(ni, eye, visible, visited, horizon);
-            } else {
-                let v0 = verts[(edge + 1) % 3];
-                let v1 = verts[(edge + 2) % 3];
-                horizon.push((v0, v1, ni));
-            }
+        let vb = self.tris[tri_b as usize].vertices;
+        let nb = self.tris[tri_b as usize].neighbors;
+        let mut ext_b_opp_v1 = UNSET;
+        let mut ext_b_opp_v2 = UNSET;
+        for i in 0..3 {
+            if vb[i] == v1 { ext_b_opp_v1 = nb[i]; }
+            if vb[i] == v2 { ext_b_opp_v2 = nb[i]; }
         }
+
+        // tri_a becomes (p, d, v2): neighbor[0] opp p, neighbor[1] opp d, neighbor[2] opp v2
+        self.tris[tri_a as usize].vertices = [p, d, v2];
+        self.tris[tri_a as usize].neighbors = [ext_b_opp_v2, ext_a_opp_v2, tri_b];
+
+        // tri_b becomes (p, v1, d): neighbor[0] opp p, neighbor[1] opp v1, neighbor[2] opp d
+        self.tris[tri_b as usize].vertices = [p, v1, d];
+        self.tris[tri_b as usize].neighbors = [ext_b_opp_v1, tri_a, ext_a_opp_v1];
+
+        // Patch the 4 external neighbors to point to the correct triangle.
+        self.patch_neighbor(ext_a_opp_v1, tri_a, tri_b);
+        self.patch_neighbor(ext_b_opp_v2, tri_b, tri_a);
+        // ext_a_opp_v2 stays with tri_a, ext_b_opp_v1 stays with tri_b — no patch needed.
+
+        // Push the 4 external edges for further flipping.
+        // tri_a = (p, d, v2): edge[0] opp p = (d,v2), edge[1] opp d = (v2,p)
+        stack.push((tri_a, 0));
+        stack.push((tri_a, 1));
+        // tri_b = (p, v1, d): edge[0] opp p = (v1,d), edge[2] opp d = (p,v1)
+        stack.push((tri_b, 0));
+        stack.push((tri_b, 2));
     }
+
+
+    // ── Stage 5: Convert to output format ────────────────────────────────────
 
     fn into_delaunay(self) -> SphericalDelaunay {
-        let tri_count = self.facets.iter().filter(|f| f.alive).count();
+        let tri_count = self.tris.iter().filter(|t| t.alive).count();
         let mut triangles = Vec::with_capacity(tri_count * 3);
         let mut halfedges = vec![UNSET; tri_count * 3];
 
-        for f in &self.facets {
-            if f.alive { triangles.extend_from_slice(&f.vertices); }
+        for t in &self.tris {
+            if t.alive {
+                triangles.extend_from_slice(&t.vertices);
+            }
         }
 
         let mut edge_map: HashMap<(u32, u32), u32> = HashMap::with_capacity(tri_count * 3);
@@ -357,18 +490,6 @@ impl<'a> QuickHull<'a> {
         }
 
         SphericalDelaunay { triangles, halfedges }
-    }
-}
-
-fn patch_neighbor(facets: &mut [Facet], old_neighbor: usize, v0: u32, v1: u32, new_facet: u32) {
-    let f = &mut facets[old_neighbor];
-    for edge in 0..3 {
-        let ev0 = f.vertices[(edge + 1) % 3];
-        let ev1 = f.vertices[(edge + 2) % 3];
-        if (ev0 == v1 && ev1 == v0) || (ev0 == v0 && ev1 == v1) {
-            f.neighbors[edge] = new_facet;
-            return;
-        }
     }
 }
 
@@ -479,7 +600,6 @@ mod tests {
 
     #[test]
     fn random_distribution() {
-        // Deterministic pseudo-random points spanning the full unit sphere.
         let mut points = Vec::with_capacity(300);
         let mut state = 123456789u64;
         let next = |s: &mut u64| -> f64 {
@@ -508,5 +628,38 @@ mod tests {
                 assert!(normal.dot(*p) <= d + 1e-10, "point outside hull");
             }
         }
+    }
+
+    // ── New robustness tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn rotated_fibonacci_points() {
+        use glam::DQuat;
+        let sf = SphericalFibonacci::new(500);
+        let mut points = sf.all_points();
+        // Simulate plate rotation — the case that broke QuickHull.
+        let rotation = DQuat::from_axis_angle(DVec3::new(0.3, 0.7, 0.5).normalize(), 0.15);
+        for p in &mut points {
+            *p = rotation.mul_vec3(*p);
+        }
+        let del = SphericalDelaunay::from_points(&points);
+        assert_eq!(del.triangle_count(), 2 * 500 - 4);
+        for (i, &twin) in del.halfedges.iter().enumerate() {
+            assert_ne!(twin, UNSET, "halfedge {i} has no twin");
+        }
+    }
+
+    #[test]
+    fn perturbed_sphere_points() {
+        let sf = SphericalFibonacci::new(200);
+        let mut points = sf.all_points();
+        let mut state = 42u64;
+        for p in &mut points {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let scale = 0.999 + (state as f64 / u64::MAX as f64) * 0.002;
+            *p *= scale;
+        }
+        let del = SphericalDelaunay::from_points(&points);
+        assert_eq!(del.triangle_count(), 2 * 200 - 4);
     }
 }

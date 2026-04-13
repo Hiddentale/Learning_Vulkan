@@ -8,6 +8,7 @@ use super::fibonnaci_spiral::SphericalFibonacci;
 use super::plate_initializer::{initialize_plates, InitParams};
 use super::plate_seed_placement::{assign_plates, PlateAssignment, WarpParams};
 use super::plates::{CrustType, Plate};
+use super::simulate::Simulation;
 use super::spherical_delaunay_triangulation::SphericalDelaunay;
 
 const IMAGE_WIDTH: u32 = 2048;
@@ -247,6 +248,79 @@ fn draw_line(img: &mut RgbImage, x0: f64, y0: f64, x1: f64, y1: f64, color: [u8;
     }
 }
 
+/// Render the simulation state. Must be called right after a resample so that
+/// points are a clean Fibonacci grid and `nearest_index` works correctly.
+pub fn render_simulation(sim: &Simulation) -> RgbImage {
+    let mut img = RgbImage::new(IMAGE_WIDTH, IMAGE_HEIGHT);
+    let fibonacci = SphericalFibonacci::new(sim.point_count);
+
+    // Build per-point lookups from current plate state.
+    let n = sim.points.len();
+    let mut point_plate = vec![0u32; n];
+    let mut point_crust = vec![CrustType::Oceanic; n];
+    for (plate_idx, plate) in sim.plates.iter().enumerate() {
+        for (local, &global) in plate.point_indices.iter().enumerate() {
+            point_plate[global as usize] = plate_idx as u32;
+            point_crust[global as usize] = plate.crust[local].crust_type;
+        }
+    }
+
+    // Color pixels and build plate-id grid for border detection.
+    let mut pixel_plate = vec![0u32; (IMAGE_WIDTH * IMAGE_HEIGHT) as usize];
+    for py in 0..IMAGE_HEIGHT {
+        let lat = PI / 2.0 - (py as f64 + 0.5) / IMAGE_HEIGHT as f64 * PI;
+        for px in 0..IMAGE_WIDTH {
+            let lon = (px as f64 + 0.5) / IMAGE_WIDTH as f64 * 2.0 * PI - PI;
+            let dir = latlon_to_direction(lat, lon);
+            let nearest = fibonacci.nearest_index(dir);
+            let idx = (py * IMAGE_WIDTH + px) as usize;
+            pixel_plate[idx] = point_plate[nearest as usize];
+
+            let color = match point_crust[nearest as usize] {
+                CrustType::Continental => CONTINENTAL_COLOR,
+                CrustType::Oceanic => OCEANIC_COLOR,
+            };
+            img.put_pixel(px, py, Rgb(color));
+        }
+    }
+
+    // Draw plate borders.
+    let border_color = Rgb([0u8, 0, 0]);
+    for py in 0..IMAGE_HEIGHT {
+        for px in 0..IMAGE_WIDTH {
+            let idx = (py * IMAGE_WIDTH + px) as usize;
+            let plate = pixel_plate[idx];
+            let on_border = [(1i32, 0i32), (0, 1)].iter().any(|&(dx, dy)| {
+                let nx = (px as i32 + dx).rem_euclid(IMAGE_WIDTH as i32) as u32;
+                let ny = (py as i32 + dy).clamp(0, IMAGE_HEIGHT as i32 - 1) as u32;
+                let ni = (ny * IMAGE_WIDTH + nx) as usize;
+                pixel_plate[ni] != plate
+            });
+            if on_border {
+                img.put_pixel(px, py, border_color);
+            }
+        }
+    }
+
+    // Draw velocity arrows at each plate centroid.
+    for plate in &sim.plates {
+        if plate.point_indices.is_empty() {
+            continue;
+        }
+        let centroid: DVec3 = plate.point_indices.iter()
+            .map(|&i| sim.points[i as usize])
+            .sum::<DVec3>()
+            .normalize_or_zero();
+        let velocity = plate.surface_velocity(centroid);
+        if velocity.length() < 1e-12 {
+            continue;
+        }
+        draw_velocity_arrow(&mut img, centroid, velocity);
+    }
+
+    img
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -256,6 +330,55 @@ mod tests {
     fn plate_visualizer() {
         let output = Path::new("src/tectonic_simulation/plate_map.png");
         generate_and_save(42, output);
+    }
+
+    const TIMELAPSE_POINTS: u32 = 50_000;
+    const TIMELAPSE_STEPS: usize = 200;
+    /// Render every N resample cycles. Each cycle = RESAMPLE_INTERVAL steps.
+    const TIMELAPSE_RENDER_EVERY_N_RESAMPLES: usize = 1;
+
+    #[test]
+    #[ignore] // Run with: cargo test --release simulation_timelapse -- --ignored --nocapture
+    fn simulation_timelapse() {
+        use std::io::Write;
+        use super::super::resample;
+
+        let output_dir = Path::new("src/tectonic_simulation/timelapse");
+        std::fs::create_dir_all(output_dir).expect("failed to create timelapse dir");
+
+        let fibonacci = SphericalFibonacci::new(TIMELAPSE_POINTS);
+        let points = fibonacci.all_points();
+        let delaunay = SphericalDelaunay::from_points(&points);
+        let assignment = assign_plates(
+            &points, &fibonacci, &delaunay, PLATE_COUNT, 42, &WarpParams::default(),
+        );
+        let plates = initialize_plates(&points, &delaunay, &assignment, &InitParams::default());
+        let mut sim = Simulation::new(points, plates, &delaunay);
+
+        let steps_per_frame = resample::RESAMPLE_INTERVAL * TIMELAPSE_RENDER_EVERY_N_RESAMPLES;
+        let total_frames = TIMELAPSE_STEPS / steps_per_frame + 1;
+        let mut frame = 0;
+
+        // Frame 0: initial state (points are a clean Fibonacci grid).
+        frame += 1;
+        print!("\r[{:>3}%] Frame {}/{} (t=0 Myr)        ", frame * 100 / total_frames, frame, total_frames);
+        std::io::stdout().flush().unwrap();
+        render_simulation(&sim).save(output_dir.join("frame_000.png")).unwrap();
+
+        for step in 1..=TIMELAPSE_STEPS {
+            sim.step();
+            // Render right after resample (points are clean Fibonacci grid).
+            if step % steps_per_frame == 0 {
+                frame += 1;
+                let pct = (frame * 100).min(100 * total_frames) / total_frames;
+                print!("\r[{:>3}%] Frame {}/{} (t={:.0} Myr)        ", pct, frame, total_frames, sim.time);
+                std::io::stdout().flush().unwrap();
+                render_simulation(&sim)
+                    .save(output_dir.join(format!("frame_{:03}.png", step)))
+                    .unwrap();
+            }
+        }
+        println!("\r[100%] Done — {} frames in {}        ", total_frames, output_dir.display());
     }
 
     #[test]

@@ -1,6 +1,10 @@
+pub mod continental_collision;
 pub mod fibonnaci_spiral;
 pub mod plate_initializer;
 pub mod plate_seed_placement;
 pub mod plate_visualizer;
 pub mod plates;
+pub mod resample;
+pub mod simulate;
 pub mod spherical_delaunay_triangulation;
+pub mod subduction;
