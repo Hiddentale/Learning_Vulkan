@@ -1,5 +1,6 @@
 pub mod continental_collision;
 pub mod fibonnaci_spiral;
+pub mod oceanic_crust_generation;
 pub mod plate_initializer;
 pub mod plate_seed_placement;
 pub mod plate_visualizer;

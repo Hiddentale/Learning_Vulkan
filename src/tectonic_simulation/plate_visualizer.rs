@@ -330,7 +330,7 @@ mod tests {
         generate_and_save(42, output);
     }
 
-    const TIMELAPSE_POINTS: u32 = 250_000;
+    const TIMELAPSE_POINTS: u32 = 50_000;
     const TIMELAPSE_STEPS: usize = 200;
     /// Render every N resample cycles. Each cycle = RESAMPLE_INTERVAL steps.
     const TIMELAPSE_RENDER_EVERY_N_RESAMPLES: usize = 1;

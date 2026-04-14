@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use glam::{DQuat, DVec3};
 
 use super::continental_collision;
+use super::oceanic_crust_generation;
 use super::plate_seed_placement::Adjacency;
 use super::plates::{CrustType, OrogenyType, Plate};
 use super::resample;
@@ -37,6 +38,7 @@ pub struct Simulation {
     pub time: f64,
     pub point_count: u32,
     steps_since_resample: usize,
+    steps_since_crust_generation: usize,
 }
 
 impl Simulation {
@@ -47,7 +49,10 @@ impl Simulation {
     ) -> Self {
         let point_count = points.len() as u32;
         let adjacency = Adjacency::from_delaunay(points.len(), delaunay);
-        Self { points, plates, adjacency, time: 0.0, point_count, steps_since_resample: 0 }
+        Self {
+            points, plates, adjacency, time: 0.0, point_count,
+            steps_since_resample: 0, steps_since_crust_generation: 0,
+        }
     }
 
     /// Advance the simulation by one timestep.
@@ -56,6 +61,13 @@ impl Simulation {
         let boundary = find_boundary_edges(&self.plates, &self.points, &self.adjacency);
         self.process_subduction(&boundary);
         self.process_collisions(&boundary);
+        self.steps_since_crust_generation += 1;
+        if self.steps_since_crust_generation
+            >= oceanic_crust_generation::generation_interval(&self.plates)
+        {
+            self.generate_oceanic_crust(&boundary);
+            self.steps_since_crust_generation = 0;
+        }
         self.apply_erosion_and_damping();
         self.time += DT;
         self.steps_since_resample += 1;
@@ -242,6 +254,33 @@ impl Simulation {
         continental_collision::transfer_terrane(nearest, src, dst);
     }
 
+    fn generate_oceanic_crust(&mut self, boundary: &[BoundaryEdge]) {
+        let divergent = oceanic_crust_generation::find_divergent_edges(
+            boundary, &self.plates, &self.points,
+        );
+        if divergent.is_empty() {
+            return;
+        }
+
+        let dt_since = self.steps_since_crust_generation as f64 * DT;
+        let new_points = oceanic_crust_generation::generate_ridge_points(
+            &divergent, &self.plates, &self.points, dt_since,
+        );
+        if new_points.is_empty() {
+            return;
+        }
+
+        for np in new_points {
+            let global_idx = self.points.len() as u32;
+            self.points.push(np.position);
+            self.plates[np.plate_index as usize].point_indices.push(global_idx);
+            self.plates[np.plate_index as usize].crust.push(np.crust);
+        }
+
+        let delaunay = SphericalDelaunay::from_points(&self.points);
+        self.adjacency = Adjacency::from_delaunay(self.points.len(), &delaunay);
+    }
+
     fn apply_erosion_and_damping(&mut self) {
         for plate in &mut self.plates {
             for crust in &mut plate.crust {
@@ -267,14 +306,15 @@ impl Simulation {
 }
 
 /// A boundary edge: a point where two plates meet.
-struct BoundaryEdge {
-    point: u32,
-    plate_a: u32,
-    plate_b: u32,
-    crust_a: CrustType,
-    crust_b: CrustType,
-    age_a: f64,
-    age_b: f64,
+pub(super) struct BoundaryEdge {
+    pub(super) point: u32,
+    pub(super) neighbor: u32,
+    pub(super) plate_a: u32,
+    pub(super) plate_b: u32,
+    pub(super) crust_a: CrustType,
+    pub(super) crust_b: CrustType,
+    pub(super) age_a: f64,
+    pub(super) age_b: f64,
 }
 
 /// Scan the adjacency graph for edges that cross plate boundaries.
@@ -310,6 +350,7 @@ fn find_boundary_edges(
             let local_b = point_to_local[neighbor as usize];
             edges.push(BoundaryEdge {
                 point,
+                neighbor,
                 plate_a,
                 plate_b,
                 crust_a: plates[plate_a as usize].crust[local_a].crust_type,
