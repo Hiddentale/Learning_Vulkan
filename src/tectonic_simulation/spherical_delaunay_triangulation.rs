@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::io::Write;
 
 use glam::DVec3;
 
@@ -15,39 +14,23 @@ fn orient3d(a: DVec3, b: DVec3, c: DVec3, d: DVec3) -> f64 {
     let cd = c - d;
     let result = ad.dot(bd.cross(cd));
 
-    // Error bound from Shewchuk: if |result| > bound, the sign is reliable.
-    let permanent = (ad.x.abs() * (bd.y * cd.z).abs()
+    let permanent = ad.x.abs() * (bd.y * cd.z).abs()
         + ad.x.abs() * (bd.z * cd.y).abs()
         + ad.y.abs() * (bd.x * cd.z).abs()
         + ad.y.abs() * (bd.z * cd.x).abs()
         + ad.z.abs() * (bd.x * cd.y).abs()
-        + ad.z.abs() * (bd.y * cd.x).abs())
-        + (bd.x.abs() * (cd.y * ad.z).abs()
-            + bd.x.abs() * (cd.z * ad.y).abs()
-            + bd.y.abs() * (cd.x * ad.z).abs()
-            + bd.y.abs() * (cd.z * ad.x).abs()
-            + bd.z.abs() * (cd.x * ad.y).abs()
-            + bd.z.abs() * (cd.y * ad.x).abs())
-        + (cd.x.abs() * (ad.y * bd.z).abs()
-            + cd.x.abs() * (ad.z * bd.y).abs()
-            + cd.y.abs() * (ad.x * bd.z).abs()
-            + cd.y.abs() * (ad.z * bd.x).abs()
-            + cd.z.abs() * (ad.x * bd.y).abs()
-            + cd.z.abs() * (ad.y * bd.x).abs());
+        + ad.z.abs() * (bd.y * cd.x).abs();
 
-    // 5ε is the relative error bound for the 3×3 determinant (Shewchuk §4.1).
     let eps = 5.0 * f64::EPSILON;
     if result.abs() > eps * permanent {
         return result;
     }
 
-    // Slow path: recompute with Kahan-style compensated summation.
     orient3d_exact(a, b, c, d)
 }
 
 /// Compensated orient3d for the near-zero case.
 fn orient3d_exact(a: DVec3, b: DVec3, c: DVec3, d: DVec3) -> f64 {
-    // Expand the determinant into 6 products and sum with compensation.
     let ad = a - d;
     let bd = b - d;
     let cd = c - d;
@@ -83,9 +66,8 @@ fn two_product(a: f64, b: f64) -> (f64, f64) {
 /// Spherical Delaunay triangulation via incremental insertion with Lawson flipping.
 ///
 /// For points on a sphere, the Delaunay triangulation equals the convex hull.
-/// This implementation works directly on the sphere surface, making it robust
-/// against the numerical instability that plagues convex-hull-based approaches
-/// when points are nearly coplanar (e.g. after plate rotation).
+/// Uses STRIPACK-style per-node neighbor lists internally, which makes the flip
+/// operation structurally correct (no winding invariant to maintain manually).
 pub struct SphericalDelaunay {
     /// Flat triangle indices — every 3 consecutive entries form one triangle (CCW from outside).
     pub triangles: Vec<u32>,
@@ -100,160 +82,168 @@ impl SphericalDelaunay {
 
     pub fn from_points(points: &[DVec3]) -> Self {
         assert!(points.len() >= 4, "need at least 4 points");
-        let mut builder = IncrementalBuilder::new(points);
-        builder.build();
-        builder.into_delaunay()
+        let mut adj = AdjacencyLists::new(points);
+        adj.build();
+        adj.into_delaunay()
+    }
+}
+
+// ── Per-node neighbor lists (STRIPACK-style) ─────────────────────────────────
+
+/// Adjacency structure where each node stores its neighbors in CCW order
+/// as a circular linked list. Triangles are implicit — no explicit triangle
+/// storage means no winding invariant to maintain through flips.
+struct AdjacencyLists {
+    /// Neighbor node indices. Each node's neighbors form a circular linked list.
+    list: Vec<u32>,
+    /// Next-pointers: lptr[i] = index in `list` of the neighbor after list[i].
+    lptr: Vec<u32>,
+    /// lend[node] = index in `list` of the last neighbor entry for `node`.
+    lend: Vec<u32>,
+    /// Next free slot in list/lptr.
+    lnew: usize,
+    points: Vec<DVec3>,
+}
+
+impl AdjacencyLists {
+    /// Dump a node's circular neighbor list for debugging.
+    #[cfg(test)]
+    fn dump_node(&self, node: u32) -> Vec<u32> {
+        let mut neighbors = Vec::new();
+        if self.lend[node as usize] == UNSET { return neighbors; }
+        let first_lp = self.lptr[self.lend[node as usize] as usize];
+        let mut lp = first_lp;
+        loop {
+            neighbors.push(self.list[lp as usize]);
+            lp = self.lptr[lp as usize];
+            if lp == first_lp { break; }
+            if neighbors.len() > 20 { neighbors.push(UNSET); break; } // safety
+        }
+        neighbors
     }
 
     #[cfg(test)]
-    fn from_points_debug(points: &[DVec3]) -> Self {
-        assert!(points.len() >= 4, "need at least 4 points");
-        let mut builder = IncrementalBuilder::new(points);
-        builder.build_with_log(true);
-        builder.into_delaunay()
+    fn dump_all(&self, label: &str) {
+        eprintln!("=== {label} ===");
+        for i in 0..self.points.len() {
+            if self.lend[i] == UNSET { continue; }
+            eprintln!("  node {i}: neighbors={:?} (lend={})", self.dump_node(i as u32), self.lend[i]);
+        }
     }
-}
 
-// ── Internal builder ─────────────────────────────────────────────────────────
-
-struct BuildTriangle {
-    vertices: [u32; 3],
-    /// neighbors[i] is the triangle opposite vertices[i]
-    neighbors: [u32; 3],
-    alive: bool,
-}
-
-struct IncrementalBuilder {
-    points: Vec<DVec3>,
-    triangles: Vec<BuildTriangle>,
-    last_located: u32,
-}
-
-impl IncrementalBuilder {
     fn new(points: &[DVec3]) -> Self {
+        let n = points.len();
+        let capacity = 10 * n;
         let normalized: Vec<DVec3> = points.iter().map(|p| p.normalize()).collect();
         Self {
+            list: vec![0; capacity],
+            lptr: vec![0; capacity],
+            lend: vec![UNSET; n],
+            lnew: 0,
             points: normalized,
-            triangles: Vec::new(),
-            last_located: 0,
         }
     }
 
     fn build(&mut self) {
-        self.build_with_log(false);
+        self.build_inner(false);
     }
 
-    fn build_with_log(&mut self, debug: bool) {
-        let (initial_vertices, order) = self.plan_insertion();
-        self.create_initial_tetrahedron(&initial_vertices);
+    #[cfg(test)]
+    fn build_debug(&mut self) {
+        self.build_inner(true);
+    }
 
-        let mut log_file = if debug {
-            Some(std::fs::File::create("delaunay_debug.log").unwrap())
-        } else {
-            None
-        };
+    fn build_inner(&mut self, debug: bool) {
+        let (initial, order) = self.plan_insertion();
+        self.create_initial_tetrahedron(initial);
 
-        if let Some(f) = &mut log_file {
-            writeln!(f, "INITIAL TETRAHEDRON: {:?}", initial_vertices).unwrap();
-            self.validate_topology(f, "after_tetrahedron", 0);
+        if debug { self.dump_all(&format!("after initial tetrahedron {:?}", initial)); }
+
+        let mut last_start = initial[0];
+        for &k in &order {
+            let (i1, i2, i3) = self.find(self.points[k as usize], last_start);
+            if debug {
+                eprintln!("INSERT {k} into triangle ({i1},{i2},{i3})");
+                let pi = self.points[i1 as usize];
+                let pj = self.points[i2 as usize];
+                let pk = self.points[i3 as usize];
+                let ccw = orient3d(pi, pj, pk, DVec3::ZERO);
+                eprintln!("  orient3d(i1,i2,i3,O) = {ccw:.6e} ({})", if ccw > 0.0 { "CCW" } else { "CW" });
+            }
+            self.insert_interior(k, i1, i2, i3);
+            if debug {
+                self.dump_all(&format!("after insert_interior {k}"));
+                self.validate_neighbor_symmetry(&format!("after insert_interior {k}"));
+                self.validate_triangles(&format!("after insert_interior {k}"));
+            }
+            self.enforce_delaunay(k);
+            if debug {
+                self.dump_all(&format!("after enforce_delaunay {k}"));
+                self.validate_triangles(&format!("after enforce_delaunay {k}"));
+            }
+            last_start = k;
         }
+    }
 
-        for (step, &idx) in order.iter().enumerate() {
-            self.insert(idx);
-            if let Some(f) = &mut log_file {
-                self.validate_topology(f, "after_insert", idx);
+    #[cfg(test)]
+    fn validate_triangles(&self, label: &str) {
+        // For every consecutive pair (j, k) in node i's list, j and k must be neighbors.
+        for i in 0..self.points.len() {
+            if self.lend[i] == UNSET { continue; }
+            let first_lp = self.lptr[self.lend[i] as usize];
+            let mut lp = first_lp;
+            loop {
+                let j = self.list[lp as usize];
+                let k = self.list[self.lptr[lp as usize] as usize];
+                // Check j has k as neighbor.
+                let j_neighbors = self.dump_node(j);
+                if !j_neighbors.contains(&k) {
+                    eprintln!("TRIANGLE EDGE MISSING ({label}): tri ({i},{j},{k}) — node {j} doesn't have neighbor {k}");
+                    eprintln!("  node {i}: {:?}", self.dump_node(i as u32));
+                    eprintln!("  node {j}: {:?}", j_neighbors);
+                    eprintln!("  node {k}: {:?}", self.dump_node(k));
+                }
+                lp = self.lptr[lp as usize];
+                if lp == first_lp { break; }
             }
         }
     }
 
-    fn validate_topology(&self, f: &mut std::fs::File, label: &str, point_idx: u32) {
-        let alive_count = self.triangles.iter().filter(|t| t.alive).count();
-        writeln!(f, "\n=== {label} point={point_idx} alive_tris={alive_count} ===").unwrap();
-
-        for (i, tri) in self.triangles.iter().enumerate() {
-            if !tri.alive { continue; }
-            let [a, b, c] = tri.vertices;
-            let pa = self.points[a as usize];
-            let pb = self.points[b as usize];
-            let pc = self.points[c as usize];
-
-            // Check winding
-            let normal = (pb - pa).cross(pc - pa);
-            let centroid = pa + pb + pc;
-            let dot = normal.dot(centroid);
-            if dot <= 0.0 {
-                writeln!(f, "  WINDING ERROR: tri[{i}] verts=({a},{b},{c})").unwrap();
-                writeln!(f, "    expected: normal·centroid > 0 (outward facing)").unwrap();
-                writeln!(f, "    actual:   normal·centroid = {dot:.6e} (inward facing)").unwrap();
-            }
-
-            // Check neighbor symmetry
-            for edge in 0..3 {
-                let opp_vert = tri.vertices[edge];
-                let ev1 = tri.vertices[(edge + 1) % 3];
-                let ev2 = tri.vertices[(edge + 2) % 3];
-                let neighbor_idx = tri.neighbors[edge];
-
-                if neighbor_idx == UNSET {
-                    writeln!(f, "  UNSET NEIGHBOR: tri[{i}] neighbors[{edge}] (opp vert {opp_vert}, edge ({ev1},{ev2}))").unwrap();
-                    continue;
+    #[cfg(test)]
+    fn validate_neighbor_symmetry(&self, label: &str) {
+        for i in 0..self.points.len() {
+            if self.lend[i] == UNSET { continue; }
+            let first_lp = self.lptr[self.lend[i] as usize];
+            let mut lp = first_lp;
+            loop {
+                let j = self.list[lp as usize] as usize;
+                // j should have i in its neighbor list.
+                let j_first = self.lptr[self.lend[j] as usize];
+                let mut jlp = j_first;
+                let mut found = false;
+                loop {
+                    if self.list[jlp as usize] == i as u32 { found = true; break; }
+                    jlp = self.lptr[jlp as usize];
+                    if jlp == j_first { break; }
                 }
-                let ni = neighbor_idx as usize;
-                if ni >= self.triangles.len() {
-                    writeln!(f, "  OUT OF BOUNDS: tri[{i}] neighbors[{edge}]={neighbor_idx}, tris.len()={}", self.triangles.len()).unwrap();
-                    continue;
+                if !found {
+                    eprintln!("NEIGHBOR ASYMMETRY ({label}): node {i} has neighbor {j}, but node {j} does NOT have neighbor {i}");
+                    eprintln!("  node {i}: {:?}", self.dump_node(i as u32));
+                    eprintln!("  node {j}: {:?}", self.dump_node(j as u32));
                 }
-                if !self.triangles[ni].alive {
-                    writeln!(f, "  DEAD NEIGHBOR: tri[{i}] neighbors[{edge}]={neighbor_idx}").unwrap();
-                    writeln!(f, "    expected: alive neighbor sharing edge ({ev1},{ev2})").unwrap();
-                    writeln!(f, "    actual:   tri[{ni}] is dead, verts={:?}", self.triangles[ni].vertices).unwrap();
-                    continue;
-                }
-
-                // Check that neighbor shares the expected edge
-                let nv = self.triangles[ni].vertices;
-                let nn = self.triangles[ni].neighbors;
-                let has_ev1 = nv.contains(&ev1);
-                let has_ev2 = nv.contains(&ev2);
-                if !has_ev1 || !has_ev2 {
-                    writeln!(f, "  WRONG NEIGHBOR: tri[{i}] neighbors[{edge}]={neighbor_idx} (opp vert {opp_vert})").unwrap();
-                    writeln!(f, "    expected: neighbor shares edge ({ev1},{ev2})").unwrap();
-                    writeln!(f, "    actual:   tri[{ni}] verts={:?}, has_v1({ev1})={has_ev1}, has_v2({ev2})={has_ev2}", nv).unwrap();
-                    continue;
-                }
-
-                // Check that neighbor points back to us
-                let mut found_back = false;
-                for ne in 0..3 {
-                    if nn[ne] == i as u32 {
-                        let nev1 = nv[(ne + 1) % 3];
-                        let nev2 = nv[(ne + 2) % 3];
-                        if (nev1 == ev1 && nev2 == ev2) || (nev1 == ev2 && nev2 == ev1) {
-                            found_back = true;
-                        } else {
-                            writeln!(f, "  EDGE MISMATCH: tri[{i}] edge {edge}").unwrap();
-                            writeln!(f, "    expected: tri[{ni}] shares edge ({ev1},{ev2}) at the slot pointing back to {i}").unwrap();
-                            writeln!(f, "    actual:   tri[{ni}] points back at edge {ne} with verts ({nev1},{nev2})").unwrap();
-                            found_back = true;
-                        }
-                        break;
-                    }
-                }
-                if !found_back {
-                    writeln!(f, "  NO BACKREF: tri[{i}] neighbors[{edge}]={neighbor_idx}").unwrap();
-                    writeln!(f, "    expected: tri[{ni}].neighbors contains {i}").unwrap();
-                    writeln!(f, "    actual:   tri[{ni}].neighbors={:?}, tri[{ni}].verts={:?}", nn, nv).unwrap();
-                }
+                lp = self.lptr[lp as usize];
+                if lp == first_lp { break; }
             }
         }
     }
 
-    /// Pick 4 well-separated points for the initial tetrahedron, return them + shuffled insertion order.
+    // ── Seed selection and insertion order ───────────────────────────────────
+
     fn plan_insertion(&self) -> ([u32; 4], Vec<u32>) {
         let pts = &self.points;
         let n = pts.len();
 
-        // Axis-aligned extremes → two most distant.
+        // Find two most distant points via axis-aligned extremes.
         let mut extremes = [0usize; 6];
         for i in 1..n {
             if pts[i].x < pts[extremes[0]].x { extremes[0] = i; }
@@ -271,7 +261,7 @@ impl IncrementalBuilder {
             }
         }
 
-        // Farthest from edge ab.
+        // Third point: farthest from line ab.
         let ab = (pts[b] - pts[a]).normalize();
         let mut c = 0;
         best = 0.0;
@@ -282,7 +272,7 @@ impl IncrementalBuilder {
             if dist > best { best = dist; c = i; }
         }
 
-        // Farthest from plane abc.
+        // Fourth point: farthest from plane abc.
         let normal = (pts[b] - pts[a]).cross(pts[c] - pts[a]).normalize();
         let mut d = 0;
         best = 0.0;
@@ -294,7 +284,7 @@ impl IncrementalBuilder {
 
         let initial = [a as u32, b as u32, c as u32, d as u32];
 
-        // Deterministic Fisher-Yates shuffle for O(n log n) expected insertion.
+        // Deterministic Fisher-Yates shuffle.
         let mut order: Vec<u32> = (0..n as u32)
             .filter(|i| !initial.contains(i))
             .collect();
@@ -308,360 +298,349 @@ impl IncrementalBuilder {
         (initial, order)
     }
 
-    fn create_initial_tetrahedron(&mut self, vertices: &[u32; 4]) {
-        let [a, b, c, d] = *vertices;
-        let pts = &self.points;
+    fn create_initial_tetrahedron(&mut self, vertices: [u32; 4]) {
+        let [a, b, c, d] = vertices;
 
-        // Orient so d is on the negative side of (a,b,c).
-        let (a, b, c) = if orient3d(pts[a as usize], pts[b as usize], pts[c as usize], pts[d as usize]) > 0.0 {
+        // Orient so (a, b, c) is CCW from outside (d on the inside).
+        let (a, b, c) = if orient3d(
+            self.points[a as usize], self.points[b as usize],
+            self.points[c as usize], self.points[d as usize],
+        ) > 0.0 {
             (a, b, c)
         } else {
             (a, c, b)
         };
 
-        // 4 triangles of the tetrahedron with consistent neighbor wiring.
-        self.triangles = vec![
-            BuildTriangle { vertices: [a, b, c], neighbors: [3, 1, 2], alive: true }, // f0, opposite d
-            BuildTriangle { vertices: [a, c, d], neighbors: [3, 2, 0], alive: true }, // f1, opposite b
-            BuildTriangle { vertices: [a, d, b], neighbors: [3, 0, 1], alive: true }, // f2, opposite c
-            BuildTriangle { vertices: [b, d, c], neighbors: [1, 0, 2], alive: true }, // f3, opposite a
-        ];
-        self.last_located = 0;
+        // 4 faces of tetrahedron, all CCW from outside:
+        //   f0 = (a, b, c) — opposite d
+        //   f1 = (a, c, d) — opposite b
+        //   f2 = (a, d, b) — opposite c
+        //   f3 = (b, d, c) — opposite a
+        //
+        // Each node has 3 neighbors in CCW order:
+        //   a: [b, c, d]  (from faces f0, f1, f2)
+        //   b: [d, c, a]  (from faces f3, f0, f2)
+        //   c: [a, b, d]  (from faces f0, f3, f1) — wait, need to trace carefully
+        //
+        // CCW from outside at node a: looking from a outward, neighbors go CCW.
+        //   a is in faces f0=(a,b,c), f1=(a,c,d), f2=(a,d,b).
+        //   Going CCW around a: b → c → d → b. So a's neighbors = [b, c, d].
+        //
+        // CCW at node b: faces f0=(a,b,c), f2=(a,d,b), f3=(b,d,c).
+        //   In f0: a,c are neighbors. In f2: a,d. In f3: d,c.
+        //   Going CCW around b: c → a → d → c. So b's neighbors = [c, a, d].
+        //
+        // CCW at node c: faces f0=(a,b,c), f3=(b,d,c), f1=(a,c,d).
+        //   In f0: a,b. In f3: b,d. In f1: a,d.
+        //   Going CCW around c: b → d → a → b? No...
+        //   f0 has edges a→b→c, so at c the incoming edge is b→c and outgoing is c→a.
+        //   f3 has edges b→d→c, so at c the incoming edge is d→c and outgoing is c→b.
+        //   f1 has edges a→c→d, so at c the incoming edge is a→c and outgoing is c→d.
+        //   CCW at c: after a comes d (f1), after d comes b (f3), after b comes a (f0).
+        //   So c's neighbors = [a, d, b].
+        //
+        // CCW at node d: faces f1=(a,c,d), f2=(a,d,b), f3=(b,d,c).
+        //   f1 at d: incoming c→d, outgoing d→a. Next after c is a.
+        //   f2 at d: incoming a→d, outgoing d→b. Next after a is b.
+        //   f3 at d: incoming b→d, outgoing d→c. Next after b is c.
+        //   CCW at d: c → a → b → c. Wait, let me use: [c, a, b]?
+        //   Or: f3 has b,c. f1 has a,c. f2 has a,b.
+        //   Going CCW: b → c → a → b. So d's neighbors = [b, c, a].
+
+        // CCW fan order: for triangle (A,B,C), at node A pair is (B,C),
+        // at node B pair is (C,A), at node C pair is (A,B).
+        //
+        // Faces: f0=(a,b,c), f1=(a,c,d), f2=(a,d,b), f3=(b,d,c).
+        //
+        // Node a: f0 gives (b,c), f1 gives (c,d), f2 gives (d,b). Chain: b→c→d→b.
+        // Node b: f0@B gives (c,a), f2@C gives (a,d), f3@A gives (d,c). Chain: c→a→d→c.
+        //   Wait: f2=(a,d,b), at B=b: pair (A,B)=(a,d)? No — b is C in f2.
+        //   f2=(a,d,b): A=a,B=d,C=b. At C=b: pair (A,B)=(a,d).
+        //   f3=(b,d,c): A=b,B=d,C=c. At A=b: pair (B,C)=(d,c).
+        //   f0=(a,b,c): A=a,B=b,C=c. At B=b: pair (C,A)=(c,a).
+        //   Chain at b: a→d (from f2@C), d→c (from f3@A), c→a (from f0@B). = a→d→c→a.
+        //   CCW at b: [a, d, c].
+        //
+        // Node c: f0=(a,b,c) at C=c: pair (A,B)=(a,b).
+        //   f3=(b,d,c) at C=c: pair (A,B)=(b,d).
+        //   f1=(a,c,d) at B=c: pair (C,A)=(d,a).
+        //   Chain at c: a→b (f0), b→d (f3), d→a (f1). = a→b→d→a.
+        //   CCW at c: [a, b, d].
+        //
+        // Node d: f1=(a,c,d) at C=d: pair (A,B)=(a,c).
+        //   f2=(a,d,b) at B=d: pair (C,A)=(b,a).
+        //   f3=(b,d,c) at B=d: pair (C,A)=(c,b).
+        //   Chain at d: a→c (f1), c→b (f3), b→a (f2). = a→c→b→a.
+        //   CCW at d: [a, c, b]. Hmm, let me double-check with chain:
+        //   b→a (from f2), a→c (from f1), c→b (from f3). = b→a→c→b.
+        //   So [b, a, c] or equivalently starting from a: [a, c, b].
+
+        // Node a: [b, c, d]
+        self.list[0] = b; self.list[1] = c; self.list[2] = d;
+        self.lptr[0] = 1; self.lptr[1] = 2; self.lptr[2] = 0;
+        self.lend[a as usize] = 2;
+
+        // Node b: [a, d, c]
+        self.list[3] = a; self.list[4] = d; self.list[5] = c;
+        self.lptr[3] = 4; self.lptr[4] = 5; self.lptr[5] = 3;
+        self.lend[b as usize] = 5;
+
+        // Node c: [a, b, d]
+        self.list[6] = a; self.list[7] = b; self.list[8] = d;
+        self.lptr[6] = 7; self.lptr[7] = 8; self.lptr[8] = 6;
+        self.lend[c as usize] = 8;
+
+        // Node d: [a, c, b]
+        self.list[9] = a; self.list[10] = c; self.list[11] = b;
+        self.lptr[9] = 10; self.lptr[10] = 11; self.lptr[11] = 9;
+        self.lend[d as usize] = 11;
+
+        self.lnew = 12;
     }
 
-    fn insert(&mut self, point_idx: u32) {
-        let tri_idx = self.locate(point_idx);
-        let new_tris = self.split(tri_idx, point_idx);
+    // ── Point location ──────────────────────────────────────────────────────
 
-        // Push edges opposite the new point onto the flip stack.
-        // In each new triangle, vertex[0] is the inserted point, so neighbors[0] is the
-        // external neighbor (the edge opposite the new point).
-        let mut stack: Vec<(u32, u32)> = Vec::with_capacity(12);
-        for &t in &new_tris {
-            stack.push((t, 0));
-        }
-        self.flip_edges(&mut stack);
+    fn find(&self, p: DVec3, _start: u32) -> (u32, u32, u32) {
+        // TODO: implement TRFIND walk for O(√n) performance.
+        // For now, brute-force is correct and sufficient for debugging.
+        self.find_brute_force(p)
     }
 
-    // ── Stage 2: Walk to containing triangle ─────────────────────────────────
+    fn find_brute_force(&self, p: DVec3) -> (u32, u32, u32) {
+        let n = self.points.len();
+        let mut best_tri = (0u32, 0u32, 0u32);
+        let mut best_min_orient = f64::NEG_INFINITY;
 
-    fn locate(&mut self, point_idx: u32) -> u32 {
-        let p = self.points[point_idx as usize];
-        let mut tri_idx = self.last_located;
-        let max_steps = (self.triangles.len() as f64).sqrt() as usize * 6 + 20;
-
-        for _ in 0..max_steps {
-            // Skip dead triangles.
-            if !self.triangles[tri_idx as usize].alive {
-                tri_idx = self.any_alive_triangle();
-            }
-
-            let [va, vb, vc] = self.triangles[tri_idx as usize].vertices;
-            let a = self.points[va as usize];
-            let b = self.points[vb as usize];
-            let c = self.points[vc as usize];
-
-            // For each edge, test which side p is on.
-            // Edge BC (opposite vertex A, neighbor[0]): test p.dot(b.cross(c))
-            let orient_bc = p.dot(b.cross(c));
-            if orient_bc < 0.0 {
-                let next = self.triangles[tri_idx as usize].neighbors[0];
-                if next == UNSET { break; }
-                tri_idx = next;
-                continue;
-            }
-
-            let orient_ca = p.dot(c.cross(a));
-            if orient_ca < 0.0 {
-                let next = self.triangles[tri_idx as usize].neighbors[1];
-                if next == UNSET { break; }
-                tri_idx = next;
-                continue;
-            }
-
-            let orient_ab = p.dot(a.cross(b));
-            if orient_ab < 0.0 {
-                let next = self.triangles[tri_idx as usize].neighbors[2];
-                if next == UNSET { break; }
-                tri_idx = next;
-                continue;
-            }
-
-            // Point is inside this triangle.
-            self.last_located = tri_idx;
-            return tri_idx;
-        }
-
-        // Fallback: brute-force search (should be extremely rare).
-        self.locate_brute_force(p)
-    }
-
-    fn any_alive_triangle(&self) -> u32 {
-        self.triangles.iter().position(|t| t.alive).unwrap() as u32
-    }
-
-    fn locate_brute_force(&mut self, p: DVec3) -> u32 {
-        let mut best_tri = 0u32;
-        let mut best_dot = f64::NEG_INFINITY;
-        for (i, tri) in self.triangles.iter().enumerate() {
-            if !tri.alive { continue; }
-            let centroid = (self.points[tri.vertices[0] as usize]
-                + self.points[tri.vertices[1] as usize]
-                + self.points[tri.vertices[2] as usize])
-                .normalize();
-            let d = p.dot(centroid);
-            if d > best_dot {
-                best_dot = d;
-                best_tri = i as u32;
-            }
-        }
-        self.last_located = best_tri;
-        best_tri
-    }
-
-    // ── Stage 3: Split triangle into 3 ──────────────────────────────────────
-
-    fn split(&mut self, tri_idx: u32, point_idx: u32) -> [u32; 3] {
-        let [a, b, c] = self.triangles[tri_idx as usize].vertices;
-        let [n_a, n_b, n_c] = self.triangles[tri_idx as usize].neighbors;
-
-        // Kill old triangle.
-        self.triangles[tri_idx as usize].alive = false;
-
-        // Create 3 new triangles with P as vertex[0].
-        // T0 = (P, B, C) — opposite edge BC, external neighbor = n_a
-        // T1 = (P, C, A) — opposite edge CA, external neighbor = n_b
-        // T2 = (P, A, B) — opposite edge AB, external neighbor = n_c
-        let t0 = self.alloc_tri([point_idx, b, c], [n_a, UNSET, UNSET]);
-        let t1 = self.alloc_tri([point_idx, c, a], [n_b, UNSET, UNSET]);
-        let t2 = self.alloc_tri([point_idx, a, b], [n_c, UNSET, UNSET]);
-
-        // Wire internal neighbors (edges adjacent to P).
-        // T0's neighbor opposite C (index 1) = T1; opposite B (index 2) = T2
-        self.triangles[t0 as usize].neighbors[1] = t1;
-        self.triangles[t0 as usize].neighbors[2] = t2;
-        self.triangles[t1 as usize].neighbors[1] = t2;
-        self.triangles[t1 as usize].neighbors[2] = t0;
-        self.triangles[t2 as usize].neighbors[1] = t0;
-        self.triangles[t2 as usize].neighbors[2] = t1;
-
-        // Patch external neighbors to point back to new triangles.
-        self.patch_neighbor(n_a, tri_idx, t0);
-        self.patch_neighbor(n_b, tri_idx, t1);
-        self.patch_neighbor(n_c, tri_idx, t2);
-
-        self.last_located = t0;
-        [t0, t1, t2]
-    }
-
-    fn alloc_tri(&mut self, vertices: [u32; 3], neighbors: [u32; 3]) -> u32 {
-        let idx = self.triangles.len() as u32;
-        self.triangles.push(BuildTriangle { vertices, neighbors, alive: true });
-        idx
-    }
-
-    /// Patch a neighbor to point to new_tri instead of old_tri.
-    fn patch_neighbor(&mut self, neighbor: u32, old_tri: u32, new_tri: u32) {
-        if neighbor == UNSET { return; }
-        let n = &mut self.triangles[neighbor as usize];
-        for i in 0..3 {
-            if n.neighbors[i] == old_tri {
-                n.neighbors[i] = new_tri;
-                return;
-            }
-        }
-        // old_tri may have been killed by a prior flip — find by shared edge instead.
-        let new_verts = self.triangles[new_tri as usize].vertices;
-        let n = &mut self.triangles[neighbor as usize];
-        for i in 0..3 {
-            let nv1 = n.vertices[(i + 1) % 3];
-            let nv2 = n.vertices[(i + 2) % 3];
-            // The shared edge in the neighbor is (nv1, nv2). Check if new_tri has both.
-            if new_verts.contains(&nv1) && new_verts.contains(&nv2) {
-                n.neighbors[i] = new_tri;
-                return;
-            }
-        }
-    }
-
-    // ── Stage 4: Lawson edge flipping ────────────────────────────────────────
-
-    fn flip_edges(&mut self, stack: &mut Vec<(u32, u32)>) {
-        let mut iteration = 0u32;
-        let max_iterations = self.points.len() as u32 * 20;
-
-        while let Some((tri_idx, edge_idx)) = stack.pop() {
-            iteration += 1;
-            if iteration > max_iterations {
-                eprintln!("FLIP LOOP: exceeded {max_iterations} iterations, stack size={}", stack.len());
-                eprintln!("  last popped: tri_idx={tri_idx} edge_idx={edge_idx}");
-                eprintln!("  tri[{tri_idx}] verts={:?} neighbors={:?} alive={}",
-                    self.triangles[tri_idx as usize].vertices,
-                    self.triangles[tri_idx as usize].neighbors,
-                    self.triangles[tri_idx as usize].alive);
-                // Print last 10 stack entries
-                for (i, &(t, e)) in stack.iter().rev().take(10).enumerate() {
-                    eprintln!("  stack[-{}]: tri={t} edge={e} verts={:?}", i+1,
-                        self.triangles[t as usize].vertices);
+        for i in 0..n {
+            if self.lend[i] == UNSET { continue; }
+            let mut lp = self.lptr[self.lend[i] as usize];
+            let first = lp;
+            loop {
+                let j = self.list[lp as usize];
+                let k = self.list[self.lptr[lp as usize] as usize];
+                let pi = self.points[i];
+                let pj = self.points[j as usize];
+                let pk = self.points[k as usize];
+                let o1 = p.dot(pj.cross(pk));
+                let o2 = p.dot(pk.cross(pi));
+                let o3 = p.dot(pi.cross(pj));
+                if o1 >= 0.0 && o2 >= 0.0 && o3 >= 0.0 {
+                    return (i as u32, j, k);
                 }
-                panic!("infinite flip loop detected");
+                let min_s = o1.min(o2).min(o3);
+                if min_s > best_min_orient {
+                    best_min_orient = min_s;
+                    best_tri = (i as u32, j, k);
+                }
+                lp = self.lptr[lp as usize];
+                if lp == first { break; }
+            }
+        }
+        eprintln!("FIND BRUTE FORCE FAILED: p={p:?}");
+        eprintln!("  best triangle: ({},{},{}) min_orient={best_min_orient:.6e}",
+            best_tri.0, best_tri.1, best_tri.2);
+        for i in 0..n {
+            if self.lend[i] == UNSET { continue; }
+            eprintln!("  node {i}: neighbors={:?}", self.dump_node_release(i as u32));
+        }
+        // Dump all triangles with orient values for the query point.
+        eprintln!("  All triangles:");
+        for i in 0..n {
+            if self.lend[i] == UNSET { continue; }
+            let mut lp = self.lptr[self.lend[i] as usize];
+            let first = lp;
+            loop {
+                let j = self.list[lp as usize];
+                let k = self.list[self.lptr[lp as usize] as usize];
+                let pi = self.points[i];
+                let pj = self.points[j as usize];
+                let pk = self.points[k as usize];
+                let o1 = p.dot(pj.cross(pk));
+                let o2 = p.dot(pk.cross(pi));
+                let o3 = p.dot(pi.cross(pj));
+                eprintln!("    ({i},{j},{k}): o1={o1:.4e} o2={o2:.4e} o3={o3:.4e}");
+                lp = self.lptr[lp as usize];
+                if lp == first { break; }
+            }
+        }
+        panic!("point not found in any triangle");
+    }
+
+    fn dump_node_release(&self, node: u32) -> Vec<u32> {
+        let mut neighbors = Vec::new();
+        if self.lend[node as usize] == UNSET { return neighbors; }
+        let first_lp = self.lptr[self.lend[node as usize] as usize];
+        let mut lp = first_lp;
+        loop {
+            neighbors.push(self.list[lp as usize]);
+            lp = self.lptr[lp as usize];
+            if lp == first_lp { break; }
+            if neighbors.len() > 20 { neighbors.push(UNSET); break; }
+        }
+        neighbors
+    }
+
+    // ── Interior insertion ──────────────────────────────────────────────────
+
+    fn insert_interior(&mut self, k: u32, i1: u32, i2: u32, i3: u32) {
+        // Insert k into each vertex's neighbor list at the correct position.
+        let lp = self.list_find(self.lend[i1 as usize], i2);
+        self.list_insert(lp, k);
+
+        let lp = self.list_find(self.lend[i2 as usize], i3);
+        self.list_insert(lp, k);
+
+        let lp = self.list_find(self.lend[i3 as usize], i1);
+        self.list_insert(lp, k);
+
+        // Create k's neighbor list: [i1, i2, i3] in CCW order.
+        let base = self.lnew;
+        self.list[base] = i1;
+        self.list[base + 1] = i2;
+        self.list[base + 2] = i3;
+        self.lptr[base] = base as u32 + 1;
+        self.lptr[base + 1] = base as u32 + 2;
+        self.lptr[base + 2] = base as u32;
+        self.lend[k as usize] = base as u32 + 2;
+        self.lnew = base + 3;
+    }
+
+    // ── Lawson edge flipping ────────────────────────────────────────────────
+
+    fn enforce_delaunay(&mut self, k: u32) {
+        let mut first_lp = self.lptr[self.lend[k as usize] as usize];
+        let mut lp = first_lp;
+
+        loop {
+            let io1 = self.list[lp as usize];
+            let lp_next = self.lptr[lp as usize];
+            let io2 = self.list[lp_next as usize];
+
+            // Find the node across edge (io1, io2) from k.
+            let lp_io2_in_io1 = self.list_find(self.lend[io1 as usize], io2);
+            let in1 = self.list[self.lptr[lp_io2_in_io1 as usize] as usize];
+
+            if in1 != k {
+                if orient3d(
+                    self.points[in1 as usize], self.points[io1 as usize],
+                    self.points[io2 as usize], self.points[k as usize],
+                ) > 0.0 {
+                    self.swap(in1, k, io1, io2);
+                    // Reset: K's neighbor list changed, start over.
+                    first_lp = self.lptr[self.lend[k as usize] as usize];
+                    lp = first_lp;
+                    continue;
+                }
             }
 
-            if !self.triangles[tri_idx as usize].alive { continue; }
+            lp = lp_next;
+            if lp == first_lp { break; }
+        }
+    }
 
-            let neighbor_idx = self.triangles[tri_idx as usize].neighbors[edge_idx as usize];
-            if neighbor_idx == UNSET { continue; }
-            if !self.triangles[neighbor_idx as usize].alive { continue; }
+    fn swap(&mut self, in1: u32, in2: u32, io1: u32, io2: u32) {
+        // Delete io2 from io1's neighbor list.
+        let lp = self.list_find(self.lend[io1 as usize], in2);
+        let lph = self.lptr[lp as usize];
+        self.lptr[lp as usize] = self.lptr[lph as usize];
+        if self.lend[io1 as usize] == lph { self.lend[io1 as usize] = lp; }
 
-            let p = self.triangles[tri_idx as usize].vertices[edge_idx as usize];
-            let shared_v1 = self.triangles[tri_idx as usize].vertices[(edge_idx as usize + 1) % 3];
-            let shared_v2 = self.triangles[tri_idx as usize].vertices[(edge_idx as usize + 2) % 3];
+        // Insert in2 into in1's list after io1, reusing the freed slot.
+        let lp = self.list_find(self.lend[in1 as usize], io1);
+        let lpsav = self.lptr[lp as usize];
+        self.lptr[lp as usize] = lph;
+        self.list[lph as usize] = in2;
+        self.lptr[lph as usize] = lpsav;
 
-            // Find the opposite vertex in the neighbor triangle.
-            let d = self.opposite_vertex(neighbor_idx, shared_v1, shared_v2);
+        // Delete io1 from io2's neighbor list.
+        let lp = self.list_find(self.lend[io2 as usize], in1);
+        let lph = self.lptr[lp as usize];
+        self.lptr[lp as usize] = self.lptr[lph as usize];
+        if self.lend[io2 as usize] == lph { self.lend[io2 as usize] = lp; }
 
-            // InCircle test on the unit sphere: flip if D is "above" the plane of (P, V1, V2),
-            // meaning orient3d(P, V1, V2, D) > 0 (D visible from triangle → inside circumcircle).
-            let orient = orient3d(
-                self.points[p as usize],
-                self.points[shared_v1 as usize],
-                self.points[shared_v2 as usize],
-                self.points[d as usize],
-            );
+        // Insert in1 into in2's list after io2, reusing the freed slot.
+        let lp = self.list_find(self.lend[in2 as usize], io2);
+        let lpsav = self.lptr[lp as usize];
+        self.lptr[lp as usize] = lph;
+        self.list[lph as usize] = in1;
+        self.lptr[lph as usize] = lpsav;
+    }
 
-            if orient > 0.0 {
-                eprintln!("FLIP #{iteration}: tri_a={tri_idx}(edge {edge_idx}) tri_b={neighbor_idx} | p={p} v1={shared_v1} v2={shared_v2} d={d} | orient={orient:.6e} | stack_after={}", stack.len() + 4);
-                self.flip(tri_idx, edge_idx as usize, neighbor_idx, p, d, shared_v1, shared_v2, stack);
+    // ── Linked list primitives ──────────────────────────────────────────────
+
+    /// Find `target` in the circular neighbor list, starting from lptr[start].
+    /// Returns the pointer TO the entry containing `target` (matches STRIPACK's LSTPTR).
+    fn list_find(&self, start: u32, target: u32) -> u32 {
+        let mut lp = self.lptr[start as usize];
+        let mut visited = Vec::new();
+        loop {
+            if self.list[lp as usize] == target { return lp; }
+            visited.push(self.list[lp as usize]);
+            lp = self.lptr[lp as usize];
+            if lp == self.lptr[start as usize] {
+                panic!("neighbor {target} not found in list (visited: {visited:?}, start_ptr={start}, list[start]={})", self.list[start as usize]);
             }
         }
     }
 
-    fn opposite_vertex(&self, tri_idx: u32, v1: u32, v2: u32) -> u32 {
-        let verts = self.triangles[tri_idx as usize].vertices;
-        for &v in &verts {
-            if v != v1 && v != v2 { return v; }
-        }
-        panic!("shared edge not found in neighbor");
+    /// Insert `neighbor` into the circular list after position `pos`.
+    fn list_insert(&mut self, pos: u32, neighbor: u32) {
+        let slot = self.lnew;
+        self.list[slot] = neighbor;
+        self.lptr[slot] = self.lptr[pos as usize];
+        self.lptr[pos as usize] = slot as u32;
+        self.lnew = slot + 1;
     }
 
-    /// If a triangle's normal points inward, swap vertices[1]/[2] and neighbors[1]/[2]
-    /// to restore CCW-from-outside winding.
-    fn fix_winding(&mut self, tri_idx: u32) {
-        let t = &self.triangles[tri_idx as usize];
-        let p0 = self.points[t.vertices[0] as usize];
-        let p1 = self.points[t.vertices[1] as usize];
-        let p2 = self.points[t.vertices[2] as usize];
-        let normal = (p1 - p0).cross(p2 - p0);
-        if normal.dot(p0 + p1 + p2) < 0.0 {
-            let t = &mut self.triangles[tri_idx as usize];
-            t.vertices.swap(1, 2);
-            t.neighbors.swap(1, 2);
-        }
-    }
-
-    fn winding_dot(&self, v0: u32, v1: u32, v2: u32) -> f64 {
-        let p0 = self.points[v0 as usize];
-        let p1 = self.points[v1 as usize];
-        let p2 = self.points[v2 as usize];
-        let normal = (p1 - p0).cross(p2 - p0);
-        normal.dot(p0 + p1 + p2)
-    }
-
-    /// Flip the shared edge between tri_a and tri_b in-place (no new allocations).
-    ///
-    /// Before: tri_a = (..., p, v1, v2, ...), tri_b = (..., d, v2, v1, ...)
-    ///         sharing edge v1-v2.
-    /// After:  tri_a = (p, d, v2), tri_b = (d, p, v1).
-    fn flip(
-        &mut self,
-        tri_a: u32, edge_a: usize, tri_b: u32,
-        p: u32, d: u32, v1: u32, v2: u32,
-        stack: &mut Vec<(u32, u32)>,
-    ) {
-        // Gather external neighbors before mutating.
-        let ext_a_opp_v1 = self.triangles[tri_a as usize].neighbors[(edge_a + 1) % 3];
-        let ext_a_opp_v2 = self.triangles[tri_a as usize].neighbors[(edge_a + 2) % 3];
-
-        let vb = self.triangles[tri_b as usize].vertices;
-        let nb = self.triangles[tri_b as usize].neighbors;
-        let mut ext_b_opp_v1 = UNSET;
-        let mut ext_b_opp_v2 = UNSET;
-        for i in 0..3 {
-            if vb[i] == v1 { ext_b_opp_v1 = nb[i]; }
-            if vb[i] == v2 { ext_b_opp_v2 = nb[i]; }
-        }
-
-        // tri_a becomes (p, d, v2): neighbor[0] opp p, neighbor[1] opp d, neighbor[2] opp v2
-        self.triangles[tri_a as usize].vertices = [p, d, v2];
-        self.triangles[tri_a as usize].neighbors = [ext_b_opp_v1, ext_a_opp_v1, tri_b];
-
-        // tri_b becomes (p, v1, d): neighbor[0] opp p, neighbor[1] opp v1, neighbor[2] opp d
-        self.triangles[tri_b as usize].vertices = [p, v1, d];
-        self.triangles[tri_b as usize].neighbors = [ext_b_opp_v2, tri_a, ext_a_opp_v2];
-
-        // Correct winding: the flip may produce inward-facing triangles depending on
-        // the 3D geometry of the quadrilateral. Swapping vertices[1]/[2] and
-        // neighbors[1]/[2] reverses the winding while preserving the opposite-vertex convention.
-        self.fix_winding(tri_a);
-        self.fix_winding(tri_b);
-
-        // Patch the 2 external neighbors that moved to a different triangle.
-        self.patch_neighbor(ext_a_opp_v2, tri_a, tri_b);
-        self.patch_neighbor(ext_b_opp_v1, tri_b, tri_a);
-        // ext_a_opp_v1 stays with tri_a, ext_b_opp_v2 stays with tri_b — no patch needed.
-
-        #[cfg(test)]
-        {
-            let winding_a = self.winding_dot(p, d, v2);
-            let winding_b = self.winding_dot(p, v1, d);
-            if winding_a <= 0.0 || winding_b <= 0.0 {
-                let va_before = [p, v1, v2];
-                let vb_before_verts = vb;
-                eprintln!("FLIP WINDING BUG:");
-                eprintln!("  before: tri_a[{tri_a}]=({},{},{}) tri_b[{tri_b}]=({},{},{})",
-                    va_before[0], va_before[1], va_before[2],
-                    vb_before_verts[0], vb_before_verts[1], vb_before_verts[2]);
-                eprintln!("  edge_a={edge_a} p={p} d={d} v1={v1} v2={v2}");
-                eprintln!("  after:  tri_a[{tri_a}]=({p},{d},{v2}) winding={winding_a:.6e}");
-                eprintln!("  after:  tri_b[{tri_b}]=({p},{v1},{d}) winding={winding_b:.6e}");
-                eprintln!("  orient3d(p,v1,v2,d) = {:.6e}", orient3d(
-                    self.points[p as usize], self.points[v1 as usize],
-                    self.points[v2 as usize], self.points[d as usize]));
-                eprintln!("  winding before tri_a: {:.6e}", self.winding_dot(va_before[0], va_before[1], va_before[2]));
-                eprintln!("  points: p={:?}", self.points[p as usize]);
-                eprintln!("          v1={:?}", self.points[v1 as usize]);
-                eprintln!("          v2={:?}", self.points[v2 as usize]);
-                eprintln!("          d={:?}", self.points[d as usize]);
-            }
-        }
-
-        // Push external edges for further flipping.
-        // After fix_winding, vertex positions may have swapped, so find external edges
-        // by excluding the internal edge (the one whose neighbor is the other triangle).
-        for edge in 0..3u32 {
-            if self.triangles[tri_a as usize].neighbors[edge as usize] != tri_b {
-                stack.push((tri_a, edge));
-            }
-            if self.triangles[tri_b as usize].neighbors[edge as usize] != tri_a {
-                stack.push((tri_b, edge));
-            }
-        }
-    }
-
-
-    // ── Stage 5: Convert to output format ────────────────────────────────────
+    // ── Output conversion ───────────────────────────────────────────────────
 
     fn into_delaunay(self) -> SphericalDelaunay {
-        let tri_count = self.triangles.iter().filter(|t| t.alive).count();
-        let mut triangles = Vec::with_capacity(tri_count * 3);
-        let mut halfedges = vec![UNSET; tri_count * 3];
+        let n = self.points.len();
+        let mut triangles = Vec::new();
 
-        for t in &self.triangles {
-            if t.alive {
-                triangles.extend_from_slice(&t.vertices);
+        // Extract triangles: for each node i, walk consecutive neighbor pairs (j, k).
+        // Emit triangle (i, j, k) only when i < j && i < k (canonical ordering).
+        // This ensures each triangle is emitted exactly once.
+        let mut all_tris = Vec::new();
+        for i in 0..n {
+            if self.lend[i] == UNSET { continue; }
+            let first_lp = self.lptr[self.lend[i] as usize];
+            let mut lp = first_lp;
+            loop {
+                let j = self.list[lp as usize];
+                let k = self.list[self.lptr[lp as usize] as usize];
+                all_tris.push((i as u32, j, k));
+                if (i as u32) < j && (i as u32) < k {
+                    triangles.push(i as u32);
+                    triangles.push(j);
+                    triangles.push(k);
+                }
+                lp = self.lptr[lp as usize];
+                if lp == first_lp { break; }
             }
         }
 
+        // Log: expected triangle count vs actual.
+        let expected = 2 * n - 4;
+        let actual = triangles.len() / 3;
+        if actual != expected {
+            eprintln!("TRIANGLE COUNT MISMATCH: expected {expected}, got {actual}");
+            eprintln!("  All neighbor-pair triangles ({} total):", all_tris.len());
+            for (i, j, k) in &all_tris {
+                let canonical = *i < *j && *i < *k;
+                let ccw = orient3d(self.points[*i as usize], self.points[*j as usize],
+                    self.points[*k as usize], DVec3::ZERO);
+                eprintln!("    ({i},{j},{k}) canonical={canonical} ccw={:.4e}", ccw);
+            }
+            for i in 0..n {
+                if self.lend[i] == UNSET { continue; }
+                eprintln!("  node {i}: {:?}", self.dump_node_release(i as u32));
+            }
+        }
+
+        // Build halfedge adjacency via edge map.
+        let tri_count = triangles.len() / 3;
+        let mut halfedges = vec![UNSET; triangles.len()];
         let mut edge_map: HashMap<(u32, u32), u32> = HashMap::with_capacity(tri_count * 3);
         for tri in 0..tri_count {
             for e in 0..3 {
@@ -685,6 +664,88 @@ mod tests {
     use super::*;
     use crate::tectonic_simulation::fibonnaci_spiral::SphericalFibonacci;
 
+    // ── orient3d tests ──────────────────────────────────────────────────────
+
+    #[test]
+    fn orient3d_positive_tetrahedron() {
+        let a = DVec3::new(1.0, 0.0, 0.0);
+        let b = DVec3::new(0.0, 1.0, 0.0);
+        let c = DVec3::new(0.0, 0.0, 1.0);
+        let d = DVec3::ZERO;
+        assert!(orient3d(a, b, c, d) > 0.0);
+    }
+
+    #[test]
+    fn orient3d_negative_when_swapped() {
+        let a = DVec3::new(1.0, 0.0, 0.0);
+        let b = DVec3::new(0.0, 1.0, 0.0);
+        let c = DVec3::new(0.0, 0.0, 1.0);
+        let d = DVec3::ZERO;
+        assert!(orient3d(a, c, b, d) < 0.0);
+    }
+
+    #[test]
+    fn orient3d_zero_for_coplanar() {
+        let a = DVec3::new(1.0, 0.0, 0.0);
+        let b = DVec3::new(0.0, 1.0, 0.0);
+        let c = DVec3::new(-1.0, -1.0, 0.0);
+        let d = DVec3::new(0.5, 0.5, 0.0);
+        assert!(orient3d(a, b, c, d).abs() < 1e-15);
+    }
+
+    // ── List primitive tests ────────────────────────────────────────────────
+
+    #[test]
+    fn list_insert_and_find() {
+        let points = (0..100).map(|_| DVec3::X).collect::<Vec<_>>();
+        let mut adj = AdjacencyLists::new(&points);
+        // Manually create a 3-entry circular list for node 0: [1, 2, 3]
+        adj.list[0] = 1; adj.list[1] = 2; adj.list[2] = 3;
+        adj.lptr[0] = 1; adj.lptr[1] = 2; adj.lptr[2] = 0;
+        adj.lend[0] = 2;
+        adj.lnew = 3;
+
+        // list_find returns the pointer TO the target.
+        let lp = adj.list_find(adj.lend[0], 2);
+        assert_eq!(adj.list[lp as usize], 2, "list_find should return pointer TO target");
+
+        // Insert 99 after the position holding node 1.
+        let lp1 = adj.list_find(adj.lend[0], 1);
+        adj.list_insert(lp1, 99);
+        // List should be: 1 -> 99 -> 2 -> 3 -> (back to 1)
+        let neighbors = adj.dump_node(0);
+        assert_eq!(neighbors, vec![1, 99, 2, 3]);
+    }
+
+    // ── Initial triangle tests ──────────────────────────────────────────────
+
+    #[test]
+    fn initial_tetrahedron_has_correct_neighbors() {
+        let points = vec![
+            DVec3::new(1.0, 1.0, 1.0).normalize(),
+            DVec3::new(-1.0, -1.0, 1.0).normalize(),
+            DVec3::new(-1.0, 1.0, -1.0).normalize(),
+            DVec3::new(1.0, -1.0, -1.0).normalize(),
+        ];
+        let mut adj = AdjacencyLists::new(&points);
+        adj.create_initial_tetrahedron([0, 1, 2, 3]);
+
+        // Each of the 4 nodes should have exactly 3 neighbors.
+        for node in 0..4u32 {
+            let neighbors = adj.dump_node(node);
+            assert_eq!(neighbors.len(), 3, "node {node} should have 3 neighbors, got {:?}", neighbors);
+        }
+        // Neighbor symmetry: if a has b, then b has a.
+        for i in 0..4u32 {
+            for &j in &adj.dump_node(i) {
+                assert!(adj.dump_node(j).contains(&i),
+                    "node {i} has neighbor {j}, but node {j} = {:?} doesn't have {i}", adj.dump_node(j));
+            }
+        }
+    }
+
+    // ── Integration tests ───────────────────────────────────────────────────
+
     #[test]
     fn tetrahedron_four_points() {
         let points = vec![
@@ -693,13 +754,25 @@ mod tests {
             DVec3::new(-1.0, 1.0, -1.0).normalize(),
             DVec3::new(1.0, -1.0, -1.0).normalize(),
         ];
-        let del = SphericalDelaunay::from_points(&points);
+        // Use debug build to trace what happens.
+        let mut adj = AdjacencyLists::new(&points);
+        adj.build_debug();
+        let del = adj.into_delaunay();
         assert_eq!(del.triangle_count(), 4);
     }
 
     #[test]
     fn correct_triangle_count() {
-        for n in [8, 20, 100, 500] {
+        // Debug the n=8 case first.
+        {
+            let sf = SphericalFibonacci::new(8);
+            let points = sf.all_points();
+            let mut adj = AdjacencyLists::new(&points);
+            adj.build_debug();
+            let del = adj.into_delaunay();
+            assert_eq!(del.triangle_count(), 2 * 8 - 4, "n=8");
+        }
+        for n in [20, 100, 500] {
             let sf = SphericalFibonacci::new(n);
             let del = SphericalDelaunay::from_points(&sf.all_points());
             assert_eq!(del.triangle_count(), 2 * n as usize - 4, "n={n}");
@@ -712,21 +785,6 @@ mod tests {
         for (i, &twin) in del.halfedges.iter().enumerate() {
             assert_ne!(twin, UNSET, "halfedge {i} has no twin");
             assert_eq!(del.halfedges[twin as usize], i as u32, "halfedge {i}: twin mismatch");
-        }
-    }
-
-    #[test]
-    fn halfedges_share_vertices() {
-        let del = SphericalDelaunay::from_points(&SphericalFibonacci::new(200).all_points());
-        for i in 0..del.halfedges.len() {
-            let twin = del.halfedges[i] as usize;
-            let (ta, ea) = (i / 3, i % 3);
-            let (tb, eb) = (twin / 3, twin % 3);
-            let a0 = del.triangles[ta * 3 + ea];
-            let a1 = del.triangles[ta * 3 + (ea + 1) % 3];
-            let b0 = del.triangles[tb * 3 + eb];
-            let b1 = del.triangles[tb * 3 + (eb + 1) % 3];
-            assert!(a0 == b1 && a1 == b0, "halfedge {i}: vertices don't match twin");
         }
     }
 
@@ -753,8 +811,13 @@ mod tests {
             let c = points[del.triangles[tri * 3 + 2] as usize];
             let normal = (b - a).cross(c - a).normalize();
             let d = normal.dot(a);
-            for p in &points {
-                assert!(normal.dot(*p) <= d + 1e-10, "point outside hull");
+            for (pi, p) in points.iter().enumerate() {
+                let violation = normal.dot(*p) - d;
+                if violation > 1e-10 {
+                    eprintln!("HULL VIOLATION: point {pi} is {violation:.6e} above triangle {tri} = ({},{},{})",
+                        del.triangles[tri * 3], del.triangles[tri * 3 + 1], del.triangles[tri * 3 + 2]);
+                }
+                assert!(violation <= 1e-10, "point {pi} outside hull by {violation:.6e}");
             }
         }
     }
@@ -805,30 +868,15 @@ mod tests {
             assert_ne!(twin, UNSET, "halfedge {i} has no twin");
             assert_eq!(del.halfedges[twin as usize], i as u32);
         }
-        for tri in 0..del.triangle_count() {
-            let a = points[del.triangles[tri * 3] as usize];
-            let b = points[del.triangles[tri * 3 + 1] as usize];
-            let c = points[del.triangles[tri * 3 + 2] as usize];
-            let normal = (b - a).cross(c - a).normalize();
-            let d = normal.dot(a);
-            for p in &points {
-                assert!(normal.dot(*p) <= d + 1e-10, "point outside hull");
-            }
-        }
     }
-
-    // ── New robustness tests ─────────────────────────────────────────────────
 
     #[test]
     fn rotated_fibonacci_points() {
         use glam::DQuat;
         let sf = SphericalFibonacci::new(500);
         let mut points = sf.all_points();
-        // Simulate plate rotation — the case that broke QuickHull.
         let rotation = DQuat::from_axis_angle(DVec3::new(0.3, 0.7, 0.5).normalize(), 0.15);
-        for p in &mut points {
-            *p = rotation.mul_vec3(*p);
-        }
+        for p in &mut points { *p = rotation.mul_vec3(*p); }
         let del = SphericalDelaunay::from_points(&points);
         assert_eq!(del.triangle_count(), 2 * 500 - 4);
         for (i, &twin) in del.halfedges.iter().enumerate() {
@@ -848,302 +896,5 @@ mod tests {
         }
         let del = SphericalDelaunay::from_points(&points);
         assert_eq!(del.triangle_count(), 2 * 200 - 4);
-    }
-
-    #[test]
-    fn debug_trace_small() {
-        let points = SphericalFibonacci::new(20).all_points();
-        let _del = SphericalDelaunay::from_points_debug(&points);
-        // Check the log file for errors
-        let log = std::fs::read_to_string("delaunay_debug.log").unwrap();
-        let errors: Vec<&str> = log.lines()
-            .filter(|l| l.contains("ERROR") || l.contains("MISMATCH") || l.contains("NO BACKREF") || l.contains("DEAD NEIGHBOR") || l.contains("UNSET NEIGHBOR"))
-            .collect();
-        for e in &errors {
-            eprintln!("{e}");
-        }
-        assert!(errors.is_empty(), "found {} topology errors, see delaunay_debug.log", errors.len());
-    }
-
-    // ── Unit tests for individual functions ──────────────────────────────────
-
-    #[test]
-    fn orient3d_positive_tetrahedron() {
-        // Standard right-handed tetrahedron: d at origin, (a,b,c) CCW from outside.
-        let a = DVec3::new(1.0, 0.0, 0.0);
-        let b = DVec3::new(0.0, 1.0, 0.0);
-        let c = DVec3::new(0.0, 0.0, 1.0);
-        let d = DVec3::ZERO;
-        let result = orient3d(a, b, c, d);
-        assert!(result > 0.0, "expected positive, got {result}");
-    }
-
-    #[test]
-    fn orient3d_negative_when_swapped() {
-        let a = DVec3::new(1.0, 0.0, 0.0);
-        let b = DVec3::new(0.0, 1.0, 0.0);
-        let c = DVec3::new(0.0, 0.0, 1.0);
-        let d = DVec3::ZERO;
-        // Swap b and c → flips sign.
-        let result = orient3d(a, c, b, d);
-        assert!(result < 0.0, "expected negative, got {result}");
-    }
-
-    #[test]
-    fn orient3d_zero_for_coplanar() {
-        let a = DVec3::new(1.0, 0.0, 0.0);
-        let b = DVec3::new(0.0, 1.0, 0.0);
-        let c = DVec3::new(-1.0, -1.0, 0.0);
-        let d = DVec3::new(0.5, 0.5, 0.0);
-        let result = orient3d(a, b, c, d);
-        assert!(result.abs() < 1e-15, "expected ~0, got {result}");
-    }
-
-    #[test]
-    fn orient3d_sphere_points_outside_circumcircle() {
-        // On unit sphere: orient3d(P,V1,V2,D) > 0 means D inside circumcircle of (P,V1,V2).
-        // D on the same side as (P,V1,V2) but just outside the circumcircle.
-        let p = DVec3::new(1.0, 0.0, 0.0);
-        let v1 = DVec3::new(0.0, 1.0, 0.0);
-        let v2 = DVec3::new(0.0, 0.0, 1.0);
-        // d on the opposite hemisphere — the plane through p,v1,v2 separates d from the origin,
-        // so d is on the origin's side (inside the plane), meaning outside the circumcircle.
-        let d = DVec3::new(0.1, 0.1, 0.1).normalize();
-        let result = orient3d(p, v1, v2, d);
-        assert!(result < 0.0, "expected negative (outside circumcircle), got {result}");
-    }
-
-    #[test]
-    fn orient3d_sphere_points_inside_circumcircle() {
-        let p = DVec3::new(1.0, 0.0, 0.0);
-        let v1 = DVec3::new(0.0, 1.0, 0.0);
-        let v2 = DVec3::new(0.0, 0.0, 1.0);
-        // d on the sphere, on the far side of plane(p,v1,v2) from origin → inside circumcircle.
-        let d = DVec3::new(-1.0, -1.0, -1.0).normalize();
-        let result = orient3d(p, v1, v2, d);
-        assert!(result > 0.0, "expected positive (inside circumcircle), got {result}");
-    }
-
-    #[test]
-    fn initial_tetrahedron_all_faces_outward() {
-        let points = vec![
-            DVec3::new(1.0, 1.0, 1.0).normalize(),    // 0
-            DVec3::new(-1.0, -1.0, 1.0).normalize(),   // 1
-            DVec3::new(-1.0, 1.0, -1.0).normalize(),   // 2
-            DVec3::new(1.0, -1.0, -1.0).normalize(),   // 3
-        ];
-        let mut builder = IncrementalBuilder::new(&points);
-        builder.create_initial_tetrahedron(&[0, 1, 2, 3]);
-        for (i, tri) in builder.triangles.iter().enumerate() {
-            let a = builder.points[tri.vertices[0] as usize];
-            let b = builder.points[tri.vertices[1] as usize];
-            let c = builder.points[tri.vertices[2] as usize];
-            let normal = (b - a).cross(c - a);
-            let dot = normal.dot(a + b + c);
-            assert!(dot > 0.0, "face {i} verts={:?} faces inward (dot={dot:.6e})", tri.vertices);
-        }
-    }
-
-    #[test]
-    fn initial_tetrahedron_neighbor_symmetry() {
-        let points = vec![
-            DVec3::new(1.0, 1.0, 1.0).normalize(),
-            DVec3::new(-1.0, -1.0, 1.0).normalize(),
-            DVec3::new(-1.0, 1.0, -1.0).normalize(),
-            DVec3::new(1.0, -1.0, -1.0).normalize(),
-        ];
-        let mut builder = IncrementalBuilder::new(&points);
-        builder.create_initial_tetrahedron(&[0, 1, 2, 3]);
-        for i in 0..4u32 {
-            for edge in 0..3 {
-                let neighbor = builder.triangles[i as usize].neighbors[edge];
-                // Neighbor should point back to us.
-                let nn = builder.triangles[neighbor as usize].neighbors;
-                assert!(
-                    nn.contains(&i),
-                    "tri[{i}] neighbors[{edge}]={neighbor}, but tri[{neighbor}].neighbors={nn:?} doesn't contain {i}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn initial_tetrahedron_shared_edges_match() {
-        let points = vec![
-            DVec3::new(1.0, 1.0, 1.0).normalize(),
-            DVec3::new(-1.0, -1.0, 1.0).normalize(),
-            DVec3::new(-1.0, 1.0, -1.0).normalize(),
-            DVec3::new(1.0, -1.0, -1.0).normalize(),
-        ];
-        let mut builder = IncrementalBuilder::new(&points);
-        builder.create_initial_tetrahedron(&[0, 1, 2, 3]);
-        for i in 0..4usize {
-            for edge in 0..3 {
-                let ni = builder.triangles[i].neighbors[edge] as usize;
-                let ev1 = builder.triangles[i].vertices[(edge + 1) % 3];
-                let ev2 = builder.triangles[i].vertices[(edge + 2) % 3];
-                let nv = builder.triangles[ni].vertices;
-                assert!(
-                    nv.contains(&ev1) && nv.contains(&ev2),
-                    "tri[{i}] edge {edge}: expected neighbor {ni} to share verts ({ev1},{ev2}), got {:?}", nv
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn split_produces_three_ccw_triangles() {
-        let points = vec![
-            DVec3::new(1.0, 1.0, 1.0).normalize(),    // 0
-            DVec3::new(-1.0, -1.0, 1.0).normalize(),   // 1
-            DVec3::new(-1.0, 1.0, -1.0).normalize(),   // 2
-            DVec3::new(1.0, -1.0, -1.0).normalize(),   // 3
-            DVec3::new(0.5, 0.5, 0.5).normalize(), // 4: point to insert
-        ];
-        let mut builder = IncrementalBuilder::new(&points);
-        builder.create_initial_tetrahedron(&[0, 1, 2, 3]);
-
-        // Find which triangle "sees" point 4 (brute force).
-        let tri_idx = builder.locate(4);
-        let new_tris = builder.split(tri_idx, 4);
-
-        for &t in &new_tris {
-            let tri = &builder.triangles[t as usize];
-            assert!(tri.alive);
-            assert_eq!(tri.vertices[0], 4, "inserted point should be vertex[0]");
-            let a = builder.points[tri.vertices[0] as usize];
-            let b = builder.points[tri.vertices[1] as usize];
-            let c = builder.points[tri.vertices[2] as usize];
-            let normal = (b - a).cross(c - a);
-            let dot = normal.dot(a + b + c);
-            assert!(dot > 0.0, "split tri[{t}] verts={:?} faces inward (dot={dot:.6e})", tri.vertices);
-        }
-    }
-
-    #[test]
-    fn split_neighbor_symmetry() {
-        let points = vec![
-            DVec3::new(1.0, 1.0, 1.0).normalize(),
-            DVec3::new(-1.0, -1.0, 1.0).normalize(),
-            DVec3::new(-1.0, 1.0, -1.0).normalize(),
-            DVec3::new(1.0, -1.0, -1.0).normalize(),
-            DVec3::new(0.5, 0.5, 0.5).normalize(),
-        ];
-        let mut builder = IncrementalBuilder::new(&points);
-        builder.create_initial_tetrahedron(&[0, 1, 2, 3]);
-        let tri_idx = builder.locate(4);
-        let _new_tris = builder.split(tri_idx, 4);
-
-        // Check all alive triangles have symmetric neighbors.
-        for i in 0..builder.triangles.len() {
-            let tri = &builder.triangles[i];
-            if !tri.alive { continue; }
-            for edge in 0..3 {
-                let ni = tri.neighbors[edge] as usize;
-                if ni == UNSET as usize { continue; }
-                let nn = builder.triangles[ni].neighbors;
-                assert!(
-                    nn.contains(&(i as u32)),
-                    "after split: tri[{i}] neighbors[{edge}]={ni}, but tri[{ni}].neighbors={nn:?} doesn't contain {i}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn single_flip_preserves_winding() {
-        // Build a minimal case: tetrahedron + one inserted point, then check the first flip.
-        let points = SphericalFibonacci::new(20).all_points();
-        let mut builder = IncrementalBuilder::new(&points);
-        let (initial_vertices, order) = builder.plan_insertion();
-        builder.create_initial_tetrahedron(&initial_vertices);
-
-        // Insert just the first point to trigger flips.
-        builder.insert(order[0]);
-
-        // Check all alive triangles face outward.
-        for (i, tri) in builder.triangles.iter().enumerate() {
-            if !tri.alive { continue; }
-            let a = builder.points[tri.vertices[0] as usize];
-            let b = builder.points[tri.vertices[1] as usize];
-            let c = builder.points[tri.vertices[2] as usize];
-            let normal = (b - a).cross(c - a);
-            let dot = normal.dot(a + b + c);
-            assert!(dot > 0.0,
-                "after first insert: tri[{i}] verts={:?} faces inward (dot={dot:.6e})", tri.vertices);
-        }
-    }
-
-    #[test]
-    fn patch_neighbor_updates_correctly() {
-        let points = vec![
-            DVec3::new(1.0, 1.0, 1.0).normalize(),
-            DVec3::new(-1.0, -1.0, 1.0).normalize(),
-            DVec3::new(-1.0, 1.0, -1.0).normalize(),
-            DVec3::new(1.0, -1.0, -1.0).normalize(),
-        ];
-        let mut builder = IncrementalBuilder::new(&points);
-        builder.create_initial_tetrahedron(&[0, 1, 2, 3]);
-
-        // tri[0].neighbors should contain 3, 1, 2.
-        assert!(builder.triangles[0].neighbors.contains(&3));
-
-        // Patch: tell tri[0] that where it used to reference tri[3], it now references tri[99].
-        // (tri[99] doesn't exist, but we're testing the pointer update.)
-        // First, add a dummy triangle so index 99 doesn't panic.
-        while builder.triangles.len() <= 99 {
-            builder.triangles.push(BuildTriangle { vertices: [0,0,0], neighbors: [UNSET,UNSET,UNSET], alive: false });
-        }
-        builder.patch_neighbor(0, 3, 99);
-        assert!(builder.triangles[0].neighbors.contains(&99),
-            "expected 99 in neighbors, got {:?}", builder.triangles[0].neighbors);
-        assert!(!builder.triangles[0].neighbors.contains(&3),
-            "old neighbor 3 should be gone");
-    }
-
-    #[test]
-    fn opposite_vertex_finds_correct_vertex() {
-        let points = vec![
-            DVec3::new(1.0, 1.0, 1.0).normalize(),
-            DVec3::new(-1.0, -1.0, 1.0).normalize(),
-            DVec3::new(-1.0, 1.0, -1.0).normalize(),
-            DVec3::new(1.0, -1.0, -1.0).normalize(),
-        ];
-        let mut builder = IncrementalBuilder::new(&points);
-        builder.create_initial_tetrahedron(&[0, 1, 2, 3]);
-
-        // tri[0] has some set of 3 vertices. Find the one opposite a shared edge.
-        let verts = builder.triangles[0].vertices;
-        let opp = builder.opposite_vertex(0, verts[1], verts[2]);
-        assert_eq!(opp, verts[0]);
-        let opp = builder.opposite_vertex(0, verts[0], verts[2]);
-        assert_eq!(opp, verts[1]);
-        let opp = builder.opposite_vertex(0, verts[0], verts[1]);
-        assert_eq!(opp, verts[2]);
-    }
-
-    #[test]
-    fn locate_finds_containing_triangle() {
-        let points = vec![
-            DVec3::new(1.0, 1.0, 1.0).normalize(),
-            DVec3::new(-1.0, -1.0, 1.0).normalize(),
-            DVec3::new(-1.0, 1.0, -1.0).normalize(),
-            DVec3::new(1.0, -1.0, -1.0).normalize(),
-            DVec3::new(0.5, 0.5, 0.5).normalize(),
-        ];
-        let mut builder = IncrementalBuilder::new(&points);
-        builder.create_initial_tetrahedron(&[0, 1, 2, 3]);
-        let tri_idx = builder.locate(4);
-        let tri = &builder.triangles[tri_idx as usize];
-
-        // Point 4 should be "inside" the located triangle:
-        // all three orient tests should be >= 0.
-        let p = builder.points[4];
-        let a = builder.points[tri.vertices[0] as usize];
-        let b = builder.points[tri.vertices[1] as usize];
-        let c = builder.points[tri.vertices[2] as usize];
-        assert!(p.dot(b.cross(c)) >= 0.0, "point outside edge BC");
-        assert!(p.dot(c.cross(a)) >= 0.0, "point outside edge CA");
-        assert!(p.dot(a.cross(b)) >= 0.0, "point outside edge AB");
     }
 }
