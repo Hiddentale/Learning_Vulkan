@@ -121,11 +121,7 @@ const ARROW_HEAD_LENGTH: f64 = 10.0;
 const ARROW_HEAD_HALF_WIDTH: f64 = 5.0;
 
 /// Renders plates colored by crust type with velocity arrows at each plate center.
-pub fn render_initialized_plates(
-    fibonacci: &SphericalFibonacci,
-    assignment: &PlateAssignment,
-    plates: &[Plate],
-) -> RgbImage {
+pub fn render_initialized_plates(fibonacci: &SphericalFibonacci, assignment: &PlateAssignment, plates: &[Plate]) -> RgbImage {
     let mut img = RgbImage::new(IMAGE_WIDTH, IMAGE_HEIGHT);
 
     // Build point -> plate lookup for crust type coloring.
@@ -307,7 +303,9 @@ pub fn render_simulation(sim: &Simulation) -> RgbImage {
         if plate.point_indices.is_empty() {
             continue;
         }
-        let centroid: DVec3 = plate.point_indices.iter()
+        let centroid: DVec3 = plate
+            .point_indices
+            .iter()
             .map(|&i| sim.points[i as usize])
             .sum::<DVec3>()
             .normalize_or_zero();
@@ -332,7 +330,7 @@ mod tests {
         generate_and_save(42, output);
     }
 
-    const TIMELAPSE_POINTS: u32 = 50_000;
+    const TIMELAPSE_POINTS: u32 = 250_000;
     const TIMELAPSE_STEPS: usize = 200;
     /// Render every N resample cycles. Each cycle = RESAMPLE_INTERVAL steps.
     const TIMELAPSE_RENDER_EVERY_N_RESAMPLES: usize = 1;
@@ -340,8 +338,8 @@ mod tests {
     #[test]
     #[ignore] // Run with: cargo test --release simulation_timelapse -- --ignored --nocapture
     fn simulation_timelapse() {
-        use std::io::Write;
         use super::super::resample;
+        use std::io::Write;
 
         let output_dir = Path::new("src/tectonic_simulation/timelapse");
         std::fs::create_dir_all(output_dir).expect("failed to create timelapse dir");
@@ -349,9 +347,7 @@ mod tests {
         let fibonacci = SphericalFibonacci::new(TIMELAPSE_POINTS);
         let points = fibonacci.all_points();
         let delaunay = SphericalDelaunay::from_points(&points);
-        let assignment = assign_plates(
-            &points, &fibonacci, &delaunay, PLATE_COUNT, 42, &WarpParams::default(),
-        );
+        let assignment = assign_plates(&points, &fibonacci, &delaunay, PLATE_COUNT, 42, &WarpParams::default());
         let plates = initialize_plates(&points, &delaunay, &assignment, &InitParams::default());
         let mut sim = Simulation::new(points, plates, &delaunay);
 
@@ -361,7 +357,12 @@ mod tests {
 
         // Frame 0: initial state (points are a clean Fibonacci grid).
         frame += 1;
-        print!("\r[{:>3}%] Frame {}/{} (t=0 Myr)        ", frame * 100 / total_frames, frame, total_frames);
+        print!(
+            "\r[{:>3}%] Frame {}/{} (t=0 Myr)        ",
+            frame * 100 / total_frames,
+            frame,
+            total_frames
+        );
         std::io::stdout().flush().unwrap();
         render_simulation(&sim).save(output_dir.join("frame_000.png")).unwrap();
 
@@ -373,9 +374,7 @@ mod tests {
                 let pct = (frame * 100).min(100 * total_frames) / total_frames;
                 print!("\r[{:>3}%] Frame {}/{} (t={:.0} Myr)        ", pct, frame, total_frames, sim.time);
                 std::io::stdout().flush().unwrap();
-                render_simulation(&sim)
-                    .save(output_dir.join(format!("frame_{:03}.png", step)))
-                    .unwrap();
+                render_simulation(&sim).save(output_dir.join(format!("frame_{:03}.png", step))).unwrap();
             }
         }
         println!("\r[100%] Done — {} frames in {}        ", total_frames, output_dir.display());
@@ -387,9 +386,7 @@ mod tests {
         let fibonacci = SphericalFibonacci::new(POINT_COUNT);
         let points = fibonacci.all_points();
         let delaunay = SphericalDelaunay::from_points(&points);
-        let assignment = assign_plates(
-            &points, &fibonacci, &delaunay, PLATE_COUNT, 42, &WarpParams::default(),
-        );
+        let assignment = assign_plates(&points, &fibonacci, &delaunay, PLATE_COUNT, 42, &WarpParams::default());
         let plates = initialize_plates(&points, &delaunay, &assignment, &InitParams::default());
 
         let img = render_initialized_plates(&fibonacci, &assignment, &plates);

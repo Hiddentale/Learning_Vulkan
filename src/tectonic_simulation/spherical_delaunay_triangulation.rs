@@ -400,16 +400,62 @@ impl AdjacencyLists {
 
     // ── Point location ──────────────────────────────────────────────────────
 
-    fn find(&self, p: DVec3, _start: u32) -> (u32, u32, u32) {
-        // TODO: implement TRFIND walk for O(√n) performance.
-        // For now, brute-force is correct and sufficient for debugging.
+    /// Visibility walk: start at a triangle near `start`, hop toward `p`.
+    /// Expected O(√n) steps. Falls back to brute force on cycle detection.
+    fn find(&self, p: DVec3, start: u32) -> (u32, u32, u32) {
+        let s = if self.lend[start as usize] != UNSET { start } else { 0 };
+        let lp_end = self.lend[s as usize];
+        let lp_first = self.lptr[lp_end as usize];
+        let mut n1 = s;
+        let mut n2 = self.list[lp_first as usize];
+        let mut n3 = self.list[self.lptr[lp_first as usize] as usize];
+
+        for _ in 0..self.points.len() {
+            let p1 = self.points[n1 as usize];
+            let p2 = self.points[n2 as usize];
+            let p3 = self.points[n3 as usize];
+
+            let b1 = p.dot(p2.cross(p3));
+            let b2 = p.dot(p3.cross(p1));
+            let b3 = p.dot(p1.cross(p2));
+
+            if b1 >= 0.0 && b2 >= 0.0 && b3 >= 0.0 {
+                return (n1, n2, n3);
+            }
+
+            // Cross the edge with the most negative barycentric coordinate.
+            if b1 <= b2 && b1 <= b3 {
+                // Cross edge n2-n3 (opposite n1).
+                // Adjacent CCW triangle: (n4, n3, n2).
+                let lp = self.list_find(self.lend[n3 as usize], n2);
+                let n4 = self.list[self.lptr[lp as usize] as usize];
+                n1 = n4;
+                std::mem::swap(&mut n2, &mut n3);
+            } else if b2 <= b3 {
+                // Cross edge n3-n1 (opposite n2).
+                // Adjacent CCW triangle: (n1, n3, n4).
+                let lp = self.list_find(self.lend[n1 as usize], n3);
+                let n4 = self.list[self.lptr[lp as usize] as usize];
+                n2 = n3;
+                n3 = n4;
+            } else {
+                // Cross edge n1-n2 (opposite n3).
+                // Adjacent CCW triangle: (n4, n2, n1).
+                let lp = self.list_find(self.lend[n2 as usize], n1);
+                let n4 = self.list[self.lptr[lp as usize] as usize];
+                n3 = n1;
+                n1 = n4;
+            }
+        }
+
         self.find_brute_force(p)
     }
 
+    /// O(n) exhaustive search. Used only as fallback when the walk cycles.
     fn find_brute_force(&self, p: DVec3) -> (u32, u32, u32) {
         let n = self.points.len();
         let mut best_tri = (0u32, 0u32, 0u32);
-        let mut best_min_orient = f64::NEG_INFINITY;
+        let mut best_min = f64::NEG_INFINITY;
 
         for i in 0..n {
             if self.lend[i] == UNSET { continue; }
@@ -428,56 +474,15 @@ impl AdjacencyLists {
                     return (i as u32, j, k);
                 }
                 let min_s = o1.min(o2).min(o3);
-                if min_s > best_min_orient {
-                    best_min_orient = min_s;
+                if min_s > best_min {
+                    best_min = min_s;
                     best_tri = (i as u32, j, k);
                 }
                 lp = self.lptr[lp as usize];
                 if lp == first { break; }
             }
         }
-        eprintln!("FIND BRUTE FORCE FAILED: p={p:?}");
-        eprintln!("  best triangle: ({},{},{}) min_orient={best_min_orient:.6e}",
-            best_tri.0, best_tri.1, best_tri.2);
-        for i in 0..n {
-            if self.lend[i] == UNSET { continue; }
-            eprintln!("  node {i}: neighbors={:?}", self.dump_node_release(i as u32));
-        }
-        // Dump all triangles with orient values for the query point.
-        eprintln!("  All triangles:");
-        for i in 0..n {
-            if self.lend[i] == UNSET { continue; }
-            let mut lp = self.lptr[self.lend[i] as usize];
-            let first = lp;
-            loop {
-                let j = self.list[lp as usize];
-                let k = self.list[self.lptr[lp as usize] as usize];
-                let pi = self.points[i];
-                let pj = self.points[j as usize];
-                let pk = self.points[k as usize];
-                let o1 = p.dot(pj.cross(pk));
-                let o2 = p.dot(pk.cross(pi));
-                let o3 = p.dot(pi.cross(pj));
-                eprintln!("    ({i},{j},{k}): o1={o1:.4e} o2={o2:.4e} o3={o3:.4e}");
-                lp = self.lptr[lp as usize];
-                if lp == first { break; }
-            }
-        }
-        panic!("point not found in any triangle");
-    }
-
-    fn dump_node_release(&self, node: u32) -> Vec<u32> {
-        let mut neighbors = Vec::new();
-        if self.lend[node as usize] == UNSET { return neighbors; }
-        let first_lp = self.lptr[self.lend[node as usize] as usize];
-        let mut lp = first_lp;
-        loop {
-            neighbors.push(self.list[lp as usize]);
-            lp = self.lptr[lp as usize];
-            if lp == first_lp { break; }
-            if neighbors.len() > 20 { neighbors.push(UNSET); break; }
-        }
-        neighbors
+        panic!("point {p:?} not in any triangle (best: {:?}, min={best_min:.4e})", best_tri);
     }
 
     // ── Interior insertion ──────────────────────────────────────────────────
@@ -507,38 +512,49 @@ impl AdjacencyLists {
 
     // ── Lawson edge flipping ────────────────────────────────────────────────
 
+    /// STRIPACK ADDNOD lines 148-181: cascade Lawson flips around K.
     fn enforce_delaunay(&mut self, k: u32) {
-        let mut first_lp = self.lptr[self.lend[k as usize] as usize];
-        let mut lp = first_lp;
+        // IO2 = first neighbor of K, IO1 = second (STRIPACK naming).
+        let lpf = self.lptr[self.lend[k as usize] as usize];
+        let mut io2 = self.list[lpf as usize];
+        let mut lpo1 = self.lptr[lpf as usize];
+        let mut io1 = self.list[lpo1 as usize];
 
         loop {
-            let io1 = self.list[lp as usize];
-            let lp_next = self.lptr[lp as usize];
-            let io2 = self.list[lp_next as usize];
+            // Find IN1: at IO1, find IO2, take next entry.
+            let lp = self.list_find(self.lend[io1 as usize], io2);
+            let in1 = self.list[self.lptr[lp as usize] as usize];
 
-            // Find the node across edge (io1, io2) from k.
-            let lp_io2_in_io1 = self.list_find(self.lend[io1 as usize], io2);
-            let in1 = self.list[self.lptr[lp_io2_in_io1 as usize] as usize];
+            // SWPTST(IN1, K, IO1, IO2) = orient3d(IO1, K, IN1, IO2) > 0
+            let orient = orient3d(
+                self.points[io1 as usize],
+                self.points[k as usize],
+                self.points[in1 as usize],
+                self.points[io2 as usize],
+            );
 
-            if in1 != k {
-                if orient3d(
-                    self.points[in1 as usize], self.points[io1 as usize],
-                    self.points[io2 as usize], self.points[k as usize],
-                ) > 0.0 {
-                    self.swap(in1, k, io1, io2);
-                    // Reset: K's neighbor list changed, start over.
-                    first_lp = self.lptr[self.lend[k as usize] as usize];
-                    lp = first_lp;
-                    continue;
-                }
+            #[cfg(test)]
+            eprintln!("  EDGE: k={k} io1={io1} io2={io2} in1={in1} orient={orient:.6e}");
+
+            if orient > 0.0 {
+                #[cfg(test)]
+                eprintln!("  SWAP: in1={in1} k={k} io1={io1} io2={io2}");
+                lpo1 = self.swap(in1, k, io1, io2);
+                io1 = in1;
+                continue;
             }
 
-            lp = lp_next;
-            if lp == first_lp { break; }
+            // No swap. Test for termination and advance.
+            if lpo1 == lpf { break; }
+            io2 = io1;
+            lpo1 = self.lptr[lpo1 as usize];
+            io1 = self.list[lpo1 as usize];
         }
     }
 
-    fn swap(&mut self, in1: u32, in2: u32, io1: u32, io2: u32) {
+    /// STRIPACK SWAP: replace diagonal IO1-IO2 with IN1-IN2.
+    /// Returns LP21 = pointer to IN1 in IN2's neighbor list after the swap.
+    fn swap(&mut self, in1: u32, in2: u32, io1: u32, io2: u32) -> u32 {
         // Delete io2 from io1's neighbor list.
         let lp = self.list_find(self.lend[io1 as usize], in2);
         let lph = self.lptr[lp as usize];
@@ -564,6 +580,8 @@ impl AdjacencyLists {
         self.lptr[lp as usize] = lph;
         self.list[lph as usize] = in1;
         self.lptr[lph as usize] = lpsav;
+
+        lph
     }
 
     // ── Linked list primitives ──────────────────────────────────────────────
@@ -601,7 +619,6 @@ impl AdjacencyLists {
         // Extract triangles: for each node i, walk consecutive neighbor pairs (j, k).
         // Emit triangle (i, j, k) only when i < j && i < k (canonical ordering).
         // This ensures each triangle is emitted exactly once.
-        let mut all_tris = Vec::new();
         for i in 0..n {
             if self.lend[i] == UNSET { continue; }
             let first_lp = self.lptr[self.lend[i] as usize];
@@ -609,7 +626,6 @@ impl AdjacencyLists {
             loop {
                 let j = self.list[lp as usize];
                 let k = self.list[self.lptr[lp as usize] as usize];
-                all_tris.push((i as u32, j, k));
                 if (i as u32) < j && (i as u32) < k {
                     triangles.push(i as u32);
                     triangles.push(j);
@@ -617,24 +633,6 @@ impl AdjacencyLists {
                 }
                 lp = self.lptr[lp as usize];
                 if lp == first_lp { break; }
-            }
-        }
-
-        // Log: expected triangle count vs actual.
-        let expected = 2 * n - 4;
-        let actual = triangles.len() / 3;
-        if actual != expected {
-            eprintln!("TRIANGLE COUNT MISMATCH: expected {expected}, got {actual}");
-            eprintln!("  All neighbor-pair triangles ({} total):", all_tris.len());
-            for (i, j, k) in &all_tris {
-                let canonical = *i < *j && *i < *k;
-                let ccw = orient3d(self.points[*i as usize], self.points[*j as usize],
-                    self.points[*k as usize], DVec3::ZERO);
-                eprintln!("    ({i},{j},{k}) canonical={canonical} ccw={:.4e}", ccw);
-            }
-            for i in 0..n {
-                if self.lend[i] == UNSET { continue; }
-                eprintln!("  node {i}: {:?}", self.dump_node_release(i as u32));
             }
         }
 
@@ -802,6 +800,124 @@ mod tests {
     }
 
     #[test]
+    fn five_point_manual_trace() {
+        let points = vec![
+            DVec3::new(1.0, 0.0, 0.0),   // 0: +X
+            DVec3::new(-1.0, 0.0, 0.0),  // 1: -X
+            DVec3::new(0.0, 1.0, 0.0),   // 2: +Y
+            DVec3::new(0.0, 0.0, 1.0),   // 3: +Z
+            DVec3::new(0.0, 0.0, -1.0),  // 4: -Z
+        ];
+        let mut adj = AdjacencyLists::new(&points);
+        adj.create_initial_tetrahedron([0, 1, 2, 3]);
+
+        eprintln!("INITIAL TETRAHEDRON:");
+        for i in 0..4u32 { eprintln!("  node {i}: {:?}", adj.dump_node(i)); }
+
+        // Expected: node 0: [1,2,3], node 1: [0,3,2], node 2: [0,1,3], node 3: [0,2,1]
+        assert_eq!(adj.dump_node(0), vec![1, 2, 3], "node 0 wrong");
+        assert_eq!(adj.dump_node(1), vec![0, 3, 2], "node 1 wrong");
+        assert_eq!(adj.dump_node(2), vec![0, 1, 3], "node 2 wrong");
+        assert_eq!(adj.dump_node(3), vec![0, 2, 1], "node 3 wrong");
+
+        // Locate point 4
+        let (i1, i2, i3) = adj.find(adj.points[4], 0);
+        eprintln!("LOCATE 4: triangle ({i1},{i2},{i3})");
+        assert!((i1, i2, i3) == (0, 1, 2) || (i1, i2, i3) == (1, 2, 0) || (i1, i2, i3) == (2, 0, 1),
+            "expected triangle (0,1,2) in some rotation, got ({i1},{i2},{i3})");
+
+        // Insert
+        adj.insert_interior(4, i1, i2, i3);
+        eprintln!("AFTER INSERT:");
+        for i in 0..5u32 { eprintln!("  node {i}: {:?}", adj.dump_node(i)); }
+
+        // Verify triangles are edge-consistent
+        adj.validate_triangles("after insert 4");
+
+        // Enforce Delaunay
+        adj.enforce_delaunay(4);
+        eprintln!("AFTER ENFORCE:");
+        for i in 0..5u32 { eprintln!("  node {i}: {:?}", adj.dump_node(i)); }
+
+        adj.validate_triangles("after enforce 4");
+
+        // Extract and check
+        let del = adj.into_delaunay();
+        assert_eq!(del.triangle_count(), 6, "expected 6 triangles");
+
+        // Check all normals face outward (>= 0 because axis-aligned octahedron
+        // vertices produce great-circle triangles where normal·centroid = exactly 0).
+        for tri in 0..del.triangle_count() {
+            let a = points[del.triangles[tri * 3] as usize];
+            let b = points[del.triangles[tri * 3 + 1] as usize];
+            let c = points[del.triangles[tri * 3 + 2] as usize];
+            let normal = (b - a).cross(c - a);
+            assert!(normal.dot(a + b + c) >= 0.0, "triangle {tri} faces inward");
+        }
+
+        // Check all halfedges paired
+        for (i, &twin) in del.halfedges.iter().enumerate() {
+            assert_ne!(twin, UNSET, "halfedge {i} has no twin");
+        }
+    }
+
+    #[test]
+    fn find_first_hull_violation() {
+        // Build incrementally and check convex hull after each insertion.
+        let points_raw = SphericalFibonacci::new(500).all_points();
+        let mut adj = AdjacencyLists::new(&points_raw);
+        let (initial, order) = adj.plan_insertion();
+        adj.create_initial_tetrahedron(initial);
+
+        let mut last_start = initial[0];
+        for (step, &k) in order.iter().enumerate() {
+            let (i1, i2, i3) = adj.find(adj.points[k as usize], last_start);
+            adj.insert_interior(k, i1, i2, i3);
+            adj.enforce_delaunay(k);
+            last_start = k;
+
+            // Check convex hull property.
+            let del = {
+                // Clone-ish: extract triangles without consuming.
+                let mut tris = Vec::new();
+                for i in 0..adj.points.len() {
+                    if adj.lend[i] == UNSET { continue; }
+                    let first_lp = adj.lptr[adj.lend[i] as usize];
+                    let mut lp = first_lp;
+                    loop {
+                        let j = adj.list[lp as usize];
+                        let kk = adj.list[adj.lptr[lp as usize] as usize];
+                        if (i as u32) < j && (i as u32) < kk {
+                            tris.push((i as u32, j, kk));
+                        }
+                        lp = adj.lptr[lp as usize];
+                        if lp == first_lp { break; }
+                    }
+                }
+                tris
+            };
+
+            for &(a, b, c) in &del {
+                let pa = adj.points[a as usize];
+                let pb = adj.points[b as usize];
+                let pc = adj.points[c as usize];
+                let normal = (pb - pa).cross(pc - pa).normalize();
+                let d = normal.dot(pa);
+                for (pi, p) in adj.points.iter().enumerate() {
+                    if adj.lend[pi] == UNSET { continue; } // not inserted yet
+                    let violation = normal.dot(*p) - d;
+                    if violation > 1e-10 {
+                        eprintln!("HULL VIOLATION at step {step} (inserted k={k}):");
+                        eprintln!("  point {pi} is {violation:.6e} above triangle ({a},{b},{c})");
+                        eprintln!("  k={k} neighbors: {:?}", adj.dump_node(k));
+                        panic!("first hull violation found");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn convex_hull_contains_all_points() {
         let points = SphericalFibonacci::new(500).all_points();
         let del = SphericalDelaunay::from_points(&points);
@@ -896,5 +1012,63 @@ mod tests {
         }
         let del = SphericalDelaunay::from_points(&points);
         assert_eq!(del.triangle_count(), 2 * 200 - 4);
+    }
+
+    #[test]
+    fn walk_matches_brute_force() {
+        let points = SphericalFibonacci::new(500).all_points();
+        let mut adj = AdjacencyLists::new(&points);
+        adj.build();
+
+        // Query 50 random points; verify walk and brute force agree.
+        let mut state = 98765u64;
+        let next = |s: &mut u64| -> f64 {
+            *s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (*s >> 11) as f64 / ((1u64 << 53) as f64)
+        };
+        for _ in 0..50 {
+            let z = next(&mut state) * 2.0 - 1.0;
+            let theta = next(&mut state) * std::f64::consts::TAU;
+            let r = (1.0 - z * z).sqrt();
+            let p = DVec3::new(r * theta.cos(), r * theta.sin(), z).normalize();
+
+            let walk = adj.find(p, 0);
+            let brute = adj.find_brute_force(p);
+
+            // Both should return a valid triangle containing p.
+            let contains = |tri: (u32, u32, u32)| {
+                let p1 = adj.points[tri.0 as usize];
+                let p2 = adj.points[tri.1 as usize];
+                let p3 = adj.points[tri.2 as usize];
+                p.dot(p2.cross(p3)) >= 0.0
+                    && p.dot(p3.cross(p1)) >= 0.0
+                    && p.dot(p1.cross(p2)) >= 0.0
+            };
+            assert!(contains(walk), "walk result doesn't contain point");
+            assert!(contains(brute), "brute result doesn't contain point");
+        }
+    }
+
+    #[test]
+    fn enforce_delaunay_cascades() {
+        // Verify that swap cascading happens: after insertion,
+        // some nodes should have degree > 3 (their initial fan).
+        let points = SphericalFibonacci::new(100).all_points();
+        let mut adj = AdjacencyLists::new(&points);
+        let (initial, order) = adj.plan_insertion();
+        adj.create_initial_tetrahedron(initial);
+
+        let mut max_degree = 3usize;
+        let mut last_start = initial[0];
+        for &k in &order {
+            let (i1, i2, i3) = adj.find(adj.points[k as usize], last_start);
+            adj.insert_interior(k, i1, i2, i3);
+            adj.enforce_delaunay(k);
+            let degree = adj.dump_node(k).len();
+            if degree > max_degree { max_degree = degree; }
+            last_start = k;
+        }
+        // With 100 fibonacci points, cascading must produce nodes with degree > 3.
+        assert!(max_degree > 3, "no cascading observed (max degree = {max_degree})");
     }
 }
