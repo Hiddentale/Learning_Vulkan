@@ -212,42 +212,14 @@ impl AdjacencyLists {
     }
 
     fn build(&mut self) {
-        self.build_inner(false);
-    }
-
-    #[cfg(test)]
-    fn build_debug(&mut self) {
-        self.build_inner(true);
-    }
-
-    fn build_inner(&mut self, debug: bool) {
         let (initial, order) = self.plan_insertion();
         self.create_initial_tetrahedron(initial);
-
-        if debug { self.dump_all(&format!("after initial tetrahedron {:?}", initial)); }
 
         let mut last_start = initial[0];
         for &k in &order {
             let (i1, i2, i3) = self.find(self.points[k as usize], last_start);
-            if debug {
-                eprintln!("INSERT {k} into triangle ({i1},{i2},{i3})");
-                let pi = self.points[i1 as usize];
-                let pj = self.points[i2 as usize];
-                let pk = self.points[i3 as usize];
-                let ccw = orient3d(pi, pj, pk, DVec3::ZERO);
-                eprintln!("  orient3d(i1,i2,i3,O) = {ccw:.6e} ({})", if ccw > 0.0 { "CCW" } else { "CW" });
-            }
             self.insert_interior(k, i1, i2, i3);
-            if debug {
-                self.dump_all(&format!("after insert_interior {k}"));
-                self.validate_neighbor_symmetry(&format!("after insert_interior {k}"));
-                self.validate_triangles(&format!("after insert_interior {k}"));
-            }
             self.enforce_delaunay(k);
-            if debug {
-                self.dump_all(&format!("after enforce_delaunay {k}"));
-                self.validate_triangles(&format!("after enforce_delaunay {k}"));
-            }
             last_start = k;
         }
     }
@@ -827,7 +799,7 @@ mod tests {
         ];
         // Use debug build to trace what happens.
         let mut adj = AdjacencyLists::new(&points);
-        adj.build_debug();
+        adj.build();
         let del = adj.into_delaunay();
         assert_eq!(del.triangle_count(), 4);
     }
@@ -839,7 +811,7 @@ mod tests {
             let sf = SphericalFibonacci::new(8);
             let points = sf.all_points();
             let mut adj = AdjacencyLists::new(&points);
-            adj.build_debug();
+            adj.build();
             let del = adj.into_delaunay();
             assert_eq!(del.triangle_count(), 2 * 8 - 4, "n=8");
         }

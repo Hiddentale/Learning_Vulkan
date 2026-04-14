@@ -230,6 +230,41 @@ fn flood_fill(points: &[DVec3], adjacency: &Adjacency, seeds: &[u32], warp: &War
     plate_ids
 }
 
+/// Simple Dijkstra flood-fill with uniform arc-distance edge costs.
+/// Used during resampling to reassign plate ownership from centroids.
+pub fn flood_fill_from_seeds(points: &[DVec3], adjacency: &Adjacency, seeds: &[u32]) -> Vec<u32> {
+    let mut plate_ids = vec![UNASSIGNED; points.len()];
+    let mut costs = vec![f64::INFINITY; points.len()];
+    let mut heap = BinaryHeap::with_capacity(points.len());
+
+    for (plate, &seed) in seeds.iter().enumerate() {
+        plate_ids[seed as usize] = plate as u32;
+        costs[seed as usize] = 0.0;
+        heap.push(Entry { cost: 0.0, point: seed });
+    }
+
+    while let Some(Entry { cost, point }) = heap.pop() {
+        if cost > costs[point as usize] { continue; }
+
+        let plate = plate_ids[point as usize];
+        let p = points[point as usize];
+
+        for &neighbor in adjacency.neighbors_of(point) {
+            let q = points[neighbor as usize];
+            let edge_cost = p.dot(q).clamp(-1.0, 1.0).acos();
+            let new_cost = cost + edge_cost;
+
+            if new_cost < costs[neighbor as usize] {
+                costs[neighbor as usize] = new_cost;
+                plate_ids[neighbor as usize] = plate;
+                heap.push(Entry { cost: new_cost, point: neighbor });
+            }
+        }
+    }
+
+    plate_ids
+}
+
 fn generate_plate_speeds(plate_count: usize, warp: &WarpParams) -> Vec<f64> {
     let [lo, hi] = warp.speed_range;
     let mut rng_state = splitmix64(warp.noise_seed as u64 ^ 0xDEAD_BEEF);
