@@ -19,8 +19,8 @@ const COOLING_COEFFICIENT: f64 = 0.335;
 const MIN_DIVERGENCE_SPEED: f64 = 0.5;
 /// Fastest plates → generate every 10 steps.
 const MIN_GENERATION_INTERVAL: usize = 10;
-/// Slowest plates → generate every 40 steps.
-const MAX_GENERATION_INTERVAL: usize = 40;
+/// Slowest plates → generate every 60 steps.
+const MAX_GENERATION_INTERVAL: usize = 60;
 /// Angular speed threshold for the interval ramp (rad/Myr).
 const FAST_ANGULAR_SPEED: f64 = 0.02;
 const SLOW_ANGULAR_SPEED: f64 = 0.005;
@@ -101,6 +101,14 @@ pub(super) fn find_divergent_edges(
 
         let local_a = point_to_local[edge.point as usize];
         let local_b = point_to_local[edge.neighbor as usize];
+
+        // After collision transfers or rifting, a boundary edge may reference
+        // a stale local index. Skip these safely.
+        let plate_a_len = plates[edge.plate_a as usize].crust.len();
+        let plate_b_len = plates[edge.plate_b as usize].crust.len();
+        if local_a >= plate_a_len || local_b >= plate_b_len {
+            continue;
+        }
 
         let ridge_pos = (p + neighbor_pos).normalize();
 

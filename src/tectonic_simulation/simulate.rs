@@ -4,6 +4,7 @@ use glam::{DQuat, DVec3};
 
 use super::continental_collision;
 use super::oceanic_crust_generation;
+use super::plate_rifting;
 use super::plate_seed_placement::Adjacency;
 use super::plates::{CrustType, OrogenyType, Plate};
 use super::resample;
@@ -39,6 +40,8 @@ pub struct Simulation {
     pub point_count: u32,
     steps_since_resample: usize,
     steps_since_crust_generation: usize,
+    steps_since_rift_check: usize,
+    rift_seed: u64,
 }
 
 impl Simulation {
@@ -52,6 +55,7 @@ impl Simulation {
         Self {
             points, plates, adjacency, time: 0.0, point_count,
             steps_since_resample: 0, steps_since_crust_generation: 0,
+            steps_since_rift_check: 0, rift_seed: 0,
         }
     }
 
@@ -61,6 +65,18 @@ impl Simulation {
         let boundary = find_boundary_edges(&self.plates, &self.points, &self.adjacency);
         self.process_subduction(&boundary);
         self.process_collisions(&boundary);
+        self.steps_since_rift_check += 1;
+        let rifted = if self.steps_since_rift_check >= plate_rifting::RIFT_CHECK_INTERVAL {
+            self.steps_since_rift_check = 0;
+            self.process_rifting()
+        } else {
+            false
+        };
+        let boundary = if rifted {
+            find_boundary_edges(&self.plates, &self.points, &self.adjacency)
+        } else {
+            boundary
+        };
         self.steps_since_crust_generation += 1;
         if self.steps_since_crust_generation
             >= oceanic_crust_generation::generation_interval(&self.plates)
@@ -252,6 +268,43 @@ impl Simulation {
         // Transfer the terrane from plate_a to plate_b.
         let (src, dst) = borrow_two_mut(&mut self.plates, plate_a as usize, plate_b as usize);
         continental_collision::transfer_terrane(nearest, src, dst);
+    }
+
+    fn process_rifting(&mut self) -> bool {
+        let mut rifted = false;
+        let mut new_plates: Vec<Plate> = Vec::new();
+        let mut emptied: Vec<usize> = Vec::new();
+
+        for i in 0..self.plates.len() {
+            if !plate_rifting::should_rift(&self.plates[i], i, self.time, self.rift_seed) {
+                continue;
+            }
+            let sub_plates =
+                plate_rifting::rift_plate(&self.plates[i], &self.points, &self.adjacency, self.rift_seed);
+            if sub_plates.len() < 2 {
+                continue;
+            }
+            emptied.push(i);
+            new_plates.extend(sub_plates);
+            rifted = true;
+        }
+
+        if !rifted {
+            self.rift_seed = self.rift_seed.wrapping_add(1);
+            return false;
+        }
+
+        // Remove emptied plates in reverse order to preserve indices.
+        emptied.sort_unstable();
+        for &i in emptied.iter().rev() {
+            self.plates.swap_remove(i);
+        }
+        self.plates.extend(new_plates);
+
+        let delaunay = SphericalDelaunay::from_points(&self.points);
+        self.adjacency = Adjacency::from_delaunay(self.points.len(), &delaunay);
+        self.rift_seed = self.rift_seed.wrapping_add(1);
+        true
     }
 
     fn generate_oceanic_crust(&mut self, boundary: &[BoundaryEdge]) {

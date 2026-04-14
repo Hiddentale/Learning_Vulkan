@@ -38,39 +38,7 @@ pub fn resample(sim: &mut Simulation, point_count: u32) {
     let new_delaunay = SphericalDelaunay::from_points(&new_points);
     let new_adjacency = Adjacency::from_delaunay(new_points.len(), &new_delaunay);
 
-    // Step 1: Interpolate crust data from old mesh via barycentric interpolation.
-    // Store per new-point, indexed by new point index.
-    let new_n = new_points.len();
-    let mut crust_per_point: Vec<CrustData> = Vec::with_capacity(new_n);
-    let mut temp_owner: Vec<u32> = Vec::with_capacity(new_n);
-
-    let mut last_tri = 0;
-    for &new_p in &new_points {
-        let (tri, b1, b2, b3) = old_delaunay.locate(new_p, old_points, last_tri);
-        last_tri = tri;
-
-        let base = tri * 3;
-        let vi = [
-            old_delaunay.triangles[base] as usize,
-            old_delaunay.triangles[base + 1] as usize,
-            old_delaunay.triangles[base + 2] as usize,
-        ];
-        let bary = [b1, b2, b3];
-
-        // Temporary owner for crust interpolation (dominant vertex).
-        let dominant = if bary[0] >= bary[1] && bary[0] >= bary[2] { 0 }
-                       else if bary[1] >= bary[2] { 1 }
-                       else { 2 };
-        let owner = point_plate[vi[dominant]];
-        temp_owner.push(owner);
-
-        let crust = interpolate_crust(
-            &sim.plates, &point_plate, &point_local, vi, bary, owner,
-        );
-        crust_per_point.push(crust);
-    }
-
-    // Step 2: Compute plate centroids from old drifted points.
+    // Step 1: Compute plate centroids from old drifted points.
     let plate_count = sim.plates.len();
     let mut centroids: Vec<DVec3> = vec![DVec3::ZERO; plate_count];
     for (plate_idx, plate) in sim.plates.iter().enumerate() {
@@ -82,20 +50,39 @@ pub fn resample(sim: &mut Simulation, point_count: u32) {
         }
     }
 
-    // Step 3: Find nearest new Fibonacci point to each centroid → flood-fill seeds.
+    // Step 2: Flood-fill from plate centroids → clean plate assignment.
     let seeds: Vec<u32> = centroids.iter()
         .map(|&c| fib.nearest_index(c))
         .collect();
-
-    // Step 4: Flood-fill from seeds on new adjacency → clean plate assignment.
     let new_plate_ids = flood_fill_from_seeds(&new_points, &new_adjacency, &seeds);
 
-    // Step 5: Distribute crust data to plates based on flood-fill assignment.
+    // Step 3: Interpolate crust data using the flood-fill plate assignment.
+    // This ensures crust interpolation uses the correct plate owner, not the
+    // barycentric dominant vertex which can disagree at boundaries.
+    let new_n = new_points.len();
     let mut new_plate_points: Vec<Vec<u32>> = vec![Vec::new(); plate_count];
     let mut new_plate_crust: Vec<Vec<CrustData>> = vec![Vec::new(); plate_count];
-    for (new_idx, &plate) in new_plate_ids.iter().enumerate() {
-        new_plate_points[plate as usize].push(new_idx as u32);
-        new_plate_crust[plate as usize].push(crust_per_point[new_idx].clone());
+
+    let mut last_tri = 0;
+    for (new_idx, &new_p) in new_points.iter().enumerate() {
+        let (tri, b1, b2, b3) = old_delaunay.locate(new_p, old_points, last_tri);
+        last_tri = tri;
+
+        let base = tri * 3;
+        let vi = [
+            old_delaunay.triangles[base] as usize,
+            old_delaunay.triangles[base + 1] as usize,
+            old_delaunay.triangles[base + 2] as usize,
+        ];
+        let bary = [b1, b2, b3];
+        let owner = new_plate_ids[new_idx];
+
+        let crust = interpolate_crust(
+            &sim.plates, &point_plate, &point_local, vi, bary, owner,
+        );
+
+        new_plate_points[owner as usize].push(new_idx as u32);
+        new_plate_crust[owner as usize].push(crust);
     }
 
     // Rebuild plates.
