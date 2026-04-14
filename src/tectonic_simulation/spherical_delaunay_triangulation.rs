@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io::Write;
 
 use glam::DVec3;
 
@@ -103,6 +104,14 @@ impl SphericalDelaunay {
         builder.build();
         builder.into_delaunay()
     }
+
+    #[cfg(test)]
+    fn from_points_debug(points: &[DVec3]) -> Self {
+        assert!(points.len() >= 4, "need at least 4 points");
+        let mut builder = IncrementalBuilder::new(points);
+        builder.build_with_log(true);
+        builder.into_delaunay()
+    }
 }
 
 // ── Internal builder ─────────────────────────────────────────────────────────
@@ -116,7 +125,7 @@ struct BuildTriangle {
 
 struct IncrementalBuilder {
     points: Vec<DVec3>,
-    tris: Vec<BuildTriangle>,
+    triangles: Vec<BuildTriangle>,
     last_located: u32,
 }
 
@@ -125,21 +134,121 @@ impl IncrementalBuilder {
         let normalized: Vec<DVec3> = points.iter().map(|p| p.normalize()).collect();
         Self {
             points: normalized,
-            tris: Vec::new(),
+            triangles: Vec::new(),
             last_located: 0,
         }
     }
 
     fn build(&mut self) {
-        let (seed_indices, order) = self.plan_insertion();
-        self.create_seed(&seed_indices);
+        self.build_with_log(false);
+    }
 
-        for &idx in &order {
+    fn build_with_log(&mut self, debug: bool) {
+        let (initial_vertices, order) = self.plan_insertion();
+        self.create_initial_tetrahedron(&initial_vertices);
+
+        let mut log_file = if debug {
+            Some(std::fs::File::create("delaunay_debug.log").unwrap())
+        } else {
+            None
+        };
+
+        if let Some(f) = &mut log_file {
+            writeln!(f, "INITIAL TETRAHEDRON: {:?}", initial_vertices).unwrap();
+            self.validate_topology(f, "after_tetrahedron", 0);
+        }
+
+        for (step, &idx) in order.iter().enumerate() {
             self.insert(idx);
+            if let Some(f) = &mut log_file {
+                self.validate_topology(f, "after_insert", idx);
+            }
         }
     }
 
-    /// Pick 4 well-separated seed points, return them + shuffled insertion order for the rest.
+    fn validate_topology(&self, f: &mut std::fs::File, label: &str, point_idx: u32) {
+        let alive_count = self.triangles.iter().filter(|t| t.alive).count();
+        writeln!(f, "\n=== {label} point={point_idx} alive_tris={alive_count} ===").unwrap();
+
+        for (i, tri) in self.triangles.iter().enumerate() {
+            if !tri.alive { continue; }
+            let [a, b, c] = tri.vertices;
+            let pa = self.points[a as usize];
+            let pb = self.points[b as usize];
+            let pc = self.points[c as usize];
+
+            // Check winding
+            let normal = (pb - pa).cross(pc - pa);
+            let centroid = pa + pb + pc;
+            let dot = normal.dot(centroid);
+            if dot <= 0.0 {
+                writeln!(f, "  WINDING ERROR: tri[{i}] verts=({a},{b},{c})").unwrap();
+                writeln!(f, "    expected: normal·centroid > 0 (outward facing)").unwrap();
+                writeln!(f, "    actual:   normal·centroid = {dot:.6e} (inward facing)").unwrap();
+            }
+
+            // Check neighbor symmetry
+            for edge in 0..3 {
+                let opp_vert = tri.vertices[edge];
+                let ev1 = tri.vertices[(edge + 1) % 3];
+                let ev2 = tri.vertices[(edge + 2) % 3];
+                let neighbor_idx = tri.neighbors[edge];
+
+                if neighbor_idx == UNSET {
+                    writeln!(f, "  UNSET NEIGHBOR: tri[{i}] neighbors[{edge}] (opp vert {opp_vert}, edge ({ev1},{ev2}))").unwrap();
+                    continue;
+                }
+                let ni = neighbor_idx as usize;
+                if ni >= self.triangles.len() {
+                    writeln!(f, "  OUT OF BOUNDS: tri[{i}] neighbors[{edge}]={neighbor_idx}, tris.len()={}", self.triangles.len()).unwrap();
+                    continue;
+                }
+                if !self.triangles[ni].alive {
+                    writeln!(f, "  DEAD NEIGHBOR: tri[{i}] neighbors[{edge}]={neighbor_idx}").unwrap();
+                    writeln!(f, "    expected: alive neighbor sharing edge ({ev1},{ev2})").unwrap();
+                    writeln!(f, "    actual:   tri[{ni}] is dead, verts={:?}", self.triangles[ni].vertices).unwrap();
+                    continue;
+                }
+
+                // Check that neighbor shares the expected edge
+                let nv = self.triangles[ni].vertices;
+                let nn = self.triangles[ni].neighbors;
+                let has_ev1 = nv.contains(&ev1);
+                let has_ev2 = nv.contains(&ev2);
+                if !has_ev1 || !has_ev2 {
+                    writeln!(f, "  WRONG NEIGHBOR: tri[{i}] neighbors[{edge}]={neighbor_idx} (opp vert {opp_vert})").unwrap();
+                    writeln!(f, "    expected: neighbor shares edge ({ev1},{ev2})").unwrap();
+                    writeln!(f, "    actual:   tri[{ni}] verts={:?}, has_v1({ev1})={has_ev1}, has_v2({ev2})={has_ev2}", nv).unwrap();
+                    continue;
+                }
+
+                // Check that neighbor points back to us
+                let mut found_back = false;
+                for ne in 0..3 {
+                    if nn[ne] == i as u32 {
+                        let nev1 = nv[(ne + 1) % 3];
+                        let nev2 = nv[(ne + 2) % 3];
+                        if (nev1 == ev1 && nev2 == ev2) || (nev1 == ev2 && nev2 == ev1) {
+                            found_back = true;
+                        } else {
+                            writeln!(f, "  EDGE MISMATCH: tri[{i}] edge {edge}").unwrap();
+                            writeln!(f, "    expected: tri[{ni}] shares edge ({ev1},{ev2}) at the slot pointing back to {i}").unwrap();
+                            writeln!(f, "    actual:   tri[{ni}] points back at edge {ne} with verts ({nev1},{nev2})").unwrap();
+                            found_back = true;
+                        }
+                        break;
+                    }
+                }
+                if !found_back {
+                    writeln!(f, "  NO BACKREF: tri[{i}] neighbors[{edge}]={neighbor_idx}").unwrap();
+                    writeln!(f, "    expected: tri[{ni}].neighbors contains {i}").unwrap();
+                    writeln!(f, "    actual:   tri[{ni}].neighbors={:?}, tri[{ni}].verts={:?}", nn, nv).unwrap();
+                }
+            }
+        }
+    }
+
+    /// Pick 4 well-separated points for the initial tetrahedron, return them + shuffled insertion order.
     fn plan_insertion(&self) -> ([u32; 4], Vec<u32>) {
         let pts = &self.points;
         let n = pts.len();
@@ -183,11 +292,11 @@ impl IncrementalBuilder {
             if dist > best { best = dist; d = i; }
         }
 
-        let seeds = [a as u32, b as u32, c as u32, d as u32];
+        let initial = [a as u32, b as u32, c as u32, d as u32];
 
         // Deterministic Fisher-Yates shuffle for O(n log n) expected insertion.
         let mut order: Vec<u32> = (0..n as u32)
-            .filter(|i| !seeds.contains(i))
+            .filter(|i| !initial.contains(i))
             .collect();
         let mut rng = 0x517cc1b727220a95u64;
         for i in (1..order.len()).rev() {
@@ -196,11 +305,11 @@ impl IncrementalBuilder {
             order.swap(i, j);
         }
 
-        (seeds, order)
+        (initial, order)
     }
 
-    fn create_seed(&mut self, seeds: &[u32; 4]) {
-        let [a, b, c, d] = *seeds;
+    fn create_initial_tetrahedron(&mut self, vertices: &[u32; 4]) {
+        let [a, b, c, d] = *vertices;
         let pts = &self.points;
 
         // Orient so d is on the negative side of (a,b,c).
@@ -211,7 +320,7 @@ impl IncrementalBuilder {
         };
 
         // 4 triangles of the tetrahedron with consistent neighbor wiring.
-        self.tris = vec![
+        self.triangles = vec![
             BuildTriangle { vertices: [a, b, c], neighbors: [3, 1, 2], alive: true }, // f0, opposite d
             BuildTriangle { vertices: [a, c, d], neighbors: [3, 2, 0], alive: true }, // f1, opposite b
             BuildTriangle { vertices: [a, d, b], neighbors: [3, 0, 1], alive: true }, // f2, opposite c
@@ -239,15 +348,15 @@ impl IncrementalBuilder {
     fn locate(&mut self, point_idx: u32) -> u32 {
         let p = self.points[point_idx as usize];
         let mut tri_idx = self.last_located;
-        let max_steps = (self.tris.len() as f64).sqrt() as usize * 6 + 20;
+        let max_steps = (self.triangles.len() as f64).sqrt() as usize * 6 + 20;
 
         for _ in 0..max_steps {
             // Skip dead triangles.
-            if !self.tris[tri_idx as usize].alive {
+            if !self.triangles[tri_idx as usize].alive {
                 tri_idx = self.any_alive_triangle();
             }
 
-            let [va, vb, vc] = self.tris[tri_idx as usize].vertices;
+            let [va, vb, vc] = self.triangles[tri_idx as usize].vertices;
             let a = self.points[va as usize];
             let b = self.points[vb as usize];
             let c = self.points[vc as usize];
@@ -256,7 +365,7 @@ impl IncrementalBuilder {
             // Edge BC (opposite vertex A, neighbor[0]): test p.dot(b.cross(c))
             let orient_bc = p.dot(b.cross(c));
             if orient_bc < 0.0 {
-                let next = self.tris[tri_idx as usize].neighbors[0];
+                let next = self.triangles[tri_idx as usize].neighbors[0];
                 if next == UNSET { break; }
                 tri_idx = next;
                 continue;
@@ -264,7 +373,7 @@ impl IncrementalBuilder {
 
             let orient_ca = p.dot(c.cross(a));
             if orient_ca < 0.0 {
-                let next = self.tris[tri_idx as usize].neighbors[1];
+                let next = self.triangles[tri_idx as usize].neighbors[1];
                 if next == UNSET { break; }
                 tri_idx = next;
                 continue;
@@ -272,7 +381,7 @@ impl IncrementalBuilder {
 
             let orient_ab = p.dot(a.cross(b));
             if orient_ab < 0.0 {
-                let next = self.tris[tri_idx as usize].neighbors[2];
+                let next = self.triangles[tri_idx as usize].neighbors[2];
                 if next == UNSET { break; }
                 tri_idx = next;
                 continue;
@@ -288,13 +397,13 @@ impl IncrementalBuilder {
     }
 
     fn any_alive_triangle(&self) -> u32 {
-        self.tris.iter().position(|t| t.alive).unwrap() as u32
+        self.triangles.iter().position(|t| t.alive).unwrap() as u32
     }
 
     fn locate_brute_force(&mut self, p: DVec3) -> u32 {
         let mut best_tri = 0u32;
         let mut best_dot = f64::NEG_INFINITY;
-        for (i, tri) in self.tris.iter().enumerate() {
+        for (i, tri) in self.triangles.iter().enumerate() {
             if !tri.alive { continue; }
             let centroid = (self.points[tri.vertices[0] as usize]
                 + self.points[tri.vertices[1] as usize]
@@ -313,11 +422,11 @@ impl IncrementalBuilder {
     // ── Stage 3: Split triangle into 3 ──────────────────────────────────────
 
     fn split(&mut self, tri_idx: u32, point_idx: u32) -> [u32; 3] {
-        let [a, b, c] = self.tris[tri_idx as usize].vertices;
-        let [n_a, n_b, n_c] = self.tris[tri_idx as usize].neighbors;
+        let [a, b, c] = self.triangles[tri_idx as usize].vertices;
+        let [n_a, n_b, n_c] = self.triangles[tri_idx as usize].neighbors;
 
         // Kill old triangle.
-        self.tris[tri_idx as usize].alive = false;
+        self.triangles[tri_idx as usize].alive = false;
 
         // Create 3 new triangles with P as vertex[0].
         // T0 = (P, B, C) — opposite edge BC, external neighbor = n_a
@@ -329,12 +438,12 @@ impl IncrementalBuilder {
 
         // Wire internal neighbors (edges adjacent to P).
         // T0's neighbor opposite C (index 1) = T1; opposite B (index 2) = T2
-        self.tris[t0 as usize].neighbors[1] = t1;
-        self.tris[t0 as usize].neighbors[2] = t2;
-        self.tris[t1 as usize].neighbors[1] = t2;
-        self.tris[t1 as usize].neighbors[2] = t0;
-        self.tris[t2 as usize].neighbors[1] = t0;
-        self.tris[t2 as usize].neighbors[2] = t1;
+        self.triangles[t0 as usize].neighbors[1] = t1;
+        self.triangles[t0 as usize].neighbors[2] = t2;
+        self.triangles[t1 as usize].neighbors[1] = t2;
+        self.triangles[t1 as usize].neighbors[2] = t0;
+        self.triangles[t2 as usize].neighbors[1] = t0;
+        self.triangles[t2 as usize].neighbors[2] = t1;
 
         // Patch external neighbors to point back to new triangles.
         self.patch_neighbor(n_a, tri_idx, t0);
@@ -346,15 +455,15 @@ impl IncrementalBuilder {
     }
 
     fn alloc_tri(&mut self, vertices: [u32; 3], neighbors: [u32; 3]) -> u32 {
-        let idx = self.tris.len() as u32;
-        self.tris.push(BuildTriangle { vertices, neighbors, alive: true });
+        let idx = self.triangles.len() as u32;
+        self.triangles.push(BuildTriangle { vertices, neighbors, alive: true });
         idx
     }
 
     /// Patch a neighbor to point to new_tri instead of old_tri.
     fn patch_neighbor(&mut self, neighbor: u32, old_tri: u32, new_tri: u32) {
         if neighbor == UNSET { return; }
-        let n = &mut self.tris[neighbor as usize];
+        let n = &mut self.triangles[neighbor as usize];
         for i in 0..3 {
             if n.neighbors[i] == old_tri {
                 n.neighbors[i] = new_tri;
@@ -362,8 +471,8 @@ impl IncrementalBuilder {
             }
         }
         // old_tri may have been killed by a prior flip — find by shared edge instead.
-        let new_verts = self.tris[new_tri as usize].vertices;
-        let n = &mut self.tris[neighbor as usize];
+        let new_verts = self.triangles[new_tri as usize].vertices;
+        let n = &mut self.triangles[neighbor as usize];
         for i in 0..3 {
             let nv1 = n.vertices[(i + 1) % 3];
             let nv2 = n.vertices[(i + 2) % 3];
@@ -378,16 +487,35 @@ impl IncrementalBuilder {
     // ── Stage 4: Lawson edge flipping ────────────────────────────────────────
 
     fn flip_edges(&mut self, stack: &mut Vec<(u32, u32)>) {
+        let mut iteration = 0u32;
+        let max_iterations = self.points.len() as u32 * 20;
+
         while let Some((tri_idx, edge_idx)) = stack.pop() {
-            if !self.tris[tri_idx as usize].alive { continue; }
+            iteration += 1;
+            if iteration > max_iterations {
+                eprintln!("FLIP LOOP: exceeded {max_iterations} iterations, stack size={}", stack.len());
+                eprintln!("  last popped: tri_idx={tri_idx} edge_idx={edge_idx}");
+                eprintln!("  tri[{tri_idx}] verts={:?} neighbors={:?} alive={}",
+                    self.triangles[tri_idx as usize].vertices,
+                    self.triangles[tri_idx as usize].neighbors,
+                    self.triangles[tri_idx as usize].alive);
+                // Print last 10 stack entries
+                for (i, &(t, e)) in stack.iter().rev().take(10).enumerate() {
+                    eprintln!("  stack[-{}]: tri={t} edge={e} verts={:?}", i+1,
+                        self.triangles[t as usize].vertices);
+                }
+                panic!("infinite flip loop detected");
+            }
 
-            let neighbor_idx = self.tris[tri_idx as usize].neighbors[edge_idx as usize];
+            if !self.triangles[tri_idx as usize].alive { continue; }
+
+            let neighbor_idx = self.triangles[tri_idx as usize].neighbors[edge_idx as usize];
             if neighbor_idx == UNSET { continue; }
-            if !self.tris[neighbor_idx as usize].alive { continue; }
+            if !self.triangles[neighbor_idx as usize].alive { continue; }
 
-            let p = self.tris[tri_idx as usize].vertices[edge_idx as usize];
-            let shared_v1 = self.tris[tri_idx as usize].vertices[(edge_idx as usize + 1) % 3];
-            let shared_v2 = self.tris[tri_idx as usize].vertices[(edge_idx as usize + 2) % 3];
+            let p = self.triangles[tri_idx as usize].vertices[edge_idx as usize];
+            let shared_v1 = self.triangles[tri_idx as usize].vertices[(edge_idx as usize + 1) % 3];
+            let shared_v2 = self.triangles[tri_idx as usize].vertices[(edge_idx as usize + 2) % 3];
 
             // Find the opposite vertex in the neighbor triangle.
             let d = self.opposite_vertex(neighbor_idx, shared_v1, shared_v2);
@@ -402,17 +530,41 @@ impl IncrementalBuilder {
             );
 
             if orient > 0.0 {
+                eprintln!("FLIP #{iteration}: tri_a={tri_idx}(edge {edge_idx}) tri_b={neighbor_idx} | p={p} v1={shared_v1} v2={shared_v2} d={d} | orient={orient:.6e} | stack_after={}", stack.len() + 4);
                 self.flip(tri_idx, edge_idx as usize, neighbor_idx, p, d, shared_v1, shared_v2, stack);
             }
         }
     }
 
     fn opposite_vertex(&self, tri_idx: u32, v1: u32, v2: u32) -> u32 {
-        let verts = self.tris[tri_idx as usize].vertices;
+        let verts = self.triangles[tri_idx as usize].vertices;
         for &v in &verts {
             if v != v1 && v != v2 { return v; }
         }
         panic!("shared edge not found in neighbor");
+    }
+
+    /// If a triangle's normal points inward, swap vertices[1]/[2] and neighbors[1]/[2]
+    /// to restore CCW-from-outside winding.
+    fn fix_winding(&mut self, tri_idx: u32) {
+        let t = &self.triangles[tri_idx as usize];
+        let p0 = self.points[t.vertices[0] as usize];
+        let p1 = self.points[t.vertices[1] as usize];
+        let p2 = self.points[t.vertices[2] as usize];
+        let normal = (p1 - p0).cross(p2 - p0);
+        if normal.dot(p0 + p1 + p2) < 0.0 {
+            let t = &mut self.triangles[tri_idx as usize];
+            t.vertices.swap(1, 2);
+            t.neighbors.swap(1, 2);
+        }
+    }
+
+    fn winding_dot(&self, v0: u32, v1: u32, v2: u32) -> f64 {
+        let p0 = self.points[v0 as usize];
+        let p1 = self.points[v1 as usize];
+        let p2 = self.points[v2 as usize];
+        let normal = (p1 - p0).cross(p2 - p0);
+        normal.dot(p0 + p1 + p2)
     }
 
     /// Flip the shared edge between tri_a and tri_b in-place (no new allocations).
@@ -427,11 +579,11 @@ impl IncrementalBuilder {
         stack: &mut Vec<(u32, u32)>,
     ) {
         // Gather external neighbors before mutating.
-        let ext_a_opp_v1 = self.tris[tri_a as usize].neighbors[(edge_a + 1) % 3];
-        let ext_a_opp_v2 = self.tris[tri_a as usize].neighbors[(edge_a + 2) % 3];
+        let ext_a_opp_v1 = self.triangles[tri_a as usize].neighbors[(edge_a + 1) % 3];
+        let ext_a_opp_v2 = self.triangles[tri_a as usize].neighbors[(edge_a + 2) % 3];
 
-        let vb = self.tris[tri_b as usize].vertices;
-        let nb = self.tris[tri_b as usize].neighbors;
+        let vb = self.triangles[tri_b as usize].vertices;
+        let nb = self.triangles[tri_b as usize].neighbors;
         let mut ext_b_opp_v1 = UNSET;
         let mut ext_b_opp_v2 = UNSET;
         for i in 0..3 {
@@ -440,36 +592,71 @@ impl IncrementalBuilder {
         }
 
         // tri_a becomes (p, d, v2): neighbor[0] opp p, neighbor[1] opp d, neighbor[2] opp v2
-        self.tris[tri_a as usize].vertices = [p, d, v2];
-        self.tris[tri_a as usize].neighbors = [ext_b_opp_v2, ext_a_opp_v2, tri_b];
+        self.triangles[tri_a as usize].vertices = [p, d, v2];
+        self.triangles[tri_a as usize].neighbors = [ext_b_opp_v1, ext_a_opp_v1, tri_b];
 
         // tri_b becomes (p, v1, d): neighbor[0] opp p, neighbor[1] opp v1, neighbor[2] opp d
-        self.tris[tri_b as usize].vertices = [p, v1, d];
-        self.tris[tri_b as usize].neighbors = [ext_b_opp_v1, tri_a, ext_a_opp_v1];
+        self.triangles[tri_b as usize].vertices = [p, v1, d];
+        self.triangles[tri_b as usize].neighbors = [ext_b_opp_v2, tri_a, ext_a_opp_v2];
 
-        // Patch the 4 external neighbors to point to the correct triangle.
-        self.patch_neighbor(ext_a_opp_v1, tri_a, tri_b);
-        self.patch_neighbor(ext_b_opp_v2, tri_b, tri_a);
-        // ext_a_opp_v2 stays with tri_a, ext_b_opp_v1 stays with tri_b — no patch needed.
+        // Correct winding: the flip may produce inward-facing triangles depending on
+        // the 3D geometry of the quadrilateral. Swapping vertices[1]/[2] and
+        // neighbors[1]/[2] reverses the winding while preserving the opposite-vertex convention.
+        self.fix_winding(tri_a);
+        self.fix_winding(tri_b);
 
-        // Push the 4 external edges for further flipping.
-        // tri_a = (p, d, v2): edge[0] opp p = (d,v2), edge[1] opp d = (v2,p)
-        stack.push((tri_a, 0));
-        stack.push((tri_a, 1));
-        // tri_b = (p, v1, d): edge[0] opp p = (v1,d), edge[2] opp d = (p,v1)
-        stack.push((tri_b, 0));
-        stack.push((tri_b, 2));
+        // Patch the 2 external neighbors that moved to a different triangle.
+        self.patch_neighbor(ext_a_opp_v2, tri_a, tri_b);
+        self.patch_neighbor(ext_b_opp_v1, tri_b, tri_a);
+        // ext_a_opp_v1 stays with tri_a, ext_b_opp_v2 stays with tri_b — no patch needed.
+
+        #[cfg(test)]
+        {
+            let winding_a = self.winding_dot(p, d, v2);
+            let winding_b = self.winding_dot(p, v1, d);
+            if winding_a <= 0.0 || winding_b <= 0.0 {
+                let va_before = [p, v1, v2];
+                let vb_before_verts = vb;
+                eprintln!("FLIP WINDING BUG:");
+                eprintln!("  before: tri_a[{tri_a}]=({},{},{}) tri_b[{tri_b}]=({},{},{})",
+                    va_before[0], va_before[1], va_before[2],
+                    vb_before_verts[0], vb_before_verts[1], vb_before_verts[2]);
+                eprintln!("  edge_a={edge_a} p={p} d={d} v1={v1} v2={v2}");
+                eprintln!("  after:  tri_a[{tri_a}]=({p},{d},{v2}) winding={winding_a:.6e}");
+                eprintln!("  after:  tri_b[{tri_b}]=({p},{v1},{d}) winding={winding_b:.6e}");
+                eprintln!("  orient3d(p,v1,v2,d) = {:.6e}", orient3d(
+                    self.points[p as usize], self.points[v1 as usize],
+                    self.points[v2 as usize], self.points[d as usize]));
+                eprintln!("  winding before tri_a: {:.6e}", self.winding_dot(va_before[0], va_before[1], va_before[2]));
+                eprintln!("  points: p={:?}", self.points[p as usize]);
+                eprintln!("          v1={:?}", self.points[v1 as usize]);
+                eprintln!("          v2={:?}", self.points[v2 as usize]);
+                eprintln!("          d={:?}", self.points[d as usize]);
+            }
+        }
+
+        // Push external edges for further flipping.
+        // After fix_winding, vertex positions may have swapped, so find external edges
+        // by excluding the internal edge (the one whose neighbor is the other triangle).
+        for edge in 0..3u32 {
+            if self.triangles[tri_a as usize].neighbors[edge as usize] != tri_b {
+                stack.push((tri_a, edge));
+            }
+            if self.triangles[tri_b as usize].neighbors[edge as usize] != tri_a {
+                stack.push((tri_b, edge));
+            }
+        }
     }
 
 
     // ── Stage 5: Convert to output format ────────────────────────────────────
 
     fn into_delaunay(self) -> SphericalDelaunay {
-        let tri_count = self.tris.iter().filter(|t| t.alive).count();
+        let tri_count = self.triangles.iter().filter(|t| t.alive).count();
         let mut triangles = Vec::with_capacity(tri_count * 3);
         let mut halfedges = vec![UNSET; tri_count * 3];
 
-        for t in &self.tris {
+        for t in &self.triangles {
             if t.alive {
                 triangles.extend_from_slice(&t.vertices);
             }
@@ -661,5 +848,302 @@ mod tests {
         }
         let del = SphericalDelaunay::from_points(&points);
         assert_eq!(del.triangle_count(), 2 * 200 - 4);
+    }
+
+    #[test]
+    fn debug_trace_small() {
+        let points = SphericalFibonacci::new(20).all_points();
+        let _del = SphericalDelaunay::from_points_debug(&points);
+        // Check the log file for errors
+        let log = std::fs::read_to_string("delaunay_debug.log").unwrap();
+        let errors: Vec<&str> = log.lines()
+            .filter(|l| l.contains("ERROR") || l.contains("MISMATCH") || l.contains("NO BACKREF") || l.contains("DEAD NEIGHBOR") || l.contains("UNSET NEIGHBOR"))
+            .collect();
+        for e in &errors {
+            eprintln!("{e}");
+        }
+        assert!(errors.is_empty(), "found {} topology errors, see delaunay_debug.log", errors.len());
+    }
+
+    // ── Unit tests for individual functions ──────────────────────────────────
+
+    #[test]
+    fn orient3d_positive_tetrahedron() {
+        // Standard right-handed tetrahedron: d at origin, (a,b,c) CCW from outside.
+        let a = DVec3::new(1.0, 0.0, 0.0);
+        let b = DVec3::new(0.0, 1.0, 0.0);
+        let c = DVec3::new(0.0, 0.0, 1.0);
+        let d = DVec3::ZERO;
+        let result = orient3d(a, b, c, d);
+        assert!(result > 0.0, "expected positive, got {result}");
+    }
+
+    #[test]
+    fn orient3d_negative_when_swapped() {
+        let a = DVec3::new(1.0, 0.0, 0.0);
+        let b = DVec3::new(0.0, 1.0, 0.0);
+        let c = DVec3::new(0.0, 0.0, 1.0);
+        let d = DVec3::ZERO;
+        // Swap b and c → flips sign.
+        let result = orient3d(a, c, b, d);
+        assert!(result < 0.0, "expected negative, got {result}");
+    }
+
+    #[test]
+    fn orient3d_zero_for_coplanar() {
+        let a = DVec3::new(1.0, 0.0, 0.0);
+        let b = DVec3::new(0.0, 1.0, 0.0);
+        let c = DVec3::new(-1.0, -1.0, 0.0);
+        let d = DVec3::new(0.5, 0.5, 0.0);
+        let result = orient3d(a, b, c, d);
+        assert!(result.abs() < 1e-15, "expected ~0, got {result}");
+    }
+
+    #[test]
+    fn orient3d_sphere_points_outside_circumcircle() {
+        // On unit sphere: orient3d(P,V1,V2,D) > 0 means D inside circumcircle of (P,V1,V2).
+        // D on the same side as (P,V1,V2) but just outside the circumcircle.
+        let p = DVec3::new(1.0, 0.0, 0.0);
+        let v1 = DVec3::new(0.0, 1.0, 0.0);
+        let v2 = DVec3::new(0.0, 0.0, 1.0);
+        // d on the opposite hemisphere — the plane through p,v1,v2 separates d from the origin,
+        // so d is on the origin's side (inside the plane), meaning outside the circumcircle.
+        let d = DVec3::new(0.1, 0.1, 0.1).normalize();
+        let result = orient3d(p, v1, v2, d);
+        assert!(result < 0.0, "expected negative (outside circumcircle), got {result}");
+    }
+
+    #[test]
+    fn orient3d_sphere_points_inside_circumcircle() {
+        let p = DVec3::new(1.0, 0.0, 0.0);
+        let v1 = DVec3::new(0.0, 1.0, 0.0);
+        let v2 = DVec3::new(0.0, 0.0, 1.0);
+        // d on the sphere, on the far side of plane(p,v1,v2) from origin → inside circumcircle.
+        let d = DVec3::new(-1.0, -1.0, -1.0).normalize();
+        let result = orient3d(p, v1, v2, d);
+        assert!(result > 0.0, "expected positive (inside circumcircle), got {result}");
+    }
+
+    #[test]
+    fn initial_tetrahedron_all_faces_outward() {
+        let points = vec![
+            DVec3::new(1.0, 1.0, 1.0).normalize(),    // 0
+            DVec3::new(-1.0, -1.0, 1.0).normalize(),   // 1
+            DVec3::new(-1.0, 1.0, -1.0).normalize(),   // 2
+            DVec3::new(1.0, -1.0, -1.0).normalize(),   // 3
+        ];
+        let mut builder = IncrementalBuilder::new(&points);
+        builder.create_initial_tetrahedron(&[0, 1, 2, 3]);
+        for (i, tri) in builder.triangles.iter().enumerate() {
+            let a = builder.points[tri.vertices[0] as usize];
+            let b = builder.points[tri.vertices[1] as usize];
+            let c = builder.points[tri.vertices[2] as usize];
+            let normal = (b - a).cross(c - a);
+            let dot = normal.dot(a + b + c);
+            assert!(dot > 0.0, "face {i} verts={:?} faces inward (dot={dot:.6e})", tri.vertices);
+        }
+    }
+
+    #[test]
+    fn initial_tetrahedron_neighbor_symmetry() {
+        let points = vec![
+            DVec3::new(1.0, 1.0, 1.0).normalize(),
+            DVec3::new(-1.0, -1.0, 1.0).normalize(),
+            DVec3::new(-1.0, 1.0, -1.0).normalize(),
+            DVec3::new(1.0, -1.0, -1.0).normalize(),
+        ];
+        let mut builder = IncrementalBuilder::new(&points);
+        builder.create_initial_tetrahedron(&[0, 1, 2, 3]);
+        for i in 0..4u32 {
+            for edge in 0..3 {
+                let neighbor = builder.triangles[i as usize].neighbors[edge];
+                // Neighbor should point back to us.
+                let nn = builder.triangles[neighbor as usize].neighbors;
+                assert!(
+                    nn.contains(&i),
+                    "tri[{i}] neighbors[{edge}]={neighbor}, but tri[{neighbor}].neighbors={nn:?} doesn't contain {i}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn initial_tetrahedron_shared_edges_match() {
+        let points = vec![
+            DVec3::new(1.0, 1.0, 1.0).normalize(),
+            DVec3::new(-1.0, -1.0, 1.0).normalize(),
+            DVec3::new(-1.0, 1.0, -1.0).normalize(),
+            DVec3::new(1.0, -1.0, -1.0).normalize(),
+        ];
+        let mut builder = IncrementalBuilder::new(&points);
+        builder.create_initial_tetrahedron(&[0, 1, 2, 3]);
+        for i in 0..4usize {
+            for edge in 0..3 {
+                let ni = builder.triangles[i].neighbors[edge] as usize;
+                let ev1 = builder.triangles[i].vertices[(edge + 1) % 3];
+                let ev2 = builder.triangles[i].vertices[(edge + 2) % 3];
+                let nv = builder.triangles[ni].vertices;
+                assert!(
+                    nv.contains(&ev1) && nv.contains(&ev2),
+                    "tri[{i}] edge {edge}: expected neighbor {ni} to share verts ({ev1},{ev2}), got {:?}", nv
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn split_produces_three_ccw_triangles() {
+        let points = vec![
+            DVec3::new(1.0, 1.0, 1.0).normalize(),    // 0
+            DVec3::new(-1.0, -1.0, 1.0).normalize(),   // 1
+            DVec3::new(-1.0, 1.0, -1.0).normalize(),   // 2
+            DVec3::new(1.0, -1.0, -1.0).normalize(),   // 3
+            DVec3::new(0.5, 0.5, 0.5).normalize(), // 4: point to insert
+        ];
+        let mut builder = IncrementalBuilder::new(&points);
+        builder.create_initial_tetrahedron(&[0, 1, 2, 3]);
+
+        // Find which triangle "sees" point 4 (brute force).
+        let tri_idx = builder.locate(4);
+        let new_tris = builder.split(tri_idx, 4);
+
+        for &t in &new_tris {
+            let tri = &builder.triangles[t as usize];
+            assert!(tri.alive);
+            assert_eq!(tri.vertices[0], 4, "inserted point should be vertex[0]");
+            let a = builder.points[tri.vertices[0] as usize];
+            let b = builder.points[tri.vertices[1] as usize];
+            let c = builder.points[tri.vertices[2] as usize];
+            let normal = (b - a).cross(c - a);
+            let dot = normal.dot(a + b + c);
+            assert!(dot > 0.0, "split tri[{t}] verts={:?} faces inward (dot={dot:.6e})", tri.vertices);
+        }
+    }
+
+    #[test]
+    fn split_neighbor_symmetry() {
+        let points = vec![
+            DVec3::new(1.0, 1.0, 1.0).normalize(),
+            DVec3::new(-1.0, -1.0, 1.0).normalize(),
+            DVec3::new(-1.0, 1.0, -1.0).normalize(),
+            DVec3::new(1.0, -1.0, -1.0).normalize(),
+            DVec3::new(0.5, 0.5, 0.5).normalize(),
+        ];
+        let mut builder = IncrementalBuilder::new(&points);
+        builder.create_initial_tetrahedron(&[0, 1, 2, 3]);
+        let tri_idx = builder.locate(4);
+        let _new_tris = builder.split(tri_idx, 4);
+
+        // Check all alive triangles have symmetric neighbors.
+        for i in 0..builder.triangles.len() {
+            let tri = &builder.triangles[i];
+            if !tri.alive { continue; }
+            for edge in 0..3 {
+                let ni = tri.neighbors[edge] as usize;
+                if ni == UNSET as usize { continue; }
+                let nn = builder.triangles[ni].neighbors;
+                assert!(
+                    nn.contains(&(i as u32)),
+                    "after split: tri[{i}] neighbors[{edge}]={ni}, but tri[{ni}].neighbors={nn:?} doesn't contain {i}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn single_flip_preserves_winding() {
+        // Build a minimal case: tetrahedron + one inserted point, then check the first flip.
+        let points = SphericalFibonacci::new(20).all_points();
+        let mut builder = IncrementalBuilder::new(&points);
+        let (initial_vertices, order) = builder.plan_insertion();
+        builder.create_initial_tetrahedron(&initial_vertices);
+
+        // Insert just the first point to trigger flips.
+        builder.insert(order[0]);
+
+        // Check all alive triangles face outward.
+        for (i, tri) in builder.triangles.iter().enumerate() {
+            if !tri.alive { continue; }
+            let a = builder.points[tri.vertices[0] as usize];
+            let b = builder.points[tri.vertices[1] as usize];
+            let c = builder.points[tri.vertices[2] as usize];
+            let normal = (b - a).cross(c - a);
+            let dot = normal.dot(a + b + c);
+            assert!(dot > 0.0,
+                "after first insert: tri[{i}] verts={:?} faces inward (dot={dot:.6e})", tri.vertices);
+        }
+    }
+
+    #[test]
+    fn patch_neighbor_updates_correctly() {
+        let points = vec![
+            DVec3::new(1.0, 1.0, 1.0).normalize(),
+            DVec3::new(-1.0, -1.0, 1.0).normalize(),
+            DVec3::new(-1.0, 1.0, -1.0).normalize(),
+            DVec3::new(1.0, -1.0, -1.0).normalize(),
+        ];
+        let mut builder = IncrementalBuilder::new(&points);
+        builder.create_initial_tetrahedron(&[0, 1, 2, 3]);
+
+        // tri[0].neighbors should contain 3, 1, 2.
+        assert!(builder.triangles[0].neighbors.contains(&3));
+
+        // Patch: tell tri[0] that where it used to reference tri[3], it now references tri[99].
+        // (tri[99] doesn't exist, but we're testing the pointer update.)
+        // First, add a dummy triangle so index 99 doesn't panic.
+        while builder.triangles.len() <= 99 {
+            builder.triangles.push(BuildTriangle { vertices: [0,0,0], neighbors: [UNSET,UNSET,UNSET], alive: false });
+        }
+        builder.patch_neighbor(0, 3, 99);
+        assert!(builder.triangles[0].neighbors.contains(&99),
+            "expected 99 in neighbors, got {:?}", builder.triangles[0].neighbors);
+        assert!(!builder.triangles[0].neighbors.contains(&3),
+            "old neighbor 3 should be gone");
+    }
+
+    #[test]
+    fn opposite_vertex_finds_correct_vertex() {
+        let points = vec![
+            DVec3::new(1.0, 1.0, 1.0).normalize(),
+            DVec3::new(-1.0, -1.0, 1.0).normalize(),
+            DVec3::new(-1.0, 1.0, -1.0).normalize(),
+            DVec3::new(1.0, -1.0, -1.0).normalize(),
+        ];
+        let mut builder = IncrementalBuilder::new(&points);
+        builder.create_initial_tetrahedron(&[0, 1, 2, 3]);
+
+        // tri[0] has some set of 3 vertices. Find the one opposite a shared edge.
+        let verts = builder.triangles[0].vertices;
+        let opp = builder.opposite_vertex(0, verts[1], verts[2]);
+        assert_eq!(opp, verts[0]);
+        let opp = builder.opposite_vertex(0, verts[0], verts[2]);
+        assert_eq!(opp, verts[1]);
+        let opp = builder.opposite_vertex(0, verts[0], verts[1]);
+        assert_eq!(opp, verts[2]);
+    }
+
+    #[test]
+    fn locate_finds_containing_triangle() {
+        let points = vec![
+            DVec3::new(1.0, 1.0, 1.0).normalize(),
+            DVec3::new(-1.0, -1.0, 1.0).normalize(),
+            DVec3::new(-1.0, 1.0, -1.0).normalize(),
+            DVec3::new(1.0, -1.0, -1.0).normalize(),
+            DVec3::new(0.5, 0.5, 0.5).normalize(),
+        ];
+        let mut builder = IncrementalBuilder::new(&points);
+        builder.create_initial_tetrahedron(&[0, 1, 2, 3]);
+        let tri_idx = builder.locate(4);
+        let tri = &builder.triangles[tri_idx as usize];
+
+        // Point 4 should be "inside" the located triangle:
+        // all three orient tests should be >= 0.
+        let p = builder.points[4];
+        let a = builder.points[tri.vertices[0] as usize];
+        let b = builder.points[tri.vertices[1] as usize];
+        let c = builder.points[tri.vertices[2] as usize];
+        assert!(p.dot(b.cross(c)) >= 0.0, "point outside edge BC");
+        assert!(p.dot(c.cross(a)) >= 0.0, "point outside edge CA");
+        assert!(p.dot(a.cross(b)) >= 0.0, "point outside edge AB");
     }
 }

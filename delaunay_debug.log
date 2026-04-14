@@ -1,0 +1,61 @@
+INITIAL TETRAHEDRON: [19, 0, 7, 9]
+
+=== after_tetrahedron point=0 alive_tris=4 ===
+
+=== after_insert point=16 alive_tris=6 ===
+  UNSET NEIGHBOR: tri[1] neighbors[0] (opp vert 7, edge (9,0))
+  NO BACKREF: tri[1] neighbors[1]=5
+    expected: tri[5].neighbors contains 1
+    actual:   tri[5].neighbors=[4294967295, 6, 2], tri[5].verts=[0, 7, 9]
+  WRONG NEIGHBOR: tri[1] neighbors[2]=6 (opp vert 0)
+    expected: neighbor shares edge (7,9)
+    actual:   tri[6] verts=[0, 9, 16], has_v1(7)=false, has_v2(9)=true
+  UNSET NEIGHBOR: tri[2] neighbors[0] (opp vert 7, edge (9,0))
+  UNSET NEIGHBOR: tri[3] neighbors[0] (opp vert 0, edge (7,9))
+  EDGE MISMATCH: tri[3] edge 1
+    expected: tri[6] shares edge (9,0) at the slot pointing back to 3
+    actual:   tri[6] points back at edge 0 with verts (9,16)
+  NO BACKREF: tri[3] neighbors[2]=2
+    expected: tri[2].neighbors contains 3
+    actual:   tri[2].neighbors=[4294967295, 5, 4], tri[2].verts=[7, 9, 0]
+  UNSET NEIGHBOR: tri[4] neighbors[0] (opp vert 9, edge (0,7))
+  NO BACKREF: tri[4] neighbors[2]=5
+    expected: tri[5].neighbors contains 4
+    actual:   tri[5].neighbors=[4294967295, 6, 2], tri[5].verts=[0, 7, 9]
+  UNSET NEIGHBOR: tri[5] neighbors[0] (opp vert 0, edge (7,9))
+  WRONG NEIGHBOR: tri[6] neighbors[0]=3 (opp vert 0)
+    expected: neighbor shares edge (9,16)
+    actual:   tri[3] verts=[0, 7, 9], has_v1(9)=true, has_v2(16)=false
+  UNSET NEIGHBOR: tri[6] neighbors[1] (opp vert 9, edge (16,0))
+
+=== after_insert point=15 alive_tris=8 ===
+  UNSET NEIGHBOR: tri[2] neighbors[0] (opp vert 7, edge (9,0))
+  NO BACKREF: tri[2] neighbors[1]=5
+    expected: tri[5].neighbors contains 2
+    actual:   tri[5].neighbors=[4294967295, 6, 8], tri[5].verts=[0, 7, 9]
+  UNSET NEIGHBOR: tri[3] neighbors[0] (opp vert 0, edge (7,9))
+  EDGE MISMATCH: tri[3] edge 1
+    expected: tri[6] shares edge (9,0) at the slot pointing back to 3
+    actual:   tri[6] points back at edge 0 with verts (9,16)
+  NO BACKREF: tri[3] neighbors[2]=2
+    expected: tri[2].neighbors contains 3
+    actual:   tri[2].neighbors=[4294967295, 5, 4], tri[2].verts=[7, 9, 0]
+  UNSET NEIGHBOR: tri[4] neighbors[0] (opp vert 9, edge (0,7))
+  NO BACKREF: tri[4] neighbors[2]=5
+    expected: tri[5].neighbors contains 4
+    actual:   tri[5].neighbors=[4294967295, 6, 8], tri[5].verts=[0, 7, 9]
+  UNSET NEIGHBOR: tri[5] neighbors[0] (opp vert 0, edge (7,9))
+  WRONG NEIGHBOR: tri[6] neighbors[0]=3 (opp vert 0)
+    expected: neighbor shares edge (9,16)
+    actual:   tri[3] verts=[0, 7, 9], has_v1(9)=true, has_v2(16)=false
+  UNSET NEIGHBOR: tri[6] neighbors[1] (opp vert 9, edge (16,0))
+  UNSET NEIGHBOR: tri[7] neighbors[0] (opp vert 15, edge (9,0))
+  WINDING ERROR: tri[8] verts=(15,0,7)
+    expected: normal·centroid > 0 (outward facing)
+    actual:   normal·centroid = -1.427249e0 (inward facing)
+  WINDING ERROR: tri[9] verts=(15,7,9)
+    expected: normal·centroid > 0 (outward facing)
+    actual:   normal·centroid = -2.152030e0 (inward facing)
+  WRONG NEIGHBOR: tri[9] neighbors[0]=6 (opp vert 15)
+    expected: neighbor shares edge (7,9)
+    actual:   tri[6] verts=[0, 9, 16], has_v1(7)=false, has_v2(9)=true
