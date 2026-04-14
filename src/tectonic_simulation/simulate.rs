@@ -33,9 +33,6 @@ const COLLISION_THRESHOLD: f64 = 300.0;
 /// Dot product threshold for the 1800km subduction radius.
 /// cos(1800 / 6370) — points with dot > this are within 1800km.
 const SUBDUCTION_DOT_THRESHOLD: f64 = 0.9603;
-/// Grid resolution for the sphere spatial index. Each face of the cube map
-/// is divided into GRID_RES × GRID_RES cells.
-const GRID_RES: usize = 16;
 /// Low-frequency noise amplitude for spatial erosion/damping variation.
 /// A value of 0.4 means rates vary between 60%–140% of their base value.
 const EROSION_NOISE_AMPLITUDE: f64 = 0.4;
@@ -173,8 +170,9 @@ impl Simulation {
 
     fn process_subduction(&mut self, boundary: &[BoundaryEdge]) {
         let mut slab_pull_points: Vec<Vec<DVec3>> = vec![Vec::new(); self.plates.len()];
-        let mut uplift_grids: Vec<SphereGrid<(DVec3, DVec3, DVec3)>> =
-            (0..self.plates.len()).map(|_| SphereGrid::new()).collect();
+
+        // Collect raw uplift sources per overriding plate.
+        let mut raw_sources: Vec<Vec<(DVec3, DVec3, DVec3)>> = vec![Vec::new(); self.plates.len()];
 
         for edge in boundary {
             let result = subduction::resolve_subduction(
@@ -196,19 +194,43 @@ impl Simulation {
 
             let vel_sub = self.plates[subducting_idx as usize].surface_velocity(boundary_pos);
             let vel_over = self.plates[overriding_idx as usize].surface_velocity(boundary_pos);
-            uplift_grids[overriding_idx as usize].insert(
-                boundary_pos,
-                (boundary_pos, vel_sub, vel_over),
-            );
+            raw_sources[overriding_idx as usize].push((boundary_pos, vel_sub, vel_over));
         }
 
-        // Each point queries only nearby boundary sources via the spatial grid.
+        // Cluster boundary sources by grid cell to reduce per-point work.
+        // Many boundary edges are geographically adjacent — averaging them per cell
+        // preserves physical accuracy while dramatically cutting source count.
+        let mut clustered_sources: Vec<Vec<(DVec3, DVec3, DVec3)>> = vec![Vec::new(); self.plates.len()];
         for plate_idx in 0..self.plates.len() {
-            let grid = &uplift_grids[plate_idx];
+            if raw_sources[plate_idx].is_empty() {
+                continue;
+            }
+            let mut grid: SphereGrid<(DVec3, DVec3, DVec3)> = SphereGrid::new();
+            for &src in &raw_sources[plate_idx] {
+                grid.insert(src.0, src);
+            }
+            for cell in &grid.cells {
+                if cell.is_empty() {
+                    continue;
+                }
+                let n = cell.len() as f64;
+                let avg_pos: DVec3 = cell.iter().map(|s| s.0).sum::<DVec3>() / n;
+                let avg_vel_sub: DVec3 = cell.iter().map(|s| s.1).sum::<DVec3>() / n;
+                let avg_vel_over: DVec3 = cell.iter().map(|s| s.2).sum::<DVec3>() / n;
+                clustered_sources[plate_idx].push((avg_pos.normalize(), avg_vel_sub, avg_vel_over));
+            }
+        }
+
+        // Single pass per plate: each point checks clustered boundary sources.
+        for plate_idx in 0..self.plates.len() {
+            let sources = &clustered_sources[plate_idx];
+            if sources.is_empty() {
+                continue;
+            }
             let plate = &mut self.plates[plate_idx];
             for (local, &global) in plate.point_indices.iter().enumerate() {
                 let p = self.points[global as usize];
-                for &(boundary_pos, vel_sub, vel_over) in grid.query(p, SUBDUCTION_DOT_THRESHOLD) {
+                for &(boundary_pos, vel_sub, vel_over) in sources {
                     if p.dot(boundary_pos) < SUBDUCTION_DOT_THRESHOLD {
                         continue;
                     }
@@ -442,69 +464,109 @@ impl Simulation {
     }
 }
 
-/// Cube-map spatial grid for accelerating proximity queries on the unit sphere.
+/// Spatial hash grid on the unit sphere for O(1) proximity lookups.
 ///
-/// Maps each point to a cell on one of 6 cube faces. Queries return all items
-/// in cells that could contain points within a given dot-product threshold.
+/// Discretizes the sphere into latitude/longitude bins. Queries expand to
+/// neighboring bins that could overlap the angular search radius.
 struct SphereGrid<T> {
+    /// Bins indexed by `lat_bin * LON_BINS + lon_bin`.
     cells: Vec<Vec<T>>,
 }
 
-impl<T: Clone> SphereGrid<T> {
+/// Number of latitude bands.
+const LAT_BINS: usize = 64;
+/// Number of longitude bands.
+const LON_BINS: usize = 128;
+
+impl<T> SphereGrid<T> {
     fn new() -> Self {
-        Self { cells: vec![Vec::new(); 6 * GRID_RES * GRID_RES] }
+        let cells: Vec<Vec<T>> = (0..LAT_BINS * LON_BINS).map(|_| Vec::new()).collect();
+        Self { cells }
     }
 
-    fn cell_index(p: DVec3) -> usize {
-        let (ax, ay, az) = (p.x.abs(), p.y.abs(), p.z.abs());
-        let (face, u, v) = if ax >= ay && ax >= az {
-            if p.x > 0.0 { (0, p.y / ax, p.z / ax) } else { (1, -p.y / ax, p.z / ax) }
-        } else if ay >= az {
-            if p.y > 0.0 { (2, p.x / ay, p.z / ay) } else { (3, -p.x / ay, p.z / ay) }
-        } else {
-            if p.z > 0.0 { (4, p.x / az, p.y / az) } else { (5, -p.x / az, p.y / az) }
-        };
-        let cu = ((u * 0.5 + 0.5) * GRID_RES as f64).min(GRID_RES as f64 - 1.0).max(0.0) as usize;
-        let cv = ((v * 0.5 + 0.5) * GRID_RES as f64).min(GRID_RES as f64 - 1.0).max(0.0) as usize;
-        face * GRID_RES * GRID_RES + cv * GRID_RES + cu
+    fn bin(p: DVec3) -> (usize, usize) {
+        let lat = p.y.clamp(-1.0, 1.0).asin(); // -π/2..π/2
+        let lon = p.z.atan2(p.x);               // -π..π
+        let lat_bin = ((lat / std::f64::consts::PI + 0.5) * LAT_BINS as f64)
+            .max(0.0).min(LAT_BINS as f64 - 1.0) as usize;
+        let lon_bin = ((lon / std::f64::consts::TAU + 0.5) * LON_BINS as f64)
+            .max(0.0).min(LON_BINS as f64 - 1.0) as usize;
+        (lat_bin, lon_bin)
     }
 
     fn insert(&mut self, p: DVec3, item: T) {
-        let idx = Self::cell_index(p);
-        self.cells[idx].push(item);
+        let (lat, lon) = Self::bin(p);
+        self.cells[lat * LON_BINS + lon].push(item);
     }
 
-    /// Return all items in cells whose center is within `margin` angle of `p`.
-    /// `margin` should be the query radius plus the cell diagonal, in dot-product space.
-    fn query(&self, p: DVec3, dot_threshold: f64) -> impl Iterator<Item = &T> {
-        // The angular radius of a cell diagonal is ~2/GRID_RES radians.
-        // We expand the search to include all cells whose centers could overlap.
-        let margin = (2.0 / GRID_RES as f64).cos().min(dot_threshold);
-        self.cells.iter().enumerate().filter_map(move |(idx, cell)| {
-            if cell.is_empty() {
+    /// Iterate all items in bins that could contain points within `dot_threshold`
+    /// of `p`. The angular radius is `acos(dot_threshold)`.
+    fn query(&self, p: DVec3, dot_threshold: f64) -> SphereGridIter<'_, T> {
+        let radius = dot_threshold.clamp(-1.0, 1.0).acos();
+        // Add one bin width as margin.
+        let margin = radius + std::f64::consts::PI / LAT_BINS as f64;
+
+        let lat = p.y.clamp(-1.0, 1.0).asin();
+        let lon = p.z.atan2(p.x);
+
+        let lat_half = margin / (std::f64::consts::PI / LAT_BINS as f64);
+        let (plat, _) = Self::bin(p);
+        let lat_lo = (plat as isize - lat_half.ceil() as isize).max(0) as usize;
+        let lat_hi = ((plat as isize + lat_half.ceil() as isize) as usize).min(LAT_BINS - 1);
+
+        // Longitude range expands near poles due to convergence.
+        let cos_lat = lat.cos().max(0.01);
+        let lon_half = (margin / cos_lat) / (std::f64::consts::TAU / LON_BINS as f64);
+        let (_, plon) = Self::bin(p);
+        let lon_span = lon_half.ceil() as usize;
+
+        SphereGridIter {
+            cells: &self.cells,
+            lat: lat_lo,
+            lat_hi,
+            lon_center: plon,
+            lon_span,
+            lon_offset: 0,
+            item_idx: 0,
+        }
+    }
+}
+
+struct SphereGridIter<'a, T> {
+    cells: &'a [Vec<T>],
+    lat: usize,
+    lat_hi: usize,
+    lon_center: usize,
+    lon_span: usize,
+    lon_offset: usize,  // 0..=2*lon_span
+    item_idx: usize,
+}
+
+impl<'a, T> Iterator for SphereGridIter<'a, T> {
+    type Item = &'a T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if self.lat > self.lat_hi {
                 return None;
             }
-            // Reconstruct the cell center and check if it's close enough.
-            let face = idx / (GRID_RES * GRID_RES);
-            let rem = idx % (GRID_RES * GRID_RES);
-            let cv = rem / GRID_RES;
-            let cu = rem % GRID_RES;
-            let u = (cu as f64 + 0.5) / GRID_RES as f64 * 2.0 - 1.0;
-            let v = (cv as f64 + 0.5) / GRID_RES as f64 * 2.0 - 1.0;
-            let center = match face {
-                0 => DVec3::new(1.0, u, v),
-                1 => DVec3::new(-1.0, -u, v),
-                2 => DVec3::new(u, 1.0, v),
-                3 => DVec3::new(-u, -1.0, v),
-                4 => DVec3::new(u, v, 1.0),
-                _ => DVec3::new(-u, -v, -1.0),
-            }.normalize();
-            if p.dot(center) >= margin {
-                Some(cell.iter())
-            } else {
-                None
+            let lon_count = 2 * self.lon_span + 1;
+            if self.lon_offset >= lon_count {
+                self.lat += 1;
+                self.lon_offset = 0;
+                self.item_idx = 0;
+                continue;
             }
-        }).flatten()
+            let lon = (self.lon_center + LON_BINS + self.lon_offset - self.lon_span) % LON_BINS;
+            let cell = &self.cells[self.lat * LON_BINS + lon];
+            if self.item_idx < cell.len() {
+                let item = &cell[self.item_idx];
+                self.item_idx += 1;
+                return Some(item);
+            }
+            self.lon_offset += 1;
+            self.item_idx = 0;
+        }
     }
 }
 
