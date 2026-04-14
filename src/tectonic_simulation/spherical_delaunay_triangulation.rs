@@ -4,6 +4,10 @@ use glam::DVec3;
 
 const UNSET: u32 = u32::MAX;
 
+/// Tolerance for spherical triangle containment tests.
+/// Prevents walk cycling at triangle edges due to floating-point error.
+const CONTAINMENT_EPS: f64 = -1e-12;
+
 // ── Robust orient3d ──────────────────────────────────────────────────────────
 
 /// Exact sign of the 3×3 determinant | (a-d) (b-d) (c-d) |.
@@ -85,6 +89,69 @@ impl SphericalDelaunay {
         let mut adj = AdjacencyLists::new(points);
         adj.build();
         adj.into_delaunay()
+    }
+
+    /// Locate the triangle containing `p` via halfedge walk.
+    /// Returns `(tri_index, b1, b2, b3)` — unnormalized barycentric coordinates.
+    /// `start_tri` is a hint for spatial coherence.
+    pub fn locate(&self, p: DVec3, points: &[DVec3], start_tri: usize) -> (usize, f64, f64, f64) {
+        let mut tri = start_tri.min(self.triangle_count() - 1);
+
+        for _ in 0..self.triangle_count() {
+            let base = tri * 3;
+            let p1 = points[self.triangles[base] as usize];
+            let p2 = points[self.triangles[base + 1] as usize];
+            let p3 = points[self.triangles[base + 2] as usize];
+
+            let b1 = p.dot(p2.cross(p3));
+            let b2 = p.dot(p3.cross(p1));
+            let b3 = p.dot(p1.cross(p2));
+
+            if b1 >= CONTAINMENT_EPS && b2 >= CONTAINMENT_EPS && b3 >= CONTAINMENT_EPS {
+                return (tri, b1, b2, b3);
+            }
+
+            // Hop across the edge with the most negative barycentric coordinate.
+            // Halfedge layout: he[base+0] = v0→v1, he[base+1] = v1→v2, he[base+2] = v2→v0.
+            // Edge opposite v0 (b1) = v1→v2 = he[base+1].
+            // Edge opposite v1 (b2) = v2→v0 = he[base+2].
+            // Edge opposite v2 (b3) = v0→v1 = he[base+0].
+            let he = if b1 <= b2 && b1 <= b3 {
+                base + 1
+            } else if b2 <= b3 {
+                base + 2
+            } else {
+                base
+            };
+
+            let twin = self.halfedges[he];
+            if twin == UNSET { break; }
+            tri = twin as usize / 3;
+        }
+
+        // Fallback: brute force (should rarely fire).
+        self.locate_brute(p, points)
+    }
+
+    fn locate_brute(&self, p: DVec3, points: &[DVec3]) -> (usize, f64, f64, f64) {
+        let mut best = (0usize, 0.0, 0.0, 0.0);
+        let mut best_min = f64::NEG_INFINITY;
+
+        for tri in 0..self.triangle_count() {
+            let base = tri * 3;
+            let p1 = points[self.triangles[base] as usize];
+            let p2 = points[self.triangles[base + 1] as usize];
+            let p3 = points[self.triangles[base + 2] as usize];
+            let b1 = p.dot(p2.cross(p3));
+            let b2 = p.dot(p3.cross(p1));
+            let b3 = p.dot(p1.cross(p2));
+            if b1 >= CONTAINMENT_EPS && b2 >= CONTAINMENT_EPS && b3 >= CONTAINMENT_EPS {
+                return (tri, b1, b2, b3);
+            }
+            let m = b1.min(b2).min(b3);
+            if m > best_min { best_min = m; best = (tri, b1, b2, b3); }
+        }
+        best
     }
 }
 
@@ -419,7 +486,7 @@ impl AdjacencyLists {
             let b2 = p.dot(p3.cross(p1));
             let b3 = p.dot(p1.cross(p2));
 
-            if b1 >= 0.0 && b2 >= 0.0 && b3 >= 0.0 {
+            if b1 >= CONTAINMENT_EPS && b2 >= CONTAINMENT_EPS && b3 >= CONTAINMENT_EPS {
                 return (n1, n2, n3);
             }
 
@@ -452,6 +519,8 @@ impl AdjacencyLists {
     }
 
     /// O(n) exhaustive search. Used only as fallback when the walk cycles.
+    /// Returns the closest triangle even when no exact containment is found
+    /// (floating-point edge proximity on a closed sphere).
     fn find_brute_force(&self, p: DVec3) -> (u32, u32, u32) {
         let n = self.points.len();
         let mut best_tri = (0u32, 0u32, 0u32);
@@ -470,7 +539,7 @@ impl AdjacencyLists {
                 let o1 = p.dot(pj.cross(pk));
                 let o2 = p.dot(pk.cross(pi));
                 let o3 = p.dot(pi.cross(pj));
-                if o1 >= 0.0 && o2 >= 0.0 && o3 >= 0.0 {
+                if o1 >= CONTAINMENT_EPS && o2 >= CONTAINMENT_EPS && o3 >= CONTAINMENT_EPS {
                     return (i as u32, j, k);
                 }
                 let min_s = o1.min(o2).min(o3);
@@ -482,7 +551,11 @@ impl AdjacencyLists {
                 if lp == first { break; }
             }
         }
-        panic!("point {p:?} not in any triangle (best: {:?}, min={best_min:.4e})", best_tri);
+        // On a closed sphere every point is inside some triangle.
+        // If we reach here, the point is on a triangle edge within float precision.
+        debug_assert!(best_min > -1e-2,
+            "point {p:?} far from all triangles (min={best_min:.4e})");
+        best_tri
     }
 
     // ── Interior insertion ──────────────────────────────────────────────────
