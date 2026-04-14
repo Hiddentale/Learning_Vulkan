@@ -8,7 +8,9 @@ use super::plate_seed_placement::Adjacency;
 use super::plates::Plate;
 
 /// Base Poisson rate λ_0 for rifting probability per check.
-const BASE_RIFT_RATE: f64 = 0.003;
+/// With RIFT_CHECK_INTERVAL=20 and area scaling, a 2x-average fully-continental
+/// plate gets P≈18% per check, making supercontinent breakup near-certain.
+const BASE_RIFT_RATE: f64 = 0.08;
 /// Minimum simulation steps between rifting checks.
 pub(super) const RIFT_CHECK_INTERVAL: usize = 20;
 /// Minimum points a plate must have to be eligible for rifting.
@@ -16,7 +18,8 @@ const MIN_PLATE_POINTS: usize = 50;
 /// Plates with continental fraction below this don't rift.
 const MIN_CONTINENTAL_FRACTION: f64 = 0.3;
 /// Angular perturbation applied to sub-plate rotation axes (radians).
-const AXIS_PERTURBATION: f64 = 0.1;
+/// ~30° ensures sub-plates diverge visibly after rifting.
+const AXIS_PERTURBATION: f64 = 0.5;
 /// Noise warp amplitude for fracture line irregularity.
 const RIFT_WARP_AMPLITUDE: f64 = 0.7;
 /// Noise frequency for fracture warp.
@@ -26,9 +29,18 @@ const RIFT_WARP_OCTAVES: usize = 3;
 
 /// Check whether a plate should rift this timestep.
 ///
-/// Uses Poisson probability `P = λ·e^(-λ)` where `λ = λ_0 · f(xp)`,
-/// with `f(xp)` being the plate's continental crust fraction.
-pub(super) fn should_rift(plate: &Plate, plate_index: usize, time: f64, seed: u64) -> bool {
+/// Uses Poisson probability `P = λ·e^(-λ)` where `λ = λ_0 · f(xp) · A(p)/A_0`,
+/// with `f(xp)` being the plate's continental fraction and `A(p)/A_0` the
+/// plate's area relative to the average plate size. Larger continental plates
+/// are much more likely to rift.
+pub(super) fn should_rift(
+    plate: &Plate,
+    plate_index: usize,
+    total_points: usize,
+    plate_count: usize,
+    time: f64,
+    seed: u64,
+) -> bool {
     if plate.point_count() < MIN_PLATE_POINTS {
         return false;
     }
@@ -38,7 +50,11 @@ pub(super) fn should_rift(plate: &Plate, plate_index: usize, time: f64, seed: u6
         return false;
     }
 
-    let lambda = BASE_RIFT_RATE * continental_fraction;
+    // Area ratio: plate size relative to the average plate size.
+    let avg_plate_size = total_points as f64 / plate_count.max(1) as f64;
+    let area_ratio = plate.point_count() as f64 / avg_plate_size;
+
+    let lambda = BASE_RIFT_RATE * continental_fraction * area_ratio;
     let probability = lambda * (-lambda).exp();
 
     let time_bits = time.to_bits();
@@ -226,30 +242,32 @@ fn partition_plate(
 
 /// Generate diverging rotation axes for sub-plates.
 ///
-/// Each sub-plate gets the parent axis rotated by a small random offset,
-/// with alternating sign to ensure divergence.
+/// Evenly spaces perturbation directions around the parent axis so sub-plates
+/// are guaranteed to move apart from each other.
 fn perturb_axes(
     parent_axis: DVec3,
     parent_speed: f64,
     count: usize,
     seed: u64,
 ) -> Vec<(DVec3, f64)> {
+    // Build a tangent frame around the parent axis.
+    let up = if parent_axis.y.abs() < 0.9 { DVec3::Y } else { DVec3::X };
+    let tangent_u = parent_axis.cross(up).normalize();
+    let tangent_v = parent_axis.cross(tangent_u).normalize();
+
+    // Random phase offset so rifts don't always align the same way.
     let mut rng = seed ^ 0xD1CE;
+    rng = splitmix64(rng);
+    let phase = (rng as f64 / u64::MAX as f64) * std::f64::consts::TAU;
+
     (0..count)
         .map(|i| {
-            rng = splitmix64(rng);
-            let z = (rng as f64 / u64::MAX as f64) * 2.0 - 1.0;
-            rng = splitmix64(rng);
-            let theta = (rng as f64 / u64::MAX as f64) * std::f64::consts::TAU;
-            let r = (1.0 - z * z).sqrt();
-            let random_dir = DVec3::new(r * theta.cos(), r * theta.sin(), z).normalize();
+            // Evenly spaced angles around the parent axis.
+            let angle = phase + (i as f64 / count as f64) * std::f64::consts::TAU;
+            let direction = tangent_u * angle.cos() + tangent_v * angle.sin();
+            let new_axis = (parent_axis + AXIS_PERTURBATION * direction).normalize();
 
-            // Alternate sign so sub-plates diverge.
-            let sign = if i % 2 == 0 { 1.0 } else { -1.0 };
-            let offset = sign * AXIS_PERTURBATION * random_dir;
-            let new_axis = (parent_axis + offset).normalize();
-
-            // Slight speed variation.
+            // Speed variation.
             rng = splitmix64(rng);
             let speed_factor = 0.8 + 0.4 * (rng as f64 / u64::MAX as f64);
             (new_axis, parent_speed * speed_factor)
@@ -359,7 +377,7 @@ mod tests {
             angular_speed: 0.01,
         };
         for i in 0..1000 {
-            assert!(!should_rift(&plate, 0, i as f64, 42));
+            assert!(!should_rift(&plate, 0, 1000, 10, i as f64, 42));
         }
     }
 
@@ -367,7 +385,7 @@ mod tests {
     fn too_small_plate_never_rifts() {
         let (_, plate) = make_continental_plate(10);
         for i in 0..1000 {
-            assert!(!should_rift(&plate, 0, i as f64, 42));
+            assert!(!should_rift(&plate, 0, 1000, 10, i as f64, 42));
         }
     }
 
@@ -375,7 +393,7 @@ mod tests {
     fn high_continental_sometimes_rifts() {
         let (_, plate) = make_continental_plate(200);
         let rift_count = (0..10000)
-            .filter(|&i| should_rift(&plate, 0, i as f64, i as u64))
+            .filter(|&i| should_rift(&plate, 0, 2000, 10, i as f64, i as u64))
             .count();
         assert!(
             rift_count > 0,

@@ -1,3 +1,6 @@
+use std::io::Write;
+use std::time::Instant;
+
 use glam::DVec3;
 
 use super::fibonnaci_spiral::SphericalFibonacci;
@@ -16,6 +19,11 @@ pub const RESAMPLE_INTERVAL: usize = 20;
 /// interpolation for smooth crust parameter transfer. Discrete fields (plate
 /// ownership, crust type, orogeny type) come from the dominant vertex.
 pub fn resample(sim: &mut Simulation, point_count: u32) {
+    let mut log = std::fs::OpenOptions::new()
+        .create(true).append(true)
+        .open("sim_profile.log").ok();
+    let resample_start = Instant::now();
+
     let old_points = &sim.points;
 
     // Build per-point lookups from current plate state.
@@ -30,13 +38,19 @@ pub fn resample(sim: &mut Simulation, point_count: u32) {
     }
 
     // Delaunay on the drifted old points — used for barycentric interpolation.
+    let t0 = Instant::now();
     let old_delaunay = SphericalDelaunay::from_points(old_points);
+    let old_del_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
     // Fresh Fibonacci grid + adjacency.
     let fib = SphericalFibonacci::new(point_count);
     let new_points = fib.all_points();
+    let t0 = Instant::now();
     let new_delaunay = SphericalDelaunay::from_points(&new_points);
+    let new_del_ms = t0.elapsed().as_secs_f64() * 1000.0;
+    let t0 = Instant::now();
     let new_adjacency = Adjacency::from_delaunay(new_points.len(), &new_delaunay);
+    let adjacency_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
     // Step 1: Compute plate centroids from old drifted points.
     let plate_count = sim.plates.len();
@@ -51,10 +65,12 @@ pub fn resample(sim: &mut Simulation, point_count: u32) {
     }
 
     // Step 2: Flood-fill from plate centroids → clean plate assignment.
+    let t0 = Instant::now();
     let seeds: Vec<u32> = centroids.iter()
         .map(|&c| fib.nearest_index(c))
         .collect();
     let new_plate_ids = flood_fill_from_seeds(&new_points, &new_adjacency, &seeds);
+    let flood_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
     // Step 3: Interpolate crust data using the flood-fill plate assignment.
     // This ensures crust interpolation uses the correct plate owner, not the
@@ -63,6 +79,7 @@ pub fn resample(sim: &mut Simulation, point_count: u32) {
     let mut new_plate_points: Vec<Vec<u32>> = vec![Vec::new(); plate_count];
     let mut new_plate_crust: Vec<Vec<CrustData>> = vec![Vec::new(); plate_count];
 
+    let t0 = Instant::now();
     let mut last_tri = 0;
     for (new_idx, &new_p) in new_points.iter().enumerate() {
         let (tri, b1, b2, b3) = old_delaunay.locate(new_p, old_points, last_tri);
@@ -84,6 +101,7 @@ pub fn resample(sim: &mut Simulation, point_count: u32) {
         new_plate_points[owner as usize].push(new_idx as u32);
         new_plate_crust[owner as usize].push(crust);
     }
+    let interp_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
     // Rebuild plates.
     for (plate_idx, plate) in sim.plates.iter_mut().enumerate() {
@@ -93,6 +111,14 @@ pub fn resample(sim: &mut Simulation, point_count: u32) {
 
     sim.adjacency = new_adjacency;
     sim.points = new_points;
+
+    let total_ms = resample_start.elapsed().as_secs_f64() * 1000.0;
+    if let Some(ref mut f) = log {
+        let _ = writeln!(f,
+            "  RESAMPLE: total={:.0}ms | old_delaunay={:.0} new_delaunay={:.0} adjacency={:.0} flood={:.0} interp={:.0}",
+            total_ms, old_del_ms, new_del_ms, adjacency_ms, flood_ms, interp_ms
+        );
+    }
 }
 
 /// Interpolate crust data from a triangle's three vertices.

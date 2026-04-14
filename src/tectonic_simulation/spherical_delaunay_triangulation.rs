@@ -578,12 +578,7 @@ impl AdjacencyLists {
                 self.points[io2 as usize],
             );
 
-            #[cfg(test)]
-            eprintln!("  EDGE: k={k} io1={io1} io2={io2} in1={in1} orient={orient:.6e}");
-
             if orient > 0.0 {
-                #[cfg(test)]
-                eprintln!("  SWAP: in1={in1} k={k} io1={io1} io2={io2}");
                 lpo1 = self.swap(in1, k, io1, io2);
                 io1 = in1;
                 continue;

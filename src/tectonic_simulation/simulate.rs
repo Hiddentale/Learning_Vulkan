@@ -1,6 +1,9 @@
 use std::collections::HashSet;
+use std::io::Write;
+use std::time::Instant;
 
 use glam::{DQuat, DVec3};
+use noise::{Fbm, MultiFractal, NoiseFn, Perlin};
 
 use super::continental_collision;
 use super::oceanic_crust_generation;
@@ -30,6 +33,18 @@ const COLLISION_THRESHOLD: f64 = 300.0;
 /// Dot product threshold for the 1800km subduction radius.
 /// cos(1800 / 6370) — points with dot > this are within 1800km.
 const SUBDUCTION_DOT_THRESHOLD: f64 = 0.9603;
+/// Grid resolution for the sphere spatial index. Each face of the cube map
+/// is divided into GRID_RES × GRID_RES cells.
+const GRID_RES: usize = 16;
+/// Low-frequency noise amplitude for spatial erosion/damping variation.
+/// A value of 0.4 means rates vary between 60%–140% of their base value.
+const EROSION_NOISE_AMPLITUDE: f64 = 0.4;
+/// Noise frequency — low values produce continent-scale variation.
+const EROSION_NOISE_FREQUENCY: f64 = 1.5;
+/// FBM octaves for erosion noise.
+const EROSION_NOISE_OCTAVES: usize = 3;
+/// Noise seed for erosion spatial variation.
+const EROSION_NOISE_SEED: u32 = 7;
 
 /// Full simulation state.
 pub struct Simulation {
@@ -61,36 +76,76 @@ impl Simulation {
 
     /// Advance the simulation by one timestep.
     pub fn step(&mut self) {
+        let step_start = Instant::now();
+        let mut log = std::fs::OpenOptions::new()
+            .create(true).append(true)
+            .open("sim_profile.log").ok();
+
+        let t0 = Instant::now();
         self.move_plates();
+        let move_ms = t0.elapsed().as_secs_f64() * 1000.0;
+
+        let t0 = Instant::now();
         let boundary = find_boundary_edges(&self.plates, &self.points, &self.adjacency);
+        let boundary_ms = t0.elapsed().as_secs_f64() * 1000.0;
+
+        let t0 = Instant::now();
         self.process_subduction(&boundary);
+        let subduction_ms = t0.elapsed().as_secs_f64() * 1000.0;
+
+        let t0 = Instant::now();
         self.process_collisions(&boundary);
+        let collision_ms = t0.elapsed().as_secs_f64() * 1000.0;
+
         self.steps_since_rift_check += 1;
+        let t0 = Instant::now();
         let rifted = if self.steps_since_rift_check >= plate_rifting::RIFT_CHECK_INTERVAL {
             self.steps_since_rift_check = 0;
             self.process_rifting()
         } else {
             false
         };
+        let rift_ms = t0.elapsed().as_secs_f64() * 1000.0;
+
+        let t0 = Instant::now();
         let boundary = if rifted {
             find_boundary_edges(&self.plates, &self.points, &self.adjacency)
         } else {
             boundary
         };
+        let rift_boundary_ms = t0.elapsed().as_secs_f64() * 1000.0;
+
         self.steps_since_crust_generation += 1;
+        let t0 = Instant::now();
         if self.steps_since_crust_generation
             >= oceanic_crust_generation::generation_interval(&self.plates)
         {
             self.generate_oceanic_crust(&boundary);
             self.steps_since_crust_generation = 0;
         }
+        let oceanic_ms = t0.elapsed().as_secs_f64() * 1000.0;
+
+        let t0 = Instant::now();
         self.apply_erosion_and_damping();
+        let erosion_ms = t0.elapsed().as_secs_f64() * 1000.0;
+
         self.time += DT;
         self.steps_since_resample += 1;
 
+        let t0 = Instant::now();
         if self.steps_since_resample >= resample::RESAMPLE_INTERVAL {
             resample::resample(self, self.point_count);
             self.steps_since_resample = 0;
+        }
+        let resample_ms = t0.elapsed().as_secs_f64() * 1000.0;
+
+        let total_ms = step_start.elapsed().as_secs_f64() * 1000.0;
+        if let Some(ref mut f) = log {
+            let _ = writeln!(f,
+                "step={:.0} pts={} plates={} total={:.1}ms | move={:.1} boundary={:.1} subduction={:.1} collision={:.1} rift={:.1} rift_bnd={:.1} oceanic={:.1} erosion={:.1} resample={:.1}",
+                self.time, self.points.len(), self.plates.len(), total_ms,
+                move_ms, boundary_ms, subduction_ms, collision_ms, rift_ms, rift_boundary_ms, oceanic_ms, erosion_ms, resample_ms
+            );
         }
     }
 
@@ -118,7 +173,8 @@ impl Simulation {
 
     fn process_subduction(&mut self, boundary: &[BoundaryEdge]) {
         let mut slab_pull_points: Vec<Vec<DVec3>> = vec![Vec::new(); self.plates.len()];
-        let mut uplift_sources: Vec<Vec<(DVec3, DVec3, DVec3)>> = vec![Vec::new(); self.plates.len()];
+        let mut uplift_grids: Vec<SphereGrid<(DVec3, DVec3, DVec3)>> =
+            (0..self.plates.len()).map(|_| SphereGrid::new()).collect();
 
         for edge in boundary {
             let result = subduction::resolve_subduction(
@@ -140,19 +196,19 @@ impl Simulation {
 
             let vel_sub = self.plates[subducting_idx as usize].surface_velocity(boundary_pos);
             let vel_over = self.plates[overriding_idx as usize].surface_velocity(boundary_pos);
-            uplift_sources[overriding_idx as usize].push((boundary_pos, vel_sub, vel_over));
+            uplift_grids[overriding_idx as usize].insert(
+                boundary_pos,
+                (boundary_pos, vel_sub, vel_over),
+            );
         }
 
-        // Single pass per plate: each point checks all boundary sources via dot product.
+        // Each point queries only nearby boundary sources via the spatial grid.
         for plate_idx in 0..self.plates.len() {
-            let sources = &uplift_sources[plate_idx];
-            if sources.is_empty() {
-                continue;
-            }
+            let grid = &uplift_grids[plate_idx];
             let plate = &mut self.plates[plate_idx];
             for (local, &global) in plate.point_indices.iter().enumerate() {
                 let p = self.points[global as usize];
-                for &(boundary_pos, vel_sub, vel_over) in sources {
+                for &(boundary_pos, vel_sub, vel_over) in grid.query(p, SUBDUCTION_DOT_THRESHOLD) {
                     if p.dot(boundary_pos) < SUBDUCTION_DOT_THRESHOLD {
                         continue;
                     }
@@ -275,10 +331,26 @@ impl Simulation {
         let mut new_plates: Vec<Plate> = Vec::new();
         let mut emptied: Vec<usize> = Vec::new();
 
-        for i in 0..self.plates.len() {
-            if !plate_rifting::should_rift(&self.plates[i], i, self.time, self.rift_seed) {
+        let total_points = self.points.len();
+        let plate_count = self.plates.len();
+
+        for i in 0..plate_count {
+            let p = &self.plates[i];
+            let cont = p.crust.iter().filter(|c| c.crust_type == CrustType::Continental).count();
+            let frac = cont as f64 / p.point_count() as f64;
+            let eligible = p.point_count() >= 50 && frac >= 0.3;
+            if eligible {
+                let avg = total_points as f64 / plate_count as f64;
+                let area_ratio = p.point_count() as f64 / avg;
+                let lambda = 0.02 * frac * area_ratio;
+                let prob = lambda * (-lambda).exp();
+                eprintln!("[RIFT] t={:.0} plate[{i}]: {} pts, cont={:.0}%, area_ratio={:.2}, λ={:.4}, P={:.4}",
+                    self.time, p.point_count(), frac*100.0, area_ratio, lambda, prob);
+            }
+            if !plate_rifting::should_rift(&self.plates[i], i, total_points, plate_count, self.time, self.rift_seed) {
                 continue;
             }
+            eprintln!("[RIFT] >>> RIFTED plate[{i}]!");
             let sub_plates =
                 plate_rifting::rift_plate(&self.plates[i], &self.points, &self.adjacency, self.rift_seed);
             if sub_plates.len() < 2 {
@@ -335,18 +407,30 @@ impl Simulation {
     }
 
     fn apply_erosion_and_damping(&mut self) {
+        let fbm: Fbm<Perlin> = Fbm::new(EROSION_NOISE_SEED)
+            .set_octaves(EROSION_NOISE_OCTAVES)
+            .set_frequency(EROSION_NOISE_FREQUENCY);
+
         for plate in &mut self.plates {
-            for crust in &mut plate.crust {
+            for (local, &global) in plate.point_indices.iter().enumerate() {
+                let p = self.points[global as usize];
+                let noise = 1.0 + EROSION_NOISE_AMPLITUDE * fbm.get([p.x, p.y, p.z]);
+                let scale = noise.max(0.1);
+                let crust = &mut plate.crust[local];
                 match crust.crust_type {
                     CrustType::Continental => {
-                        // z(t+dt) = z(t) - (z/zc) * εc * dt
-                        crust.elevation -=
-                            (crust.elevation / MAX_CONTINENTAL_ALTITUDE) * CONTINENTAL_EROSION * DT;
+                        // z(t+dt) = z(t) - (z/zc) * εc * δt, modulated by spatial noise.
+                        crust.elevation -= (crust.elevation / MAX_CONTINENTAL_ALTITUDE)
+                            * CONTINENTAL_EROSION
+                            * scale
+                            * DT;
                     }
                     CrustType::Oceanic => {
-                        // z(t+dt) = z(t) - (1 - z/zt) * εo * dt
-                        crust.elevation -=
-                            (1.0 - crust.elevation / OCEANIC_TRENCH_DEPTH) * OCEANIC_DAMPING * DT;
+                        // z(t+dt) = z(t) - (1 - z/zt) * εo * δt, modulated by spatial noise.
+                        crust.elevation -= (1.0 - crust.elevation / OCEANIC_TRENCH_DEPTH)
+                            * OCEANIC_DAMPING
+                            * scale
+                            * DT;
                         // Trench sediment fill.
                         crust.elevation += SEDIMENT_ACCRETION * DT;
                         // Age oceanic crust.
@@ -355,6 +439,72 @@ impl Simulation {
                 }
             }
         }
+    }
+}
+
+/// Cube-map spatial grid for accelerating proximity queries on the unit sphere.
+///
+/// Maps each point to a cell on one of 6 cube faces. Queries return all items
+/// in cells that could contain points within a given dot-product threshold.
+struct SphereGrid<T> {
+    cells: Vec<Vec<T>>,
+}
+
+impl<T: Clone> SphereGrid<T> {
+    fn new() -> Self {
+        Self { cells: vec![Vec::new(); 6 * GRID_RES * GRID_RES] }
+    }
+
+    fn cell_index(p: DVec3) -> usize {
+        let (ax, ay, az) = (p.x.abs(), p.y.abs(), p.z.abs());
+        let (face, u, v) = if ax >= ay && ax >= az {
+            if p.x > 0.0 { (0, p.y / ax, p.z / ax) } else { (1, -p.y / ax, p.z / ax) }
+        } else if ay >= az {
+            if p.y > 0.0 { (2, p.x / ay, p.z / ay) } else { (3, -p.x / ay, p.z / ay) }
+        } else {
+            if p.z > 0.0 { (4, p.x / az, p.y / az) } else { (5, -p.x / az, p.y / az) }
+        };
+        let cu = ((u * 0.5 + 0.5) * GRID_RES as f64).min(GRID_RES as f64 - 1.0).max(0.0) as usize;
+        let cv = ((v * 0.5 + 0.5) * GRID_RES as f64).min(GRID_RES as f64 - 1.0).max(0.0) as usize;
+        face * GRID_RES * GRID_RES + cv * GRID_RES + cu
+    }
+
+    fn insert(&mut self, p: DVec3, item: T) {
+        let idx = Self::cell_index(p);
+        self.cells[idx].push(item);
+    }
+
+    /// Return all items in cells whose center is within `margin` angle of `p`.
+    /// `margin` should be the query radius plus the cell diagonal, in dot-product space.
+    fn query(&self, p: DVec3, dot_threshold: f64) -> impl Iterator<Item = &T> {
+        // The angular radius of a cell diagonal is ~2/GRID_RES radians.
+        // We expand the search to include all cells whose centers could overlap.
+        let margin = (2.0 / GRID_RES as f64).cos().min(dot_threshold);
+        self.cells.iter().enumerate().filter_map(move |(idx, cell)| {
+            if cell.is_empty() {
+                return None;
+            }
+            // Reconstruct the cell center and check if it's close enough.
+            let face = idx / (GRID_RES * GRID_RES);
+            let rem = idx % (GRID_RES * GRID_RES);
+            let cv = rem / GRID_RES;
+            let cu = rem % GRID_RES;
+            let u = (cu as f64 + 0.5) / GRID_RES as f64 * 2.0 - 1.0;
+            let v = (cv as f64 + 0.5) / GRID_RES as f64 * 2.0 - 1.0;
+            let center = match face {
+                0 => DVec3::new(1.0, u, v),
+                1 => DVec3::new(-1.0, -u, v),
+                2 => DVec3::new(u, 1.0, v),
+                3 => DVec3::new(-u, -1.0, v),
+                4 => DVec3::new(u, v, 1.0),
+                _ => DVec3::new(-u, -v, -1.0),
+            }.normalize();
+            if p.dot(center) >= margin {
+                Some(cell.iter())
+            } else {
+                None
+            }
+        }).flatten()
     }
 }
 

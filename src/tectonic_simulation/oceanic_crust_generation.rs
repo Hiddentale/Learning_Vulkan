@@ -6,15 +6,15 @@ use super::simulate::BoundaryEdge;
 /// Planet radius in km.
 const PLANET_RADIUS: f64 = 6370.0;
 /// Mid-ocean ridge axis depth in km.
-const RIDGE_AXIS_DEPTH: f64 = -2.5;
+const RIDGE_AXIS_DEPTH: f64 = -1.0;
 /// Abyssal plain depth floor in km.
-const ABYSSAL_DEPTH: f64 = -4.0;
+const ABYSSAL_DEPTH: f64 = -6.0;
 /// Oceanic crust thickness at ridge in km.
 const RIDGE_THICKNESS: f64 = 7.0;
 /// Half-space cooling coefficient.
 /// Calibrated: at 80 Myr depth reaches ~-5.5 km.
-/// -2.5 - k*sqrt(80) = -5.5 => k ≈ 0.335
-const COOLING_COEFFICIENT: f64 = 0.335;
+/// -1.0 - k*sqrt(80) = -5.5 => k ≈ 0.503
+const COOLING_COEFFICIENT: f64 = 0.503;
 /// Minimum divergence speed (km/Myr) to count as a ridge.
 const MIN_DIVERGENCE_SPEED: f64 = 0.5;
 /// Fastest plates → generate every 10 steps.
