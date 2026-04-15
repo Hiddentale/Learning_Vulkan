@@ -265,6 +265,51 @@ pub fn flood_fill_from_seeds(points: &[DVec3], adjacency: &Adjacency, seeds: &[u
     plate_ids
 }
 
+/// Dijkstra flood-fill with noise-warped edge costs for organic boundaries.
+/// Same as `flood_fill_from_seeds` but edge costs are modulated by FBM noise,
+/// producing irregular plate boundaries instead of geometric Voronoi cells.
+pub fn flood_fill_from_seeds_warped(
+    points: &[DVec3],
+    adjacency: &Adjacency,
+    seeds: &[u32],
+    noise_seed: u32,
+) -> Vec<u32> {
+    let fbm: Fbm<Perlin> = Fbm::new(noise_seed)
+        .set_octaves(4)
+        .set_frequency(2.0);
+    let amplitude = 0.7;
+
+    let mut plate_ids = vec![UNASSIGNED; points.len()];
+    let mut costs = vec![f64::INFINITY; points.len()];
+    let mut heap = BinaryHeap::with_capacity(points.len());
+
+    for (plate, &seed) in seeds.iter().enumerate() {
+        plate_ids[seed as usize] = plate as u32;
+        costs[seed as usize] = 0.0;
+        heap.push(Entry { cost: 0.0, point: seed });
+    }
+
+    while let Some(Entry { cost, point }) = heap.pop() {
+        if cost > costs[point as usize] { continue; }
+
+        let p = points[point as usize];
+
+        for &neighbor in adjacency.neighbors_of(point) {
+            let q = points[neighbor as usize];
+            let edge_cost = warped_edge_cost(p, q, amplitude, &fbm);
+            let new_cost = cost + edge_cost;
+
+            if new_cost < costs[neighbor as usize] {
+                costs[neighbor as usize] = new_cost;
+                plate_ids[neighbor as usize] = plate_ids[point as usize];
+                heap.push(Entry { cost: new_cost, point: neighbor });
+            }
+        }
+    }
+
+    plate_ids
+}
+
 fn generate_plate_speeds(plate_count: usize, warp: &WarpParams) -> Vec<f64> {
     let [lo, hi] = warp.speed_range;
     let mut rng_state = splitmix64(warp.noise_seed as u64 ^ 0xDEAD_BEEF);

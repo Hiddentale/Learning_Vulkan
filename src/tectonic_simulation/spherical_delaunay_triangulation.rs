@@ -1,6 +1,9 @@
 use std::collections::HashMap;
+use std::sync::atomic::AtomicU64;
 
 use glam::DVec3;
+
+static BRUTE_FORCE_COUNT: AtomicU64 = AtomicU64::new(0);
 
 const UNSET: u32 = u32::MAX;
 
@@ -111,11 +114,6 @@ impl SphericalDelaunay {
                 return (tri, b1, b2, b3);
             }
 
-            // Hop across the edge with the most negative barycentric coordinate.
-            // Halfedge layout: he[base+0] = v0→v1, he[base+1] = v1→v2, he[base+2] = v2→v0.
-            // Edge opposite v0 (b1) = v1→v2 = he[base+1].
-            // Edge opposite v1 (b2) = v2→v0 = he[base+2].
-            // Edge opposite v2 (b3) = v0→v1 = he[base+0].
             let he = if b1 <= b2 && b1 <= b3 {
                 base + 1
             } else if b2 <= b3 {
@@ -129,8 +127,17 @@ impl SphericalDelaunay {
             tri = twin as usize / 3;
         }
 
-        // Fallback: brute force (should rarely fire).
+        BRUTE_FORCE_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.locate_brute(p, points)
+    }
+
+    /// Number of times locate fell back to brute force. Reset with `reset_locate_stats`.
+    pub fn brute_force_count() -> u64 {
+        BRUTE_FORCE_COUNT.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub fn reset_locate_stats() {
+        BRUTE_FORCE_COUNT.store(0, std::sync::atomic::Ordering::Relaxed);
     }
 
     fn locate_brute(&self, p: DVec3, points: &[DVec3]) -> (usize, f64, f64, f64) {

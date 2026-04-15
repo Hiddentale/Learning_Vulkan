@@ -248,7 +248,8 @@ fn draw_line(img: &mut RgbImage, x0: f64, y0: f64, x1: f64, y1: f64, color: [u8;
 /// points are a clean Fibonacci grid and `nearest_index` works correctly.
 pub fn render_simulation(sim: &Simulation) -> RgbImage {
     let mut img = RgbImage::new(IMAGE_WIDTH, IMAGE_HEIGHT);
-    let fibonacci = SphericalFibonacci::new(sim.point_count);
+
+    let delaunay = SphericalDelaunay::from_points(&sim.points);
 
     // Build per-point lookups from current plate state.
     let n = sim.points.len();
@@ -261,24 +262,47 @@ pub fn render_simulation(sim: &Simulation) -> RgbImage {
         }
     }
 
-    // Color pixels and build plate-id grid for border detection.
+    // Color pixels using Delaunay locate + dominant barycentric vertex.
+    SphericalDelaunay::reset_locate_stats();
     let mut pixel_plate = vec![0u32; (IMAGE_WIDTH * IMAGE_HEIGHT) as usize];
+    let mut last_tri = 0;
     for py in 0..IMAGE_HEIGHT {
         let lat = PI / 2.0 - (py as f64 + 0.5) / IMAGE_HEIGHT as f64 * PI;
         for px in 0..IMAGE_WIDTH {
             let lon = (px as f64 + 0.5) / IMAGE_WIDTH as f64 * 2.0 * PI - PI;
             let dir = latlon_to_direction(lat, lon);
-            let nearest = fibonacci.nearest_index(dir);
-            let idx = (py * IMAGE_WIDTH + px) as usize;
-            pixel_plate[idx] = point_plate[nearest as usize];
 
-            let color = match point_crust[nearest as usize] {
+            let (tri, b1, b2, b3) = delaunay.locate(dir, &sim.points, last_tri);
+            last_tri = tri;
+
+            let base = tri * 3;
+            let vi = [
+                delaunay.triangles[base] as usize,
+                delaunay.triangles[base + 1] as usize,
+                delaunay.triangles[base + 2] as usize,
+            ];
+            // Pick nearest vertex by sphere distance, not barycentric weight.
+            let nearest = *vi
+                .iter()
+                .max_by(|&&a, &&b| dir.dot(sim.points[a]).partial_cmp(&dir.dot(sim.points[b])).unwrap())
+                .unwrap();
+
+            let idx = (py * IMAGE_WIDTH + px) as usize;
+            pixel_plate[idx] = point_plate[nearest];
+
+            let color = match point_crust[nearest] {
                 CrustType::Continental => CONTINENTAL_COLOR,
                 CrustType::Oceanic => OCEANIC_COLOR,
             };
             img.put_pixel(px, py, Rgb(color));
         }
     }
+    let brute = SphericalDelaunay::brute_force_count();
+    let total_pixels = IMAGE_WIDTH as u64 * IMAGE_HEIGHT as u64;
+    eprintln!(
+        "[RENDER] locate brute-force fallbacks: {brute}/{total_pixels} ({:.2}%)",
+        brute as f64 / total_pixels as f64 * 100.0
+    );
 
     // Draw plate borders.
     let border_color = Rgb([0u8, 0, 0]);
@@ -330,7 +354,7 @@ mod tests {
         generate_and_save(42, output);
     }
 
-    const TIMELAPSE_POINTS: u32 = 50_000;
+    const TIMELAPSE_POINTS: u32 = 250_000;
     const TIMELAPSE_STEPS: usize = 200;
     /// Render every N resample cycles. Each cycle = RESAMPLE_INTERVAL steps.
     const TIMELAPSE_RENDER_EVERY_N_RESAMPLES: usize = 1;

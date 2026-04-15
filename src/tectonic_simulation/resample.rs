@@ -4,7 +4,7 @@ use std::time::Instant;
 use glam::DVec3;
 
 use super::fibonnaci_spiral::SphericalFibonacci;
-use super::plate_seed_placement::{Adjacency, flood_fill_from_seeds};
+use super::plate_seed_placement::{Adjacency, flood_fill_from_seeds_warped};
 use super::plates::{CrustData, Plate};
 use super::simulate::Simulation;
 use super::spherical_delaunay_triangulation::SphericalDelaunay;
@@ -14,10 +14,9 @@ pub const RESAMPLE_INTERVAL: usize = 20;
 
 /// Resample the simulation onto a fresh Fibonacci grid.
 ///
-/// Builds a Delaunay triangulation on the old (drifted) points, then for each
-/// new Fibonacci point locates the containing triangle and uses barycentric
-/// interpolation for smooth crust parameter transfer. Discrete fields (plate
-/// ownership, crust type, orogeny type) come from the dominant vertex.
+/// Plate assignment: noise-warped flood fill from plate centroids (clean, contiguous,
+/// organic boundaries). Crust interpolation: per-plate Delaunay on drifted points
+/// (all triangle vertices same-plate, no cross-plate blending).
 pub fn resample(sim: &mut Simulation, point_count: u32) {
     let mut log = std::fs::OpenOptions::new()
         .create(true).append(true)
@@ -25,24 +24,25 @@ pub fn resample(sim: &mut Simulation, point_count: u32) {
     let resample_start = Instant::now();
 
     let old_points = &sim.points;
+    let plate_count = sim.plates.len();
 
-    // Build per-point lookups from current plate state.
-    let n = old_points.len();
-    let mut point_plate = vec![0u32; n];
-    let mut point_local = vec![0usize; n];
-    for (plate_idx, plate) in sim.plates.iter().enumerate() {
-        for (local, &global) in plate.point_indices.iter().enumerate() {
-            point_plate[global as usize] = plate_idx as u32;
-            point_local[global as usize] = local;
-        }
-    }
-
-    // Delaunay on the drifted old points — used for barycentric interpolation.
+    // Build per-plate Delaunay triangulations for crust interpolation.
     let t0 = Instant::now();
-    let old_delaunay = SphericalDelaunay::from_points(old_points);
-    let old_del_ms = t0.elapsed().as_secs_f64() * 1000.0;
+    let plate_points: Vec<Vec<DVec3>> = sim.plates.iter().map(|plate| {
+        plate.point_indices.iter().map(|&gi| old_points[gi as usize]).collect()
+    }).collect();
+    let plate_delaunays: Vec<Option<SphericalDelaunay>> = plate_points.iter().map(|pts| {
+        if pts.len() >= 10 {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                SphericalDelaunay::from_points(pts)
+            })).ok()
+        } else {
+            None
+        }
+    }).collect();
+    let plate_del_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
-    // Fresh Fibonacci grid + adjacency.
+    // Fresh Fibonacci grid.
     let fib = SphericalFibonacci::new(point_count);
     let new_points = fib.all_points();
     let t0 = Instant::now();
@@ -52,8 +52,8 @@ pub fn resample(sim: &mut Simulation, point_count: u32) {
     let new_adjacency = Adjacency::from_delaunay(new_points.len(), &new_delaunay);
     let adjacency_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
-    // Step 1: Compute plate centroids from old drifted points.
-    let plate_count = sim.plates.len();
+    // Step 1: Plate assignment via noise-warped flood fill from centroids.
+    let t0 = Instant::now();
     let mut centroids: Vec<DVec3> = vec![DVec3::ZERO; plate_count];
     for (plate_idx, plate) in sim.plates.iter().enumerate() {
         for &global in &plate.point_indices {
@@ -63,47 +63,78 @@ pub fn resample(sim: &mut Simulation, point_count: u32) {
             centroids[plate_idx] = centroids[plate_idx].normalize();
         }
     }
-
-    // Step 2: Flood-fill from plate centroids → clean plate assignment.
-    let t0 = Instant::now();
     let seeds: Vec<u32> = centroids.iter()
         .map(|&c| fib.nearest_index(c))
         .collect();
-    let new_plate_ids = flood_fill_from_seeds(&new_points, &new_adjacency, &seeds);
+    let new_plate_ids = flood_fill_from_seeds_warped(&new_points, &new_adjacency, &seeds, 42);
     let flood_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
-    // Step 3: Interpolate crust data using the flood-fill plate assignment.
-    // This ensures crust interpolation uses the correct plate owner, not the
-    // barycentric dominant vertex which can disagree at boundaries.
-    let new_n = new_points.len();
+    // Step 2: Crust interpolation via per-plate Delaunay.
+    let t0 = Instant::now();
     let mut new_plate_points: Vec<Vec<u32>> = vec![Vec::new(); plate_count];
     let mut new_plate_crust: Vec<Vec<CrustData>> = vec![Vec::new(); plate_count];
+    let mut last_tris = vec![0usize; plate_count];
 
-    let t0 = Instant::now();
-    let mut last_tri = 0;
     for (new_idx, &new_p) in new_points.iter().enumerate() {
-        let (tri, b1, b2, b3) = old_delaunay.locate(new_p, old_points, last_tri);
-        last_tri = tri;
+        let owner = new_plate_ids[new_idx] as usize;
 
-        let base = tri * 3;
-        let vi = [
-            old_delaunay.triangles[base] as usize,
-            old_delaunay.triangles[base + 1] as usize,
-            old_delaunay.triangles[base + 2] as usize,
-        ];
-        let bary = [b1, b2, b3];
-        let owner = new_plate_ids[new_idx];
+        let crust = if let Some(del) = &plate_delaunays[owner] {
+            let (tri, b1, b2, b3) = del.locate(new_p, &plate_points[owner], last_tris[owner]);
+            last_tris[owner] = tri;
 
-        let crust = interpolate_crust(
-            &sim.plates, &point_plate, &point_local, vi, bary, owner,
-        );
+            let base = tri * 3;
+            let local_vi = [
+                del.triangles[base] as usize,
+                del.triangles[base + 1] as usize,
+                del.triangles[base + 2] as usize,
+            ];
 
-        new_plate_points[owner as usize].push(new_idx as u32);
-        new_plate_crust[owner as usize].push(crust);
+            let total_w = b1.max(0.0) + b2.max(0.0) + b3.max(0.0);
+            let w = if total_w > 1e-30 {
+                [b1.max(0.0) / total_w, b2.max(0.0) / total_w, b3.max(0.0) / total_w]
+            } else {
+                [1.0 / 3.0; 3]
+            };
+
+            let dom = if w[0] >= w[1] && w[0] >= w[2] { 0 }
+                      else if w[1] >= w[2] { 1 }
+                      else { 2 };
+
+            let crusts: [&CrustData; 3] = std::array::from_fn(|i| {
+                &sim.plates[owner].crust[local_vi[i]]
+            });
+
+            let mut thickness = 0.0;
+            let mut elevation = 0.0;
+            let mut age = 0.0;
+            let mut direction = DVec3::ZERO;
+            for i in 0..3 {
+                thickness += crusts[i].thickness * w[i];
+                elevation += crusts[i].elevation * w[i];
+                age += crusts[i].age * w[i];
+                direction += crusts[i].local_direction * w[i];
+            }
+
+            CrustData {
+                crust_type: crusts[dom].crust_type,
+                thickness, elevation, age,
+                local_direction: direction.normalize_or_zero(),
+                orogeny_type: crusts[dom].orogeny_type,
+            }
+        } else {
+            // Small plate: nearest point's crust.
+            let nearest_local = plate_points[owner].iter().enumerate()
+                .max_by(|(_, a), (_, b)| new_p.dot(**a).partial_cmp(&new_p.dot(**b)).unwrap())
+                .map(|(i, _)| i)
+                .unwrap_or(0);
+            sim.plates[owner].crust[nearest_local].clone()
+        };
+
+        new_plate_points[owner].push(new_idx as u32);
+        new_plate_crust[owner].push(crust);
     }
     let interp_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
-    // Rebuild plates.
     for (plate_idx, plate) in sim.plates.iter_mut().enumerate() {
         plate.point_indices = new_plate_points[plate_idx].clone();
         plate.crust = new_plate_crust[plate_idx].clone();
@@ -115,77 +146,9 @@ pub fn resample(sim: &mut Simulation, point_count: u32) {
     let total_ms = resample_start.elapsed().as_secs_f64() * 1000.0;
     if let Some(ref mut f) = log {
         let _ = writeln!(f,
-            "  RESAMPLE: total={:.0}ms | old_delaunay={:.0} new_delaunay={:.0} adjacency={:.0} flood={:.0} interp={:.0}",
-            total_ms, old_del_ms, new_del_ms, adjacency_ms, flood_ms, interp_ms
+            "  RESAMPLE: total={:.0}ms | plate_del={:.0} new_del={:.0} adj={:.0} flood={:.0} interp={:.0}",
+            total_ms, plate_del_ms, new_del_ms, adjacency_ms, flood_ms, interp_ms
         );
-    }
-}
-
-/// Interpolate crust data from a triangle's three vertices.
-/// Only blends vertices that belong to `owner_plate`; cross-plate vertices are excluded.
-fn interpolate_crust(
-    plates: &[Plate],
-    point_plate: &[u32],
-    point_local: &[usize],
-    vi: [usize; 3],
-    bary: [f64; 3],
-    owner_plate: u32,
-) -> CrustData {
-    // Collect weights for same-plate vertices only.
-    let mut w = [0.0_f64; 3];
-    let mut total = 0.0;
-    for i in 0..3 {
-        if point_plate[vi[i]] == owner_plate {
-            w[i] = bary[i].max(0.0);
-            total += w[i];
-        }
-    }
-
-    // If no same-plate vertex has positive weight (shouldn't happen), fall back to dominant.
-    if total < 1e-30 {
-        let dom = if bary[0] >= bary[1] && bary[0] >= bary[2] { 0 }
-                  else if bary[1] >= bary[2] { 1 }
-                  else { 2 };
-        let local = point_local[vi[dom]];
-        let plate = point_plate[vi[dom]] as usize;
-        return plates[plate].crust[local].clone();
-    }
-
-    // Normalize weights.
-    for i in 0..3 { w[i] /= total; }
-
-    // Find the dominant same-plate vertex for discrete fields.
-    let dom = if w[0] >= w[1] && w[0] >= w[2] { 0 }
-              else if w[1] >= w[2] { 1 }
-              else { 2 };
-
-    // Gather crust data from vertices.
-    let crusts: [&CrustData; 3] = std::array::from_fn(|i| {
-        let plate = point_plate[vi[i]] as usize;
-        let local = point_local[vi[i]];
-        &plates[plate].crust[local]
-    });
-    let dom_crust = crusts[dom];
-
-    // Blend continuous fields, take discrete from dominant vertex.
-    let mut thickness = 0.0;
-    let mut elevation = 0.0;
-    let mut age = 0.0;
-    let mut direction = DVec3::ZERO;
-    for i in 0..3 {
-        thickness += crusts[i].thickness * w[i];
-        elevation += crusts[i].elevation * w[i];
-        age += crusts[i].age * w[i];
-        direction += crusts[i].local_direction * w[i];
-    }
-
-    CrustData {
-        crust_type: dom_crust.crust_type,
-        thickness,
-        elevation,
-        age,
-        local_direction: direction.normalize_or_zero(),
-        orogeny_type: dom_crust.orogeny_type,
     }
 }
 
@@ -268,7 +231,6 @@ mod tests {
         let points = fib.all_points();
         let del = SphericalDelaunay::from_points(&points);
 
-        // Query 100 random points, verify barycentric coords are non-negative.
         let mut state = 77777u64;
         let next = |s: &mut u64| -> f64 {
             *s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
@@ -291,8 +253,6 @@ mod tests {
 
     #[test]
     fn locate_on_drifted_points() {
-        // Simulate plate movement, build Delaunay on drifted points,
-        // verify locate still works for all new Fibonacci points.
         let mut sim = setup(1000, 8);
         sim.run(10);
 
@@ -311,11 +271,8 @@ mod tests {
 
     #[test]
     fn resample_crust_type_stable_for_interior_points() {
-        // After resample, points deep inside a plate should keep their crust type.
-        // Count how many points change crust type — should be a small fraction.
         let mut sim = setup(2000, 12);
 
-        // Record initial crust types per point.
         let mut initial_crust = vec![super::super::plates::CrustType::Oceanic; 2000];
         for plate in &sim.plates {
             for (local, &global) in plate.point_indices.iter().enumerate() {
@@ -323,10 +280,8 @@ mod tests {
             }
         }
 
-        // Run and resample.
         sim.run(RESAMPLE_INTERVAL);
 
-        // Count crust type changes.
         let mut changed = 0;
         for plate in &sim.plates {
             for (local, &global) in plate.point_indices.iter().enumerate() {
@@ -336,8 +291,6 @@ mod tests {
             }
         }
 
-        // Less than 20% should change — this includes legitimate physical changes
-        // (subduction, erosion, collision) over RESAMPLE_INTERVAL steps plus resample.
         let pct = changed as f64 / 2000.0 * 100.0;
         assert!(pct < 20.0,
             "too many crust type changes after resample: {changed}/2000 ({pct:.1}%)");
@@ -345,7 +298,6 @@ mod tests {
 
     #[test]
     fn multiple_resample_cycles_stable() {
-        // Run 3 resample cycles and verify no plate vanishes or fragments excessively.
         let mut sim = setup(1000, 8);
         for _ in 0..3 {
             sim.run(RESAMPLE_INTERVAL);
