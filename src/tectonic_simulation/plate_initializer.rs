@@ -3,7 +3,7 @@ use std::collections::{HashSet, VecDeque};
 use glam::DVec3;
 
 use super::plate_seed_placement::PlateAssignment;
-use super::plates::{CrustData, OrogenyType, Plate};
+use super::plates::{CrustData, CrustType, Plate};
 use super::spherical_delaunay_triangulation::SphericalDelaunay;
 use super::util::{arbitrary_tangent, splitmix64};
 
@@ -68,13 +68,14 @@ fn build_crust(points: &[DVec3], point_indices: &[u32], continental: bool) -> Ve
         .map(|&pi| {
             let tangent = arbitrary_tangent(points[pi as usize]);
             if continental {
-                CrustData::continental(
-                    CONTINENTAL_THICKNESS,
-                    CONTINENTAL_ELEVATION,
-                    0.0,
-                    tangent,
-                    OrogenyType::Andean,
-                )
+                CrustData {
+                    crust_type: CrustType::Continental,
+                    thickness: CONTINENTAL_THICKNESS,
+                    elevation: CONTINENTAL_ELEVATION,
+                    age: 0.0,
+                    local_direction: tangent,
+                    orogeny_type: None,
+                }
             } else {
                 CrustData::oceanic(OCEANIC_THICKNESS, OCEANIC_ELEVATION, 0.0, tangent)
             }
