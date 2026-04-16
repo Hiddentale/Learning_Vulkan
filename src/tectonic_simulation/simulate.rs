@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io::Write;
 
 use glam::{DQuat, DVec3};
 use noise::{Fbm, MultiFractal, NoiseFn, Perlin};
@@ -46,11 +47,33 @@ const EROSION_NOISE_SEED: u32 = 7;
 const MIN_ANGULAR_SPEED: f64 = 1e-15;
 /// Floor for noise-modulated erosion multiplier. Prevents sign flip.
 const EROSION_NOISE_FLOOR: f64 = 0.1;
+/// Minimum subduction uplift (mm/yr) to classify a point as active Andean orogeny.
+/// ~10% of BASE_UPLIFT — gates orogeny to the zone near the subduction front
+/// where deformation is strong enough to build mountains.
+const MIN_OROGENY_UPLIFT: f64 = 0.06;
 
 /// Number of latitude bands for subduction source clustering.
 const CLUSTER_LAT_BINS: usize = 64;
 /// Number of longitude bands for subduction source clustering.
 const CLUSTER_LON_BINS: usize = 128;
+
+/// Step-range diagnostic logger. Writes per-phase crust statistics to a file.
+pub struct DiagnosticLog {
+    file: std::io::BufWriter<std::fs::File>,
+    start_step: usize,
+    end_step: usize,
+}
+
+impl DiagnosticLog {
+    pub fn new(path: &std::path::Path, start_step: usize, end_step: usize) -> Self {
+        let file = std::fs::File::create(path).expect("failed to create diagnostic log");
+        Self { file: std::io::BufWriter::new(file), start_step, end_step }
+    }
+
+    pub(super) fn active(&self, step: usize) -> bool {
+        step >= self.start_step && step <= self.end_step
+    }
+}
 
 /// Full simulation state.
 pub struct Simulation {
@@ -59,10 +82,12 @@ pub struct Simulation {
     pub adjacency: Adjacency,
     pub time: f64,
     pub point_count: u32,
+    pub(super) step_count: usize,
     steps_since_resample: usize,
     steps_since_crust_generation: usize,
     steps_since_rift_check: usize,
     rift_seed: u64,
+    pub(super) diagnostics: Option<DiagnosticLog>,
 }
 
 impl Simulation {
@@ -75,27 +100,77 @@ impl Simulation {
         let adjacency = Adjacency::from_delaunay(points.len(), delaunay);
         Self {
             points, plates, adjacency, time: 0.0, point_count,
+            step_count: 0,
             steps_since_resample: 0, steps_since_crust_generation: 0,
             steps_since_rift_check: 0, rift_seed: 0,
+            diagnostics: None,
         }
+    }
+
+    pub fn enable_diagnostics(&mut self, path: &std::path::Path, start_step: usize, end_step: usize) {
+        self.diagnostics = Some(DiagnosticLog::new(path, start_step, end_step));
     }
 
     /// Advance the simulation by one timestep.
     pub fn step(&mut self) {
+        self.step_count += 1;
+        let logging = self.diagnostics.as_ref().map_or(false, |d| d.active(self.step_count));
+
+        if logging {
+            self.log_header("STEP START");
+            self.log_crust_summary("  initial");
+        }
+
         self.move_plates();
 
         let boundary = find_boundary_edges(&self.plates, &self.points, &self.adjacency);
+
+        let snap_before_sub = if logging { Some(self.snapshot_crust()) } else { None };
         self.process_subduction(&boundary);
+        if let Some(before) = snap_before_sub {
+            self.log_crust_diff("  after subduction", &before);
+        }
+
+        let snap_before_col = if logging { Some(self.snapshot_crust()) } else { None };
+        let plates_before_col = if logging { self.plates.len() } else { 0 };
         self.process_collisions(&boundary);
+        if let Some(before) = snap_before_col {
+            self.log_crust_diff("  after collision", &before);
+            if self.plates.len() != plates_before_col {
+                self.log_msg(&format!("  collision transferred terrane: {} -> {} plates",
+                    plates_before_col, self.plates.len()));
+            }
+        }
+
         self.remove_empty_plates();
 
+        let snap_before_rift = if logging { Some(self.snapshot_crust()) } else { None };
         let boundary = self.maybe_rift(boundary);
+        if let Some(before) = snap_before_rift {
+            self.log_crust_diff("  after rift", &before);
+        }
+
+        let snap_before_ocean = if logging { Some(self.snapshot_crust()) } else { None };
         self.maybe_generate_oceanic_crust(&boundary);
+        if let Some(before) = snap_before_ocean {
+            self.log_crust_diff("  after oceanic gen", &before);
+        }
+
+        let snap_before_erosion = if logging { Some(self.snapshot_crust()) } else { None };
         self.apply_erosion_and_damping();
+        if let Some(before) = snap_before_erosion {
+            self.log_elevation_changes("  after erosion", &before);
+        }
 
         self.time += DT;
         self.steps_since_resample += 1;
+
+        let snap_before_resample = if logging { Some(self.snapshot_crust()) } else { None };
         self.maybe_resample();
+        if let Some(before) = snap_before_resample {
+            self.log_crust_diff("  after resample", &before);
+            self.log_crust_summary("  final");
+        }
     }
 
     /// Run the simulation for a number of timesteps.
@@ -177,6 +252,8 @@ impl Simulation {
                     let d = p.dot(boundary_pos).clamp(-1.0, 1.0).acos() * PLANET_RADIUS;
 
                     let crust = &plate.crust[local];
+                    let relative_speed = (vel_sub - vel_over).length();
+                    let uplift = subduction::subduction_uplift(d, relative_speed, crust.elevation);
                     let (new_z, new_fold, new_age) = subduction::apply_subduction_step(
                         crust.elevation, crust.local_direction, crust.age,
                         d, vel_sub, vel_over, DT,
@@ -185,11 +262,13 @@ impl Simulation {
                     crust.elevation = new_z;
                     crust.local_direction = new_fold;
                     crust.age = new_age;
-                    if crust.crust_type == CrustType::Oceanic && crust.elevation > 0.0 {
-                        crust.crust_type = CrustType::Continental;
-                        crust.orogeny_type = Some(OrogenyType::Andean);
-                    } else if crust.crust_type == CrustType::Continental {
-                        crust.orogeny_type = Some(OrogenyType::Andean);
+                    if uplift > MIN_OROGENY_UPLIFT {
+                        if crust.crust_type == CrustType::Oceanic && crust.elevation > 0.0 {
+                            crust.crust_type = CrustType::Continental;
+                            crust.orogeny_type = Some(OrogenyType::Andean);
+                        } else if crust.crust_type == CrustType::Continental {
+                            crust.orogeny_type = Some(OrogenyType::Andean);
+                        }
                     }
                 }
             }
@@ -287,6 +366,168 @@ impl Simulation {
 
     fn remove_empty_plates(&mut self) {
         self.plates.retain(|p| !p.point_indices.is_empty());
+    }
+
+    // --- Diagnostic logging helpers ---
+
+    /// Per-point crust snapshot: (crust_type, elevation, orogeny_type, plate_index).
+    fn snapshot_crust(&self) -> Vec<(CrustType, f64, Option<OrogenyType>, usize)> {
+        let mut snap = vec![(CrustType::Oceanic, 0.0, None, 0usize); self.points.len()];
+        for (plate_idx, plate) in self.plates.iter().enumerate() {
+            for (local, &global) in plate.point_indices.iter().enumerate() {
+                let c = &plate.crust[local];
+                snap[global as usize] = (c.crust_type, c.elevation, c.orogeny_type, plate_idx);
+            }
+        }
+        snap
+    }
+
+    fn log_msg(&mut self, msg: &str) {
+        if let Some(diag) = &mut self.diagnostics {
+            let _ = writeln!(diag.file, "{}", msg);
+        }
+    }
+
+    fn log_header(&mut self, label: &str) {
+        let step = self.step_count;
+        let time = self.time + DT; // time after this step completes
+        if let Some(diag) = &mut self.diagnostics {
+            let _ = writeln!(diag.file, "\n=== {} step={} t={:.0} Myr plates={} ===",
+                label, step, time, self.plates.len());
+        }
+    }
+
+    fn log_crust_summary(&mut self, label: &str) {
+        let mut continental = 0usize;
+        let mut oceanic = 0usize;
+        let mut andean = 0usize;
+        let mut himalayan = 0usize;
+        let mut no_orogeny = 0usize;
+        let mut cont_below_sea = 0usize;
+        let mut min_cont_elev = f64::MAX;
+        let mut max_cont_elev = f64::MIN;
+
+        for plate in &self.plates {
+            for c in &plate.crust {
+                match c.crust_type {
+                    CrustType::Continental => {
+                        continental += 1;
+                        if c.elevation < 0.0 { cont_below_sea += 1; }
+                        min_cont_elev = min_cont_elev.min(c.elevation);
+                        max_cont_elev = max_cont_elev.max(c.elevation);
+                        match c.orogeny_type {
+                            Some(OrogenyType::Andean) => andean += 1,
+                            Some(OrogenyType::Himalayan) => himalayan += 1,
+                            None => no_orogeny += 1,
+                        }
+                    }
+                    CrustType::Oceanic => oceanic += 1,
+                }
+            }
+        }
+
+        let total = continental + oceanic;
+        if let Some(diag) = &mut self.diagnostics {
+            let _ = writeln!(diag.file,
+                "{}: total={} cont={} ({:.1}%) ocean={} | andean={} himalayan={} plain={} | cont_below_sea={} elev=[{:.3},{:.3}]",
+                label, total, continental, continental as f64 / total as f64 * 100.0, oceanic,
+                andean, himalayan, no_orogeny, cont_below_sea,
+                if min_cont_elev == f64::MAX { 0.0 } else { min_cont_elev },
+                if max_cont_elev == f64::MIN { 0.0 } else { max_cont_elev },
+            );
+            // Per-plate breakdown
+            for (i, plate) in self.plates.iter().enumerate() {
+                let pc: usize = plate.crust.iter().filter(|c| c.crust_type == CrustType::Continental).count();
+                let po: usize = plate.crust.iter().filter(|c| c.crust_type == CrustType::Oceanic).count();
+                if pc > 0 || plate.crust.len() < 100 {
+                    let _ = writeln!(diag.file, "    plate[{}]: {} pts (cont={} ocean={})", i, plate.crust.len(), pc, po);
+                }
+            }
+        }
+    }
+
+    fn log_crust_diff(&mut self, label: &str,
+        before: &[(CrustType, f64, Option<OrogenyType>, usize)])
+    {
+        let after = self.snapshot_crust();
+        let mut cont_to_ocean = 0usize;
+        let mut ocean_to_cont = 0usize;
+        let mut orogeny_changes = 0usize;
+        let mut plate_changes = 0usize;
+        let mut biggest_elev_drop = 0.0f64;
+        let mut biggest_drop_idx = 0usize;
+
+        for i in 0..before.len().min(after.len()) {
+            let (bt, be, bo, bp) = before[i];
+            let (at, ae, ao, ap) = after[i];
+            if bt == CrustType::Continental && at == CrustType::Oceanic {
+                cont_to_ocean += 1;
+            }
+            if bt == CrustType::Oceanic && at == CrustType::Continental {
+                ocean_to_cont += 1;
+            }
+            if bo != ao { orogeny_changes += 1; }
+            if bp != ap { plate_changes += 1; }
+            let drop = be - ae;
+            if bt == CrustType::Continental && drop > biggest_elev_drop {
+                biggest_elev_drop = drop;
+                biggest_drop_idx = i;
+            }
+        }
+
+        // Only log if something happened
+        if cont_to_ocean == 0 && ocean_to_cont == 0 && orogeny_changes == 0
+            && plate_changes == 0 && biggest_elev_drop < 0.001
+        {
+            return;
+        }
+
+        if let Some(diag) = &mut self.diagnostics {
+            let _ = writeln!(diag.file,
+                "{}: cont->ocean={} ocean->cont={} orogeny_changed={} plate_changed={} max_cont_elev_drop={:.4}km (pt {})",
+                label, cont_to_ocean, ocean_to_cont, orogeny_changes, plate_changes,
+                biggest_elev_drop, biggest_drop_idx,
+            );
+            // Detail the first few continental->oceanic transitions
+            if cont_to_ocean > 0 {
+                let mut shown = 0;
+                for i in 0..before.len().min(after.len()) {
+                    if before[i].0 == CrustType::Continental && after[i].0 == CrustType::Oceanic {
+                        let pos = self.points[i];
+                        let _ = writeln!(diag.file,
+                            "    cont->ocean pt={} pos=({:.3},{:.3},{:.3}) elev_before={:.4} elev_after={:.4} plate {}->{}",
+                            i, pos.x, pos.y, pos.z,
+                            before[i].1, after[i].1, before[i].3, after[i].3,
+                        );
+                        shown += 1;
+                        if shown >= 20 { break; }
+                    }
+                }
+            }
+        }
+    }
+
+    fn log_elevation_changes(&mut self, label: &str,
+        before: &[(CrustType, f64, Option<OrogenyType>, usize)])
+    {
+        let after = self.snapshot_crust();
+        let mut cont_lost_elev = 0usize;
+        let mut cont_sank_below_sea = 0usize;
+
+        for i in 0..before.len().min(after.len()) {
+            if before[i].0 == CrustType::Continental && after[i].0 == CrustType::Continental {
+                if after[i].1 < before[i].1 { cont_lost_elev += 1; }
+                if before[i].1 >= 0.0 && after[i].1 < 0.0 { cont_sank_below_sea += 1; }
+            }
+        }
+
+        if cont_sank_below_sea > 0 {
+            if let Some(diag) = &mut self.diagnostics {
+                let _ = writeln!(diag.file,
+                    "{}: continental_lost_elevation={} continental_sank_below_sea={}",
+                    label, cont_lost_elev, cont_sank_below_sea);
+            }
+        }
     }
 
     fn maybe_rift(&mut self, boundary: Vec<BoundaryEdge>) -> Vec<BoundaryEdge> {

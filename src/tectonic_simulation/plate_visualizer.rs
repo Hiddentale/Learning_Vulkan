@@ -339,7 +339,7 @@ mod tests {
         generate_and_save(42, output);
     }
 
-    const TIMELAPSE_POINTS: u32 = 100_000;
+    const TIMELAPSE_POINTS: u32 = 500_000;
     const TIMELAPSE_STEPS: usize = 200;
     /// Render every N resample cycles. Each cycle = RESAMPLE_INTERVAL steps.
     const TIMELAPSE_RENDER_EVERY_N_RESAMPLES: usize = 1;
@@ -359,6 +359,9 @@ mod tests {
         let assignment = assign_plates(&points, &fibonacci, &delaunay, PLATE_COUNT, 42, &WarpParams::default());
         let plates = initialize_plates(&points, &delaunay, &assignment, &InitParams::default());
         let mut sim = Simulation::new(points, plates, &delaunay);
+
+        let log_path = std::path::Path::new("src/tectonic_simulation/timelapse/tectonic_debug.log");
+        sim.enable_diagnostics(log_path, 0, usize::MAX);
 
         let steps_per_frame = resample::RESAMPLE_INTERVAL * TIMELAPSE_RENDER_EVERY_N_RESAMPLES;
         let total_frames = TIMELAPSE_STEPS / steps_per_frame + 1;

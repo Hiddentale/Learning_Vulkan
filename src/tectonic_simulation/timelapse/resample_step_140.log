@@ -1,0 +1,3618 @@
+CONT->OCEAN pt=65839 pos=(-0.0608,-0.9465,-0.3168) plate=8
+  tri=1185 vertices=[576,592,582]
+  v[0]: pos=(0.0231,-0.7715,-0.6358) dist=2393km type=ocean elev=-3.913
+  v[1]: pos=(0.0206,-0.7632,-0.6458) dist=2470km type=ocean elev=-3.913
+  v[2]: pos=(0.0308,-0.7649,-0.6434) dist=2467km type=ocean elev=-3.913
+
+CONT->OCEAN pt=65983 pos=(-0.0792,-0.9442,-0.3197) plate=8
+  tri=1221 vertices=[596,612,602]
+  v[0]: pos=(0.0027,-0.7680,-0.6405) dist=2404km type=ocean elev=-3.913
+  v[1]: pos=(0.0003,-0.7595,-0.6505) dist=2482km type=ocean elev=-3.913
+  v[2]: pos=(0.0105,-0.7614,-0.6482) dist=2477km type=ocean elev=-3.913
+
+CONT->OCEAN pt=66072 pos=(-0.0493,-0.9456,-0.3215) plate=8
+  tri=1167 vertices=[566,582,572]
+  v[0]: pos=(0.0333,-0.7732,-0.6333) dist=2344km type=ocean elev=-3.913
+  v[1]: pos=(0.0308,-0.7649,-0.6434) dist=2421km type=ocean elev=-3.913
+  v[2]: pos=(0.0410,-0.7665,-0.6409) dist=2418km type=ocean elev=-3.913
+
+CONT->OCEAN pt=66216 pos=(-0.0677,-0.9435,-0.3243) plate=8
+  tri=1203 vertices=[586,602,592]
+  v[0]: pos=(0.0129,-0.7698,-0.6382) dist=2355km type=ocean elev=-3.913
+  v[1]: pos=(0.0105,-0.7614,-0.6482) dist=2433km type=ocean elev=-3.913
+  v[2]: pos=(0.0206,-0.7632,-0.6458) dist=2429km type=ocean elev=-3.913
+
+CONT->OCEAN pt=66360 pos=(-0.0860,-0.9410,-0.3272) plate=8
+  tri=1239 vertices=[606,622,612]
+  v[0]: pos=(-0.0074,-0.7660,-0.6428) dist=2366km type=ocean elev=-3.913
+  v[1]: pos=(-0.0099,-0.7575,-0.6528) dist=2444km type=ocean elev=-3.913
+  v[2]: pos=(0.0003,-0.7595,-0.6505) dist=2440km type=ocean elev=-3.913
+
+CONT->OCEAN pt=66449 pos=(-0.0562,-0.9427,-0.3290) plate=8
+  tri=1185 vertices=[576,592,582]
+  v[0]: pos=(0.0231,-0.7715,-0.6358) dist=2307km type=ocean elev=-3.913
+  v[1]: pos=(0.0206,-0.7632,-0.6458) dist=2384km type=ocean elev=-3.913
+  v[2]: pos=(0.0308,-0.7649,-0.6434) dist=2380km type=ocean elev=-3.913
+
+CONT->OCEAN pt=66504 pos=(-0.1042,-0.9382,-0.3301) plate=8
+  tri=1274 vertices=[626,642,632]
+  v[0]: pos=(-0.0277,-0.7618,-0.6473) dist=2376km type=ocean elev=-3.913
+  v[1]: pos=(-0.0302,-0.7531,-0.6572) dist=2455km type=ocean elev=-3.913
+  v[2]: pos=(-0.0201,-0.7554,-0.6550) dist=2450km type=ocean elev=-3.913
+
+CONT->OCEAN pt=66593 pos=(-0.0745,-0.9404,-0.3319) plate=8
+  tri=1221 vertices=[596,612,602]
+  v[0]: pos=(0.0027,-0.7680,-0.6405) dist=2318km type=ocean elev=-3.913
+  v[1]: pos=(0.0003,-0.7595,-0.6505) dist=2396km type=ocean elev=-3.913
+  v[2]: pos=(0.0105,-0.7614,-0.6482) dist=2391km type=ocean elev=-3.913
+
+CONT->OCEAN pt=66648 pos=(-0.1224,-0.9350,-0.3330) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2386km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2465km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2459km type=ocean elev=-3.913
+
+CONT->OCEAN pt=66682 pos=(-0.0448,-0.9416,-0.3337) plate=8
+  tri=1167 vertices=[566,582,572]
+  v[0]: pos=(0.0333,-0.7732,-0.6333) dist=2257km type=ocean elev=-3.913
+  v[1]: pos=(0.0308,-0.7649,-0.6434) dist=2335km type=ocean elev=-3.913
+  v[2]: pos=(0.0410,-0.7665,-0.6409) dist=2331km type=ocean elev=-3.913
+
+CONT->OCEAN pt=66737 pos=(-0.0928,-0.9377,-0.3348) plate=8
+  tri=1257 vertices=[616,632,622]
+  v[0]: pos=(-0.0176,-0.7639,-0.6450) dist=2328km type=ocean elev=-3.913
+  v[1]: pos=(-0.0201,-0.7554,-0.6550) dist=2407km type=ocean elev=-3.913
+  v[2]: pos=(-0.0099,-0.7575,-0.6528) dist=2402km type=ocean elev=-3.913
+
+CONT->OCEAN pt=66826 pos=(-0.0631,-0.9396,-0.3365) plate=8
+  tri=1203 vertices=[586,602,592]
+  v[0]: pos=(0.0129,-0.7698,-0.6382) dist=2269km type=ocean elev=-3.913
+  v[1]: pos=(0.0105,-0.7614,-0.6482) dist=2347km type=ocean elev=-3.913
+  v[2]: pos=(0.0206,-0.7632,-0.6458) dist=2343km type=ocean elev=-3.913
+
+CONT->OCEAN pt=66881 pos=(-0.1109,-0.9347,-0.3376) plate=8
+  tri=1293 vertices=[636,652,642]
+  v[0]: pos=(-0.0379,-0.7595,-0.6494) dist=2338km type=ocean elev=-3.913
+  v[1]: pos=(-0.0403,-0.7508,-0.6593) dist=2417km type=ocean elev=-3.913
+  v[2]: pos=(-0.0302,-0.7531,-0.6572) dist=2411km type=ocean elev=-3.913
+
+CONT->OCEAN pt=66915 pos=(-0.0334,-0.9404,-0.3383) plate=8
+  tri=1149 vertices=[556,572,562]
+  v[0]: pos=(0.0435,-0.7747,-0.6308) dist=2208km type=ocean elev=-3.913
+  v[1]: pos=(0.0410,-0.7665,-0.6409) dist=2286km type=ocean elev=-3.913
+  v[2]: pos=(0.0512,-0.7680,-0.6384) dist=2282km type=ocean elev=-3.913
+
+CONT->OCEAN pt=66970 pos=(-0.0813,-0.9371,-0.3394) plate=8
+  tri=1239 vertices=[606,622,612]
+  v[0]: pos=(-0.0074,-0.7660,-0.6428) dist=2280km type=ocean elev=-3.913
+  v[1]: pos=(-0.0099,-0.7575,-0.6528) dist=2359km type=ocean elev=-3.913
+  v[2]: pos=(0.0003,-0.7595,-0.6505) dist=2354km type=ocean elev=-3.913
+
+CONT->OCEAN pt=67025 pos=(-0.1290,-0.9314,-0.3405) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2342km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2420km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2416km type=ocean elev=-3.913
+
+CONT->OCEAN pt=67059 pos=(-0.0516,-0.9386,-0.3412) plate=8
+  tri=1185 vertices=[576,592,582]
+  v[0]: pos=(0.0231,-0.7715,-0.6358) dist=2220km type=ocean elev=-3.913
+  v[1]: pos=(0.0206,-0.7632,-0.6458) dist=2298km type=ocean elev=-3.913
+  v[2]: pos=(0.0308,-0.7649,-0.6434) dist=2294km type=ocean elev=-3.913
+
+CONT->OCEAN pt=67114 pos=(-0.0995,-0.9343,-0.3423) plate=8
+  tri=1274 vertices=[626,642,632]
+  v[0]: pos=(-0.0277,-0.7618,-0.6473) dist=2291km type=ocean elev=-3.913
+  v[1]: pos=(-0.0302,-0.7531,-0.6572) dist=2369km type=ocean elev=-3.913
+  v[2]: pos=(-0.0201,-0.7554,-0.6550) dist=2364km type=ocean elev=-3.913
+
+CONT->OCEAN pt=67148 pos=(-0.0220,-0.9391,-0.3430) plate=8
+  tri=1131 vertices=[546,562,552]
+  v[0]: pos=(0.0537,-0.7761,-0.6283) dist=2158km type=ocean elev=-3.913
+  v[1]: pos=(0.0512,-0.7680,-0.6384) dist=2236km type=ocean elev=-3.913
+  v[2]: pos=(0.0615,-0.7693,-0.6359) dist=2232km type=ocean elev=-3.913
+
+CONT->OCEAN pt=67169 pos=(-0.1470,-0.9276,-0.3434) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2344km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2420km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2419km type=ocean elev=-3.913
+
+CONT->OCEAN pt=67203 pos=(-0.0699,-0.9363,-0.3441) plate=8
+  tri=1221 vertices=[596,612,602]
+  v[0]: pos=(0.0027,-0.7680,-0.6405) dist=2232km type=ocean elev=-3.913
+  v[1]: pos=(0.0003,-0.7595,-0.6505) dist=2310km type=ocean elev=-3.913
+  v[2]: pos=(0.0105,-0.7614,-0.6482) dist=2305km type=ocean elev=-3.913
+
+CONT->OCEAN pt=67258 pos=(-0.1175,-0.9312,-0.3452) plate=8
+  tri=1293 vertices=[636,652,642]
+  v[0]: pos=(-0.0379,-0.7595,-0.6494) dist=2295km type=ocean elev=-3.913
+  v[1]: pos=(-0.0403,-0.7508,-0.6593) dist=2373km type=ocean elev=-3.913
+  v[2]: pos=(-0.0302,-0.7531,-0.6572) dist=2368km type=ocean elev=-3.913
+
+CONT->OCEAN pt=67292 pos=(-0.0402,-0.9374,-0.3458) plate=8
+  tri=1167 vertices=[566,582,572]
+  v[0]: pos=(0.0333,-0.7732,-0.6333) dist=2171km type=ocean elev=-3.913
+  v[1]: pos=(0.0308,-0.7649,-0.6434) dist=2249km type=ocean elev=-3.913
+  v[2]: pos=(0.0410,-0.7665,-0.6409) dist=2245km type=ocean elev=-3.913
+
+CONT->OCEAN pt=67313 pos=(-0.1649,-0.9235,-0.3463) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2350km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2424km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2426km type=ocean elev=-3.913
+
+CONT->OCEAN pt=67347 pos=(-0.0880,-0.9337,-0.3470) plate=8
+  tri=1257 vertices=[616,632,622]
+  v[0]: pos=(-0.0176,-0.7639,-0.6450) dist=2242km type=ocean elev=-3.913
+  v[1]: pos=(-0.0201,-0.7554,-0.6550) dist=2321km type=ocean elev=-3.913
+  v[2]: pos=(-0.0099,-0.7575,-0.6528) dist=2315km type=ocean elev=-3.913
+
+CONT->OCEAN pt=67381 pos=(-0.0106,-0.9376,-0.3476) plate=8
+  tri=1113 vertices=[536,552,542]
+  v[0]: pos=(0.0639,-0.7774,-0.6257) dist=2108km type=ocean elev=-3.913
+  v[1]: pos=(0.0615,-0.7693,-0.6359) dist=2186km type=ocean elev=-3.913
+  v[2]: pos=(0.0717,-0.7706,-0.6333) dist=2183km type=ocean elev=-3.913
+
+CONT->OCEAN pt=67402 pos=(-0.1355,-0.9276,-0.3480) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2299km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2376km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2373km type=ocean elev=-3.913
+
+CONT->OCEAN pt=67436 pos=(-0.0585,-0.9354,-0.3487) plate=8
+  tri=1203 vertices=[586,602,592]
+  v[0]: pos=(0.0129,-0.7698,-0.6382) dist=2183km type=ocean elev=-3.913
+  v[1]: pos=(0.0105,-0.7614,-0.6482) dist=2261km type=ocean elev=-3.913
+  v[2]: pos=(0.0206,-0.7632,-0.6458) dist=2256km type=ocean elev=-3.913
+
+CONT->OCEAN pt=67457 pos=(-0.1826,-0.9191,-0.3492) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2361km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2433km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2439km type=ocean elev=-3.913
+
+CONT->OCEAN pt=67491 pos=(-0.1061,-0.9308,-0.3498) plate=8
+  tri=1274 vertices=[626,642,632]
+  v[0]: pos=(-0.0277,-0.7618,-0.6473) dist=2247km type=ocean elev=-3.913
+  v[1]: pos=(-0.0302,-0.7531,-0.6572) dist=2325km type=ocean elev=-3.913
+  v[2]: pos=(-0.0201,-0.7554,-0.6550) dist=2321km type=ocean elev=-3.913
+
+CONT->OCEAN pt=67525 pos=(-0.0289,-0.9361,-0.3505) plate=8
+  tri=1149 vertices=[556,572,562]
+  v[0]: pos=(0.0435,-0.7747,-0.6308) dist=2121km type=ocean elev=-3.913
+  v[1]: pos=(0.0410,-0.7665,-0.6409) dist=2199km type=ocean elev=-3.913
+  v[2]: pos=(0.0512,-0.7680,-0.6384) dist=2195km type=ocean elev=-3.913
+
+CONT->OCEAN pt=67546 pos=(-0.1534,-0.9237,-0.3509) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2303km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2378km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2378km type=ocean elev=-3.913
+
+CONT->OCEAN pt=67580 pos=(-0.0766,-0.9330,-0.3516) plate=8
+  tri=1221 vertices=[596,612,602]
+  v[0]: pos=(0.0027,-0.7680,-0.6405) dist=2190km type=ocean elev=-3.913
+  v[1]: pos=(0.0003,-0.7595,-0.6505) dist=2267km type=ocean elev=-3.913
+  v[2]: pos=(0.0105,-0.7614,-0.6482) dist=2264km type=ocean elev=-3.913
+
+CONT->OCEAN pt=67601 pos=(-0.2003,-0.9143,-0.3520) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2377km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2447km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2455km type=ocean elev=-3.913
+
+CONT->OCEAN pt=67614 pos=(0.0007,-0.9359,-0.3523) plate=8
+  tri=1095 vertices=[526,542,532]
+  v[0]: pos=(0.0741,-0.7786,-0.6231) dist=2058km type=ocean elev=-3.913
+  v[1]: pos=(0.0717,-0.7706,-0.6333) dist=2135km type=ocean elev=-3.913
+  v[2]: pos=(0.0819,-0.7718,-0.6306) dist=2132km type=ocean elev=-3.913
+
+CONT->OCEAN pt=67635 pos=(-0.1241,-0.9275,-0.3527) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2256km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2334km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2329km type=ocean elev=-3.913
+
+CONT->OCEAN pt=67669 pos=(-0.0471,-0.9343,-0.3534) plate=8
+  tri=1185 vertices=[576,592,582]
+  v[0]: pos=(0.0231,-0.7715,-0.6358) dist=2134km type=ocean elev=-3.913
+  v[1]: pos=(0.0206,-0.7632,-0.6458) dist=2212km type=ocean elev=-3.913
+  v[2]: pos=(0.0308,-0.7649,-0.6434) dist=2207km type=ocean elev=-3.913
+
+CONT->OCEAN pt=67690 pos=(-0.1712,-0.9195,-0.3538) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2311km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2385km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2388km type=ocean elev=-3.913
+
+CONT->OCEAN pt=67724 pos=(-0.0947,-0.9303,-0.3545) plate=8
+  tri=1257 vertices=[616,632,622]
+  v[0]: pos=(-0.0176,-0.7639,-0.6450) dist=2199km type=ocean elev=-3.913
+  v[1]: pos=(-0.0201,-0.7554,-0.6550) dist=2277km type=ocean elev=-3.913
+  v[2]: pos=(-0.0099,-0.7575,-0.6528) dist=2273km type=ocean elev=-3.913
+
+CONT->OCEAN pt=67745 pos=(-0.2179,-0.9092,-0.3549) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2397km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2465km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2477km type=ocean elev=-3.913
+
+CONT->OCEAN pt=67758 pos=(-0.0176,-0.9346,-0.3552) plate=8
+  tri=1131 vertices=[546,562,552]
+  v[0]: pos=(0.0537,-0.7761,-0.6283) dist=2071km type=ocean elev=-3.913
+  v[1]: pos=(0.0512,-0.7680,-0.6384) dist=2149km type=ocean elev=-3.913
+  v[2]: pos=(0.0615,-0.7693,-0.6359) dist=2145km type=ocean elev=-3.913
+
+CONT->OCEAN pt=67779 pos=(-0.1420,-0.9238,-0.3556) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2257km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2333km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2332km type=ocean elev=-3.913
+
+CONT->OCEAN pt=67813 pos=(-0.0652,-0.9321,-0.3563) plate=8
+  tri=1203 vertices=[586,602,592]
+  v[0]: pos=(0.0129,-0.7698,-0.6382) dist=2141km type=ocean elev=-3.913
+  v[1]: pos=(0.0105,-0.7614,-0.6482) dist=2218km type=ocean elev=-3.913
+  v[2]: pos=(0.0206,-0.7632,-0.6458) dist=2215km type=ocean elev=-3.913
+
+CONT->OCEAN pt=67834 pos=(-0.1889,-0.9149,-0.3567) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2325km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2396km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2403km type=ocean elev=-3.913
+
+CONT->OCEAN pt=67868 pos=(-0.1127,-0.9271,-0.3574) plate=8
+  tri=1293 vertices=[636,652,642]
+  v[0]: pos=(-0.0379,-0.7595,-0.6494) dist=2208km type=ocean elev=-3.913
+  v[1]: pos=(-0.0403,-0.7508,-0.6593) dist=2287km type=ocean elev=-3.913
+  v[2]: pos=(-0.0302,-0.7531,-0.6572) dist=2282km type=ocean elev=-3.913
+
+CONT->OCEAN pt=67902 pos=(-0.0358,-0.9330,-0.3580) plate=8
+  tri=1167 vertices=[566,582,572]
+  v[0]: pos=(0.0333,-0.7732,-0.6333) dist=2084km type=ocean elev=-3.913
+  v[1]: pos=(0.0308,-0.7649,-0.6434) dist=2162km type=ocean elev=-3.913
+  v[2]: pos=(0.0410,-0.7665,-0.6409) dist=2158km type=ocean elev=-3.913
+
+CONT->OCEAN pt=67923 pos=(-0.1598,-0.9198,-0.3585) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2263km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2337km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2339km type=ocean elev=-3.913
+
+CONT->OCEAN pt=67957 pos=(-0.0833,-0.9296,-0.3592) plate=8
+  tri=1239 vertices=[606,622,612]
+  v[0]: pos=(-0.0074,-0.7660,-0.6428) dist=2151km type=ocean elev=-3.913
+  v[1]: pos=(-0.0099,-0.7575,-0.6528) dist=2229km type=ocean elev=-3.913
+  v[2]: pos=(0.0003,-0.7595,-0.6505) dist=2225km type=ocean elev=-3.913
+
+CONT->OCEAN pt=67978 pos=(-0.2065,-0.9100,-0.3596) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2343km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2411km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2422km type=ocean elev=-3.913
+
+CONT->OCEAN pt=67991 pos=(-0.0063,-0.9330,-0.3598) plate=8
+  tri=1113 vertices=[536,552,542]
+  v[0]: pos=(0.0639,-0.7774,-0.6257) dist=2021km type=ocean elev=-3.913
+  v[1]: pos=(0.0615,-0.7693,-0.6359) dist=2099km type=ocean elev=-3.913
+  v[2]: pos=(0.0717,-0.7706,-0.6333) dist=2095km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68012 pos=(-0.1306,-0.9237,-0.3602) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2212km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2290km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2287km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68046 pos=(-0.0539,-0.9310,-0.3609) plate=8
+  tri=1185 vertices=[576,592,582]
+  v[0]: pos=(0.0231,-0.7715,-0.6358) dist=2092km type=ocean elev=-3.913
+  v[1]: pos=(0.0206,-0.7632,-0.6458) dist=2169km type=ocean elev=-3.913
+  v[2]: pos=(0.0308,-0.7649,-0.6434) dist=2166km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68067 pos=(-0.1775,-0.9154,-0.3614) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2274km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2346km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2351km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68101 pos=(-0.1013,-0.9266,-0.3620) plate=8
+  tri=1274 vertices=[626,642,632]
+  v[0]: pos=(-0.0277,-0.7618,-0.6473) dist=2161km type=ocean elev=-3.913
+  v[1]: pos=(-0.0302,-0.7531,-0.6572) dist=2239km type=ocean elev=-3.913
+  v[2]: pos=(-0.0201,-0.7554,-0.6550) dist=2234km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68122 pos=(-0.2239,-0.9047,-0.3624) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2365km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2431km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2445km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68135 pos=(-0.0245,-0.9316,-0.3627) plate=8
+  tri=1149 vertices=[556,572,562]
+  v[0]: pos=(0.0435,-0.7747,-0.6308) dist=2034km type=ocean elev=-3.913
+  v[1]: pos=(0.0410,-0.7665,-0.6409) dist=2112km type=ocean elev=-3.913
+  v[2]: pos=(0.0512,-0.7680,-0.6384) dist=2108km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68156 pos=(-0.1484,-0.9198,-0.3631) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2216km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2291km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2291km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68190 pos=(-0.0720,-0.9287,-0.3638) plate=8
+  tri=1221 vertices=[596,612,602]
+  v[0]: pos=(0.0027,-0.7680,-0.6405) dist=2103km type=ocean elev=-3.913
+  v[1]: pos=(0.0003,-0.7595,-0.6505) dist=2180km type=ocean elev=-3.913
+  v[2]: pos=(0.0105,-0.7614,-0.6482) dist=2177km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68211 pos=(-0.1951,-0.9106,-0.3642) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2289km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2359km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2368km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68224 pos=(0.0050,-0.9312,-0.3645) plate=8
+  tri=1095 vertices=[526,542,532]
+  v[0]: pos=(0.0741,-0.7786,-0.6231) dist=1971km type=ocean elev=-3.913
+  v[1]: pos=(0.0717,-0.7706,-0.6333) dist=2048km type=ocean elev=-3.913
+  v[2]: pos=(0.0819,-0.7718,-0.6306) dist=2045km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68245 pos=(-0.1192,-0.9234,-0.3649) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2170km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2248km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2243km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68266 pos=(-0.2413,-0.8991,-0.3653) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2393km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2456km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2473km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68279 pos=(-0.0426,-0.9298,-0.3656) plate=8
+  tri=1167 vertices=[566,582,572]
+  v[0]: pos=(0.0333,-0.7732,-0.6333) dist=2043km type=ocean elev=-3.913
+  v[1]: pos=(0.0308,-0.7649,-0.6434) dist=2120km type=ocean elev=-3.913
+  v[2]: pos=(0.0410,-0.7665,-0.6409) dist=2117km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68300 pos=(-0.1661,-0.9157,-0.3660) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2224km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2297km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2301km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68334 pos=(-0.0900,-0.9260,-0.3667) plate=8
+  tri=1257 vertices=[616,632,622]
+  v[0]: pos=(-0.0176,-0.7639,-0.6450) dist=2112km type=ocean elev=-3.913
+  v[1]: pos=(-0.0201,-0.7554,-0.6550) dist=2191km type=ocean elev=-3.913
+  v[2]: pos=(-0.0099,-0.7575,-0.6528) dist=2186km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68355 pos=(-0.2126,-0.9056,-0.3671) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2310km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2377km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2389km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68368 pos=(-0.0132,-0.9300,-0.3674) plate=8
+  tri=1131 vertices=[546,562,552]
+  v[0]: pos=(0.0537,-0.7761,-0.6283) dist=1984km type=ocean elev=-3.913
+  v[1]: pos=(0.0512,-0.7680,-0.6384) dist=2062km type=ocean elev=-3.913
+  v[2]: pos=(0.0615,-0.7693,-0.6359) dist=2058km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68389 pos=(-0.1371,-0.9198,-0.3678) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2170km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2247km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2245km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68423 pos=(-0.0606,-0.9277,-0.3685) plate=8
+  tri=1203 vertices=[586,602,592]
+  v[0]: pos=(0.0129,-0.7698,-0.6382) dist=2054km type=ocean elev=-3.913
+  v[1]: pos=(0.0105,-0.7614,-0.6482) dist=2131km type=ocean elev=-3.913
+  v[2]: pos=(0.0206,-0.7632,-0.6458) dist=2128km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68444 pos=(-0.1838,-0.9111,-0.3689) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2237km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2308km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2315km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68457 pos=(0.0162,-0.9292,-0.3692) plate=8
+  tri=1077 vertices=[516,532,522]
+  v[0]: pos=(0.0843,-0.7797,-0.6204) dist=1920km type=ocean elev=-3.913
+  v[1]: pos=(0.0819,-0.7718,-0.6306) dist=1997km type=ocean elev=-3.913
+  v[2]: pos=(0.0921,-0.7728,-0.6279) dist=1994km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68478 pos=(-0.1079,-0.9229,-0.3696) plate=8
+  tri=1293 vertices=[636,652,642]
+  v[0]: pos=(-0.0379,-0.7595,-0.6494) dist=2122km type=ocean elev=-3.913
+  v[1]: pos=(-0.0403,-0.7508,-0.6593) dist=2200km type=ocean elev=-3.913
+  v[2]: pos=(-0.0302,-0.7531,-0.6572) dist=2195km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68499 pos=(-0.2299,-0.9001,-0.3700) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2335km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2399km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2414km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68512 pos=(-0.0313,-0.9284,-0.3702) plate=8
+  tri=1149 vertices=[556,572,562]
+  v[0]: pos=(0.0435,-0.7747,-0.6308) dist=1993km type=ocean elev=-3.913
+  v[1]: pos=(0.0410,-0.7665,-0.6409) dist=2070km type=ocean elev=-3.913
+  v[2]: pos=(0.0512,-0.7680,-0.6384) dist=2068km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68533 pos=(-0.1548,-0.9158,-0.3707) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2175km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2250km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2251km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68567 pos=(-0.0786,-0.9252,-0.3714) plate=8
+  tri=1239 vertices=[606,622,612]
+  v[0]: pos=(-0.0074,-0.7660,-0.6428) dist=2064km type=ocean elev=-3.913
+  v[1]: pos=(-0.0099,-0.7575,-0.6528) dist=2142km type=ocean elev=-3.913
+  v[2]: pos=(0.0003,-0.7595,-0.6505) dist=2138km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68588 pos=(-0.2013,-0.9062,-0.3718) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2255km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2323km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2334km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68601 pos=(-0.0020,-0.9282,-0.3720) plate=8
+  tri=1113 vertices=[536,552,542]
+  v[0]: pos=(0.0639,-0.7774,-0.6257) dist=1934km type=ocean elev=-3.913
+  v[1]: pos=(0.0615,-0.7693,-0.6359) dist=2011km type=ocean elev=-3.913
+  v[2]: pos=(0.0717,-0.7706,-0.6333) dist=2008km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68622 pos=(-0.1257,-0.9195,-0.3724) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2125km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2203km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2199km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68656 pos=(-0.0493,-0.9265,-0.3731) plate=8
+  tri=1185 vertices=[576,592,582]
+  v[0]: pos=(0.0231,-0.7715,-0.6358) dist=2005km type=ocean elev=-3.913
+  v[1]: pos=(0.0206,-0.7632,-0.6458) dist=2082km type=ocean elev=-3.913
+  v[2]: pos=(0.0308,-0.7649,-0.6434) dist=2079km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68677 pos=(-0.1724,-0.9114,-0.3736) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2186km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2258km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2263km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68690 pos=(0.0273,-0.9271,-0.3738) plate=8
+  tri=1059 vertices=[506,522,512]
+  v[0]: pos=(0.0945,-0.7807,-0.6177) dist=1869km type=ocean elev=-3.913
+  v[1]: pos=(0.0921,-0.7728,-0.6279) dist=1946km type=ocean elev=-3.913
+  v[2]: pos=(0.1023,-0.7738,-0.6252) dist=1943km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68711 pos=(-0.0965,-0.9223,-0.3742) plate=8
+  tri=1274 vertices=[626,642,632]
+  v[0]: pos=(-0.0277,-0.7618,-0.6473) dist=2074km type=ocean elev=-3.913
+  v[1]: pos=(-0.0302,-0.7531,-0.6572) dist=2152km type=ocean elev=-3.913
+  v[2]: pos=(-0.0201,-0.7554,-0.6550) dist=2147km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68732 pos=(-0.2186,-0.9010,-0.3746) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2278km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2343km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2357km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68745 pos=(-0.0201,-0.9268,-0.3749) plate=8
+  tri=1131 vertices=[546,562,552]
+  v[0]: pos=(0.0537,-0.7761,-0.6283) dist=1944km type=ocean elev=-3.913
+  v[1]: pos=(0.0512,-0.7680,-0.6384) dist=2021km type=ocean elev=-3.913
+  v[2]: pos=(0.0615,-0.7693,-0.6359) dist=2018km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68766 pos=(-0.1434,-0.9157,-0.3753) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2128km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2204km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2204km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68800 pos=(-0.0673,-0.9242,-0.3760) plate=8
+  tri=1221 vertices=[596,612,602]
+  v[0]: pos=(0.0027,-0.7680,-0.6405) dist=2015km type=ocean elev=-3.913
+  v[1]: pos=(0.0003,-0.7595,-0.6505) dist=2093km type=ocean elev=-3.913
+  v[2]: pos=(0.0105,-0.7614,-0.6482) dist=2089km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68821 pos=(-0.1899,-0.9068,-0.3764) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2201km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2271km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2280km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68834 pos=(0.0092,-0.9263,-0.3767) plate=8
+  tri=1095 vertices=[526,542,532]
+  v[0]: pos=(0.0741,-0.7786,-0.6231) dist=1883km type=ocean elev=-3.913
+  v[1]: pos=(0.0717,-0.7706,-0.6333) dist=1961km type=ocean elev=-3.913
+  v[2]: pos=(0.0819,-0.7718,-0.6306) dist=1957km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68855 pos=(-0.1144,-0.9191,-0.3771) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2083km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2162km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2156km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68876 pos=(-0.2359,-0.8955,-0.3775) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2305km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2368km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2385km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68889 pos=(-0.0381,-0.9251,-0.3778) plate=8
+  tri=1167 vertices=[566,582,572]
+  v[0]: pos=(0.0333,-0.7732,-0.6333) dist=1955km type=ocean elev=-3.913
+  v[1]: pos=(0.0308,-0.7649,-0.6434) dist=2033km type=ocean elev=-3.913
+  v[2]: pos=(0.0410,-0.7665,-0.6409) dist=2030km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68910 pos=(-0.1611,-0.9116,-0.3782) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2136km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2209km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2213km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68923 pos=(0.0384,-0.9248,-0.3785) plate=8
+  tri=1038 vertices=[495,512,502]
+  v[0]: pos=(0.1047,-0.7816,-0.6149) dist=1817km type=ocean elev=-3.913
+  v[1]: pos=(0.1023,-0.7738,-0.6252) dist=1894km type=ocean elev=-3.913
+  v[2]: pos=(0.1125,-0.7746,-0.6224) dist=1892km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68944 pos=(-0.0852,-0.9215,-0.3789) plate=8
+  tri=1257 vertices=[616,632,622]
+  v[0]: pos=(-0.0176,-0.7639,-0.6450) dist=2025km type=ocean elev=-3.913
+  v[1]: pos=(-0.0201,-0.7554,-0.6550) dist=2104km type=ocean elev=-3.913
+  v[2]: pos=(-0.0099,-0.7575,-0.6528) dist=2099km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68965 pos=(-0.2073,-0.9017,-0.3793) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2222km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2289km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2301km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68978 pos=(-0.0089,-0.9251,-0.3796) plate=8
+  tri=1131 vertices=[546,562,552]
+  v[0]: pos=(0.0537,-0.7761,-0.6283) dist=1897km type=ocean elev=-3.913
+  v[1]: pos=(0.0512,-0.7680,-0.6384) dist=1975km type=ocean elev=-3.913
+  v[2]: pos=(0.0615,-0.7693,-0.6359) dist=1970km type=ocean elev=-3.913
+
+CONT->OCEAN pt=68999 pos=(-0.1321,-0.9155,-0.3800) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2082km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2159km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2157km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69033 pos=(-0.0561,-0.9230,-0.3807) plate=8
+  tri=1203 vertices=[586,602,592]
+  v[0]: pos=(0.0129,-0.7698,-0.6382) dist=1966km type=ocean elev=-3.913
+  v[1]: pos=(0.0105,-0.7614,-0.6482) dist=2044km type=ocean elev=-3.913
+  v[2]: pos=(0.0206,-0.7632,-0.6458) dist=2040km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69054 pos=(-0.1786,-0.9071,-0.3811) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2149km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2220km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2227km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69067 pos=(0.0203,-0.9242,-0.3814) plate=8
+  tri=1077 vertices=[516,532,522]
+  v[0]: pos=(0.0843,-0.7797,-0.6204) dist=1832km type=ocean elev=-3.913
+  v[1]: pos=(0.0819,-0.7718,-0.6306) dist=1909km type=ocean elev=-3.913
+  v[2]: pos=(0.0921,-0.7728,-0.6279) dist=1906km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69088 pos=(-0.1031,-0.9185,-0.3818) plate=8
+  tri=1293 vertices=[636,652,642]
+  v[0]: pos=(-0.0379,-0.7595,-0.6494) dist=2035km type=ocean elev=-3.913
+  v[1]: pos=(-0.0403,-0.7508,-0.6593) dist=2114km type=ocean elev=-3.913
+  v[2]: pos=(-0.0302,-0.7531,-0.6572) dist=2108km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69109 pos=(-0.2246,-0.8964,-0.3822) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2247km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2311km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2327km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69122 pos=(-0.0269,-0.9236,-0.3824) plate=8
+  tri=1149 vertices=[556,572,562]
+  v[0]: pos=(0.0435,-0.7747,-0.6308) dist=1906km type=ocean elev=-3.913
+  v[1]: pos=(0.0410,-0.7665,-0.6409) dist=1983km type=ocean elev=-3.913
+  v[2]: pos=(0.0512,-0.7680,-0.6384) dist=1980km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69143 pos=(-0.1498,-0.9116,-0.3829) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2087km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2162km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2163km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69156 pos=(0.0495,-0.9224,-0.3831) plate=8
+  tri=1004 vertices=[483,502,490]
+  v[0]: pos=(0.1149,-0.7824,-0.6121) dist=1765km type=ocean elev=-3.913
+  v[1]: pos=(0.1125,-0.7746,-0.6224) dist=1842km type=ocean elev=-3.913
+  v[2]: pos=(0.1226,-0.7753,-0.6195) dist=1840km type=ocean elev=-3.912
+
+CONT->OCEAN pt=69177 pos=(-0.0740,-0.9206,-0.3836) plate=8
+  tri=1239 vertices=[606,622,612]
+  v[0]: pos=(-0.0074,-0.7660,-0.6428) dist=1977km type=ocean elev=-3.913
+  v[1]: pos=(-0.0099,-0.7575,-0.6528) dist=2055km type=ocean elev=-3.913
+  v[2]: pos=(0.0003,-0.7595,-0.6505) dist=2050km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69198 pos=(-0.1960,-0.9023,-0.3840) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2167km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2235km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2246km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69211 pos=(0.0023,-0.9232,-0.3842) plate=8
+  tri=1113 vertices=[536,552,542]
+  v[0]: pos=(0.0639,-0.7774,-0.6257) dist=1846km type=ocean elev=-3.913
+  v[1]: pos=(0.0615,-0.7693,-0.6359) dist=1924km type=ocean elev=-3.913
+  v[2]: pos=(0.0717,-0.7706,-0.6333) dist=1920km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69232 pos=(-0.1208,-0.9151,-0.3846) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2038km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2116km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2112km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69266 pos=(-0.0448,-0.9217,-0.3853) plate=8
+  tri=1185 vertices=[576,592,582]
+  v[0]: pos=(0.0231,-0.7715,-0.6358) dist=1917km type=ocean elev=-3.913
+  v[1]: pos=(0.0206,-0.7632,-0.6458) dist=1995km type=ocean elev=-3.913
+  v[2]: pos=(0.0308,-0.7649,-0.6434) dist=1991km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69287 pos=(-0.1673,-0.9073,-0.3858) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2097km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2170km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2175km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69300 pos=(0.0314,-0.9220,-0.3860) plate=8
+  tri=1059 vertices=[506,522,512]
+  v[0]: pos=(0.0945,-0.7807,-0.6177) dist=1780km type=ocean elev=-3.913
+  v[1]: pos=(0.0921,-0.7728,-0.6279) dist=1858km type=ocean elev=-3.913
+  v[2]: pos=(0.1023,-0.7738,-0.6252) dist=1855km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69321 pos=(-0.0918,-0.9177,-0.3864) plate=8
+  tri=1274 vertices=[626,642,632]
+  v[0]: pos=(-0.0277,-0.7618,-0.6473) dist=1986km type=ocean elev=-3.913
+  v[1]: pos=(-0.0302,-0.7531,-0.6572) dist=2065km type=ocean elev=-3.913
+  v[2]: pos=(-0.0201,-0.7554,-0.6550) dist=2060km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69342 pos=(-0.2133,-0.8971,-0.3868) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2190km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2255km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2269km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69355 pos=(-0.0157,-0.9219,-0.3871) plate=8
+  tri=1131 vertices=[546,562,552]
+  v[0]: pos=(0.0537,-0.7761,-0.6283) dist=1856km type=ocean elev=-3.913
+  v[1]: pos=(0.0512,-0.7680,-0.6384) dist=1933km type=ocean elev=-3.913
+  v[2]: pos=(0.0615,-0.7693,-0.6359) dist=1930km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69376 pos=(-0.1385,-0.9114,-0.3875) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2040km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2116km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2116km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69389 pos=(0.0605,-0.9198,-0.3878) plate=8
+  tri=982 vertices=[471,490,478]
+  v[0]: pos=(0.1251,-0.7831,-0.6092) dist=1713km type=ocean elev=-3.913
+  v[1]: pos=(0.1226,-0.7753,-0.6195) dist=1790km type=ocean elev=-3.912
+  v[2]: pos=(0.1328,-0.7760,-0.6166) dist=1788km type=ocean elev=-3.912
+
+CONT->OCEAN pt=69410 pos=(-0.0627,-0.9194,-0.3882) plate=8
+  tri=1221 vertices=[596,612,602]
+  v[0]: pos=(0.0027,-0.7680,-0.6405) dist=1928km type=ocean elev=-3.913
+  v[1]: pos=(0.0003,-0.7595,-0.6505) dist=2006km type=ocean elev=-3.913
+  v[2]: pos=(0.0105,-0.7614,-0.6482) dist=2001km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69431 pos=(-0.1847,-0.9027,-0.3886) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2113km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2183km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2191km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69444 pos=(0.0134,-0.9212,-0.3889) plate=8
+  tri=1095 vertices=[526,542,532]
+  v[0]: pos=(0.0741,-0.7786,-0.6231) dist=1795km type=ocean elev=-3.913
+  v[1]: pos=(0.0717,-0.7706,-0.6333) dist=1873km type=ocean elev=-3.913
+  v[2]: pos=(0.0819,-0.7718,-0.6306) dist=1869km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69465 pos=(-0.1095,-0.9146,-0.3893) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1996km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2075km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2068km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69486 pos=(-0.2305,-0.8916,-0.3897) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2217km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2280km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2297km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69499 pos=(-0.0336,-0.9202,-0.3900) plate=8
+  tri=1167 vertices=[566,582,572]
+  v[0]: pos=(0.0333,-0.7732,-0.6333) dist=1867km type=ocean elev=-3.913
+  v[1]: pos=(0.0308,-0.7649,-0.6434) dist=1945km type=ocean elev=-3.913
+  v[2]: pos=(0.0410,-0.7665,-0.6409) dist=1942km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69520 pos=(-0.1560,-0.9073,-0.3904) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2047km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2121km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2124km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69533 pos=(0.0424,-0.9196,-0.3907) plate=8
+  tri=1038 vertices=[495,512,502]
+  v[0]: pos=(0.1047,-0.7816,-0.6149) dist=1729km type=ocean elev=-3.913
+  v[1]: pos=(0.1023,-0.7738,-0.6252) dist=1806km type=ocean elev=-3.913
+  v[2]: pos=(0.1125,-0.7746,-0.6224) dist=1803km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69554 pos=(-0.0805,-0.9168,-0.3911) plate=8
+  tri=1257 vertices=[616,632,622]
+  v[0]: pos=(-0.0176,-0.7639,-0.6450) dist=1938km type=ocean elev=-3.913
+  v[1]: pos=(-0.0201,-0.7554,-0.6550) dist=2016km type=ocean elev=-3.913
+  v[2]: pos=(-0.0099,-0.7575,-0.6528) dist=2011km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69575 pos=(-0.2020,-0.8977,-0.3915) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2133km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2200km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2213km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69588 pos=(-0.0046,-0.9201,-0.3918) plate=8
+  tri=1113 vertices=[536,552,542]
+  v[0]: pos=(0.0639,-0.7774,-0.6257) dist=1805km type=ocean elev=-3.913
+  v[1]: pos=(0.0615,-0.7693,-0.6359) dist=1882km type=ocean elev=-3.913
+  v[2]: pos=(0.0717,-0.7706,-0.6333) dist=1880km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69609 pos=(-0.1272,-0.9110,-0.3922) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1994km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2072km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2069km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69643 pos=(-0.0515,-0.9181,-0.3929) plate=8
+  tri=1203 vertices=[586,602,592]
+  v[0]: pos=(0.0129,-0.7698,-0.6382) dist=1878km type=ocean elev=-3.913
+  v[1]: pos=(0.0105,-0.7614,-0.6482) dist=1956km type=ocean elev=-3.913
+  v[2]: pos=(0.0206,-0.7632,-0.6458) dist=1952km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69664 pos=(-0.1735,-0.9029,-0.3933) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2060km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2131km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2138km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69677 pos=(0.0245,-0.9190,-0.3936) plate=8
+  tri=1077 vertices=[516,532,522]
+  v[0]: pos=(0.0843,-0.7797,-0.6204) dist=1744km type=ocean elev=-3.913
+  v[1]: pos=(0.0819,-0.7718,-0.6306) dist=1821km type=ocean elev=-3.913
+  v[2]: pos=(0.0921,-0.7728,-0.6279) dist=1818km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69698 pos=(-0.0983,-0.9139,-0.3940) plate=8
+  tri=1293 vertices=[636,652,642]
+  v[0]: pos=(-0.0379,-0.7595,-0.6494) dist=1947km type=ocean elev=-3.913
+  v[1]: pos=(-0.0403,-0.7508,-0.6593) dist=2026km type=ocean elev=-3.913
+  v[2]: pos=(-0.0302,-0.7531,-0.6572) dist=2020km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69719 pos=(-0.2192,-0.8924,-0.3944) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2159km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2223km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2239km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69732 pos=(-0.0225,-0.9186,-0.3946) plate=8
+  tri=1149 vertices=[556,572,562]
+  v[0]: pos=(0.0435,-0.7747,-0.6308) dist=1817km type=ocean elev=-3.913
+  v[1]: pos=(0.0410,-0.7665,-0.6409) dist=1895km type=ocean elev=-3.913
+  v[2]: pos=(0.0512,-0.7680,-0.6384) dist=1892km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69753 pos=(-0.1448,-0.9072,-0.3951) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1999km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2074km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2075km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69766 pos=(0.0534,-0.9170,-0.3953) plate=8
+  tri=1004 vertices=[483,502,490]
+  v[0]: pos=(0.1149,-0.7824,-0.6121) dist=1677km type=ocean elev=-3.913
+  v[1]: pos=(0.1125,-0.7746,-0.6224) dist=1754km type=ocean elev=-3.913
+  v[2]: pos=(0.1226,-0.7753,-0.6195) dist=1751km type=ocean elev=-3.912
+
+CONT->OCEAN pt=69787 pos=(-0.0693,-0.9157,-0.3958) plate=8
+  tri=1239 vertices=[606,622,612]
+  v[0]: pos=(-0.0074,-0.7660,-0.6428) dist=1889km type=ocean elev=-3.913
+  v[1]: pos=(-0.0099,-0.7575,-0.6528) dist=1967km type=ocean elev=-3.913
+  v[2]: pos=(0.0003,-0.7595,-0.6505) dist=1962km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69808 pos=(-0.1908,-0.8981,-0.3962) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2078km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2147km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2157km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69821 pos=(0.0065,-0.9180,-0.3964) plate=8
+  tri=1095 vertices=[526,542,532]
+  v[0]: pos=(0.0741,-0.7786,-0.6231) dist=1755km type=ocean elev=-3.913
+  v[1]: pos=(0.0717,-0.7706,-0.6333) dist=1831km type=ocean elev=-3.913
+  v[2]: pos=(0.0819,-0.7718,-0.6306) dist=1830km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69842 pos=(-0.1159,-0.9105,-0.3968) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1950km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2029km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2024km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69863 pos=(-0.2363,-0.8868,-0.3973) plate=8
+  tri=598 vertices=[276,291,301]
+  v[0]: pos=(0.2484,-0.7907,-0.5595) dist=3352km type=ocean elev=-3.911
+  v[1]: pos=(0.2385,-0.7912,-0.5631) dist=3297km type=ocean elev=-3.911
+  v[2]: pos=(0.2462,-0.7837,-0.5703) dist=3369km type=ocean elev=-3.910
+
+CONT->OCEAN pt=69876 pos=(-0.0404,-0.9167,-0.3975) plate=8
+  tri=1185 vertices=[576,592,582]
+  v[0]: pos=(0.0231,-0.7715,-0.6358) dist=1829km type=ocean elev=-3.913
+  v[1]: pos=(0.0206,-0.7632,-0.6458) dist=1907km type=ocean elev=-3.913
+  v[2]: pos=(0.0308,-0.7649,-0.6434) dist=1903km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69897 pos=(-0.1622,-0.9030,-0.3980) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2009km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2081km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2086km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69910 pos=(0.0355,-0.9166,-0.3982) plate=8
+  tri=1059 vertices=[506,522,512]
+  v[0]: pos=(0.0945,-0.7807,-0.6177) dist=1692km type=ocean elev=-3.913
+  v[1]: pos=(0.0921,-0.7728,-0.6279) dist=1769km type=ocean elev=-3.913
+  v[2]: pos=(0.1023,-0.7738,-0.6252) dist=1766km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69931 pos=(-0.0871,-0.9130,-0.3986) plate=8
+  tri=1274 vertices=[626,642,632]
+  v[0]: pos=(-0.0277,-0.7618,-0.6473) dist=1899km type=ocean elev=-3.913
+  v[1]: pos=(-0.0302,-0.7531,-0.6572) dist=1978km type=ocean elev=-3.913
+  v[2]: pos=(-0.0201,-0.7554,-0.6550) dist=1972km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69952 pos=(-0.2080,-0.8930,-0.3990) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2101km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2167km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2181km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69965 pos=(-0.0114,-0.9167,-0.3993) plate=8
+  tri=1131 vertices=[546,562,552]
+  v[0]: pos=(0.0537,-0.7761,-0.6283) dist=1767km type=ocean elev=-3.913
+  v[1]: pos=(0.0512,-0.7680,-0.6384) dist=1844km type=ocean elev=-3.913
+  v[2]: pos=(0.0615,-0.7693,-0.6359) dist=1842km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69986 pos=(-0.1335,-0.9069,-0.3997) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1952km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2028km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2027km type=ocean elev=-3.913
+
+CONT->OCEAN pt=69999 pos=(0.0643,-0.9143,-0.4000) plate=8
+  tri=982 vertices=[471,490,478]
+  v[0]: pos=(0.1251,-0.7831,-0.6092) dist=1624km type=ocean elev=-3.913
+  v[1]: pos=(0.1226,-0.7753,-0.6195) dist=1701km type=ocean elev=-3.912
+  v[2]: pos=(0.1328,-0.7760,-0.6166) dist=1699km type=ocean elev=-3.912
+
+CONT->OCEAN pt=70020 pos=(-0.0582,-0.9145,-0.4004) plate=8
+  tri=1221 vertices=[596,612,602]
+  v[0]: pos=(0.0027,-0.7680,-0.6405) dist=1840km type=ocean elev=-3.913
+  v[1]: pos=(0.0003,-0.7595,-0.6505) dist=1918km type=ocean elev=-3.913
+  v[2]: pos=(0.0105,-0.7614,-0.6482) dist=1913km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70041 pos=(-0.1795,-0.8984,-0.4008) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2024km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2094km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2103km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70054 pos=(0.0175,-0.9159,-0.4011) plate=8
+  tri=1095 vertices=[526,542,532]
+  v[0]: pos=(0.0741,-0.7786,-0.6231) dist=1706km type=ocean elev=-3.913
+  v[1]: pos=(0.0717,-0.7706,-0.6333) dist=1784km type=ocean elev=-3.913
+  v[2]: pos=(0.0819,-0.7718,-0.6306) dist=1780km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70075 pos=(-0.1047,-0.9098,-0.4015) plate=8
+  tri=1293 vertices=[636,652,642]
+  v[0]: pos=(-0.0379,-0.7595,-0.6494) dist=1902km type=ocean elev=-3.913
+  v[1]: pos=(-0.0403,-0.7508,-0.6593) dist=1981km type=ocean elev=-3.913
+  v[2]: pos=(-0.0302,-0.7531,-0.6572) dist=1976km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70096 pos=(-0.2251,-0.8876,-0.4019) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2129km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2192km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2209km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70109 pos=(-0.0292,-0.9151,-0.4022) plate=8
+  tri=1167 vertices=[566,582,572]
+  v[0]: pos=(0.0333,-0.7732,-0.6333) dist=1779km type=ocean elev=-3.913
+  v[1]: pos=(0.0308,-0.7649,-0.6434) dist=1857km type=ocean elev=-3.913
+  v[2]: pos=(0.0410,-0.7665,-0.6409) dist=1853km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70130 pos=(-0.1510,-0.9028,-0.4026) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1959km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2033km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2036km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70143 pos=(0.0464,-0.9141,-0.4029) plate=8
+  tri=1038 vertices=[495,512,502]
+  v[0]: pos=(0.1047,-0.7816,-0.6149) dist=1640km type=ocean elev=-3.913
+  v[1]: pos=(0.1023,-0.7738,-0.6252) dist=1717km type=ocean elev=-3.913
+  v[2]: pos=(0.1125,-0.7746,-0.6224) dist=1714km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70164 pos=(-0.0759,-0.9119,-0.4033) plate=8
+  tri=1257 vertices=[616,632,622]
+  v[0]: pos=(-0.0176,-0.7639,-0.6450) dist=1850km type=ocean elev=-3.913
+  v[1]: pos=(-0.0201,-0.7554,-0.6550) dist=1929km type=ocean elev=-3.913
+  v[2]: pos=(-0.0099,-0.7575,-0.6528) dist=1923km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70185 pos=(-0.1968,-0.8935,-0.4037) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2045km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2112km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2124km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70198 pos=(-0.0003,-0.9148,-0.4040) plate=8
+  tri=1113 vertices=[536,552,542]
+  v[0]: pos=(0.0639,-0.7774,-0.6257) dist=1717km type=ocean elev=-3.913
+  v[1]: pos=(0.0615,-0.7693,-0.6359) dist=1794km type=ocean elev=-3.913
+  v[2]: pos=(0.0717,-0.7706,-0.6333) dist=1791km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70219 pos=(-0.1223,-0.9064,-0.4044) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1906km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1984km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1981km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70232 pos=(0.0752,-0.9114,-0.4046) plate=8
+  tri=960 vertices=[459,478,466]
+  v[0]: pos=(0.1353,-0.7837,-0.6063) dist=1572km type=ocean elev=-3.912
+  v[1]: pos=(0.1328,-0.7760,-0.6166) dist=1648km type=ocean elev=-3.912
+  v[2]: pos=(0.1430,-0.7765,-0.6136) dist=1647km type=ocean elev=-3.912
+
+CONT->OCEAN pt=70253 pos=(-0.0470,-0.9131,-0.4051) plate=8
+  tri=1203 vertices=[586,602,592]
+  v[0]: pos=(0.0129,-0.7698,-0.6382) dist=1790km type=ocean elev=-3.913
+  v[1]: pos=(0.0105,-0.7614,-0.6482) dist=1868km type=ocean elev=-3.913
+  v[2]: pos=(0.0206,-0.7632,-0.6458) dist=1864km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70274 pos=(-0.1683,-0.8985,-0.4055) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1971km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2042km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2049km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70287 pos=(0.0285,-0.9135,-0.4058) plate=8
+  tri=1077 vertices=[516,532,522]
+  v[0]: pos=(0.0843,-0.7797,-0.6204) dist=1655km type=ocean elev=-3.913
+  v[1]: pos=(0.0819,-0.7718,-0.6306) dist=1733km type=ocean elev=-3.913
+  v[2]: pos=(0.0921,-0.7728,-0.6279) dist=1729km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70308 pos=(-0.0935,-0.9090,-0.4062) plate=8
+  tri=1274 vertices=[626,642,632]
+  v[0]: pos=(-0.0277,-0.7618,-0.6473) dist=1854km type=ocean elev=-3.913
+  v[1]: pos=(-0.0302,-0.7531,-0.6572) dist=1932km type=ocean elev=-3.913
+  v[2]: pos=(-0.0201,-0.7554,-0.6550) dist=1928km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70329 pos=(-0.2139,-0.8882,-0.4066) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2070km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2134km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2150km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70342 pos=(-0.0182,-0.9133,-0.4068) plate=8
+  tri=1149 vertices=[556,572,562]
+  v[0]: pos=(0.0435,-0.7747,-0.6308) dist=1729km type=ocean elev=-3.913
+  v[1]: pos=(0.0410,-0.7665,-0.6409) dist=1806km type=ocean elev=-3.913
+  v[2]: pos=(0.0512,-0.7680,-0.6384) dist=1803km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70363 pos=(-0.1398,-0.9026,-0.4073) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1910km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1985km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1986km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70376 pos=(0.0573,-0.9114,-0.4075) plate=8
+  tri=1004 vertices=[483,502,490]
+  v[0]: pos=(0.1149,-0.7824,-0.6121) dist=1588km type=ocean elev=-3.913
+  v[1]: pos=(0.1125,-0.7746,-0.6224) dist=1665km type=ocean elev=-3.913
+  v[2]: pos=(0.1226,-0.7753,-0.6195) dist=1662km type=ocean elev=-3.912
+
+CONT->OCEAN pt=70397 pos=(-0.0647,-0.9107,-0.4080) plate=8
+  tri=1239 vertices=[606,622,612]
+  v[0]: pos=(-0.0074,-0.7660,-0.6428) dist=1801km type=ocean elev=-3.913
+  v[1]: pos=(-0.0099,-0.7575,-0.6528) dist=1879km type=ocean elev=-3.913
+  v[2]: pos=(0.0003,-0.7595,-0.6505) dist=1874km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70418 pos=(-0.1856,-0.8938,-0.4084) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1989km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2058km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2068km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70431 pos=(0.0107,-0.9126,-0.4086) plate=8
+  tri=1095 vertices=[526,542,532]
+  v[0]: pos=(0.0741,-0.7786,-0.6231) dist=1666km type=ocean elev=-3.913
+  v[1]: pos=(0.0717,-0.7706,-0.6333) dist=1743km type=ocean elev=-3.913
+  v[2]: pos=(0.0819,-0.7718,-0.6306) dist=1741km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70452 pos=(-0.1111,-0.9057,-0.4090) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1862km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1941km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1936km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70465 pos=(0.0860,-0.9083,-0.4093) plate=8
+  tri=938 vertices=[447,466,454]
+  v[0]: pos=(0.1454,-0.7842,-0.6033) dist=1519km type=ocean elev=-3.912
+  v[1]: pos=(0.1430,-0.7765,-0.6136) dist=1595km type=ocean elev=-3.912
+  v[2]: pos=(0.1531,-0.7770,-0.6106) dist=1594km type=ocean elev=-3.912
+
+CONT->OCEAN pt=70473 pos=(-0.2308,-0.8826,-0.4095) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2101km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2162km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2181km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70486 pos=(-0.0359,-0.9115,-0.4097) plate=8
+  tri=1185 vertices=[576,592,582]
+  v[0]: pos=(0.0231,-0.7715,-0.6358) dist=1740km type=ocean elev=-3.913
+  v[1]: pos=(0.0206,-0.7632,-0.6458) dist=1818km type=ocean elev=-3.913
+  v[2]: pos=(0.0308,-0.7649,-0.6434) dist=1814km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70507 pos=(-0.1571,-0.8984,-0.4102) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1920km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1992km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1997km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70520 pos=(0.0394,-0.9110,-0.4104) plate=8
+  tri=1059 vertices=[506,522,512]
+  v[0]: pos=(0.0945,-0.7807,-0.6177) dist=1603km type=ocean elev=-3.913
+  v[1]: pos=(0.0921,-0.7728,-0.6279) dist=1681km type=ocean elev=-3.913
+  v[2]: pos=(0.1023,-0.7738,-0.6252) dist=1677km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70541 pos=(-0.0824,-0.9080,-0.4108) plate=8
+  tri=1257 vertices=[616,632,622]
+  v[0]: pos=(-0.0176,-0.7639,-0.6450) dist=1806km type=ocean elev=-3.913
+  v[1]: pos=(-0.0201,-0.7554,-0.6550) dist=1883km type=ocean elev=-3.913
+  v[2]: pos=(-0.0099,-0.7575,-0.6528) dist=1879km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70562 pos=(-0.2027,-0.8887,-0.4112) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2012km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2078km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2092km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70575 pos=(-0.0071,-0.9114,-0.4115) plate=8
+  tri=1131 vertices=[546,562,552]
+  v[0]: pos=(0.0537,-0.7761,-0.6283) dist=1678km type=ocean elev=-3.913
+  v[1]: pos=(0.0512,-0.7680,-0.6384) dist=1756km type=ocean elev=-3.913
+  v[2]: pos=(0.0615,-0.7693,-0.6359) dist=1753km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70596 pos=(-0.1286,-0.9021,-0.4119) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1863km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1939km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1938km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70609 pos=(0.0681,-0.9085,-0.4122) plate=8
+  tri=982 vertices=[471,490,478]
+  v[0]: pos=(0.1251,-0.7831,-0.6092) dist=1535km type=ocean elev=-3.913
+  v[1]: pos=(0.1226,-0.7753,-0.6195) dist=1612km type=ocean elev=-3.912
+  v[2]: pos=(0.1328,-0.7760,-0.6166) dist=1610km type=ocean elev=-3.912
+
+CONT->OCEAN pt=70630 pos=(-0.0536,-0.9093,-0.4126) plate=8
+  tri=1221 vertices=[596,612,602]
+  v[0]: pos=(0.0027,-0.7680,-0.6405) dist=1751km type=ocean elev=-3.913
+  v[1]: pos=(0.0003,-0.7595,-0.6505) dist=1830km type=ocean elev=-3.913
+  v[2]: pos=(0.0105,-0.7614,-0.6482) dist=1824km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70651 pos=(-0.1744,-0.8939,-0.4130) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1935km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2005km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2014km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70664 pos=(0.0216,-0.9103,-0.4133) plate=8
+  tri=1077 vertices=[516,532,522]
+  v[0]: pos=(0.0843,-0.7797,-0.6204) dist=1615km type=ocean elev=-3.913
+  v[1]: pos=(0.0819,-0.7718,-0.6306) dist=1691km type=ocean elev=-3.913
+  v[2]: pos=(0.0921,-0.7728,-0.6279) dist=1690km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70685 pos=(-0.0999,-0.9049,-0.4137) plate=8
+  tri=1293 vertices=[636,652,642]
+  v[0]: pos=(-0.0379,-0.7595,-0.6494) dist=1814km type=ocean elev=-3.913
+  v[1]: pos=(-0.0403,-0.7508,-0.6593) dist=1893km type=ocean elev=-3.913
+  v[2]: pos=(-0.0302,-0.7531,-0.6572) dist=1888km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70698 pos=(0.0967,-0.9051,-0.4140) plate=8
+  tri=916 vertices=[435,454,442]
+  v[0]: pos=(0.1556,-0.7845,-0.6002) dist=1466km type=ocean elev=-3.912
+  v[1]: pos=(0.1531,-0.7770,-0.6106) dist=1542km type=ocean elev=-3.912
+  v[2]: pos=(0.1633,-0.7773,-0.6076) dist=1541km type=ocean elev=-3.911
+
+CONT->OCEAN pt=70706 pos=(-0.2197,-0.8833,-0.4141) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2041km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2103km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2121km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70719 pos=(-0.0249,-0.9098,-0.4144) plate=8
+  tri=1167 vertices=[566,582,572]
+  v[0]: pos=(0.0333,-0.7732,-0.6333) dist=1690km type=ocean elev=-3.913
+  v[1]: pos=(0.0308,-0.7649,-0.6434) dist=1768km type=ocean elev=-3.913
+  v[2]: pos=(0.0410,-0.7665,-0.6409) dist=1764km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70740 pos=(-0.1459,-0.8981,-0.4148) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1870km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1943km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1946km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70753 pos=(0.0503,-0.9084,-0.4151) plate=8
+  tri=1038 vertices=[495,512,502]
+  v[0]: pos=(0.1047,-0.7816,-0.6149) dist=1551km type=ocean elev=-3.913
+  v[1]: pos=(0.1023,-0.7738,-0.6252) dist=1628km type=ocean elev=-3.913
+  v[2]: pos=(0.1125,-0.7746,-0.6224) dist=1625km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70774 pos=(-0.0713,-0.9068,-0.4155) plate=8
+  tri=1239 vertices=[606,622,612]
+  v[0]: pos=(-0.0074,-0.7660,-0.6428) dist=1757km type=ocean elev=-3.913
+  v[1]: pos=(-0.0099,-0.7575,-0.6528) dist=1834km type=ocean elev=-3.913
+  v[2]: pos=(0.0003,-0.7595,-0.6505) dist=1831km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70795 pos=(-0.1915,-0.8890,-0.4159) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1956km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2022km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2035km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70808 pos=(0.0039,-0.9093,-0.4162) plate=8
+  tri=1113 vertices=[536,552,542]
+  v[0]: pos=(0.0639,-0.7774,-0.6257) dist=1627km type=ocean elev=-3.913
+  v[1]: pos=(0.0615,-0.7693,-0.6359) dist=1705km type=ocean elev=-3.913
+  v[2]: pos=(0.0717,-0.7706,-0.6333) dist=1702km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70829 pos=(-0.1174,-0.9015,-0.4166) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1818km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1895km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1892km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70842 pos=(0.0789,-0.9055,-0.4168) plate=8
+  tri=960 vertices=[459,478,466]
+  v[0]: pos=(0.1353,-0.7837,-0.6063) dist=1482km type=ocean elev=-3.912
+  v[1]: pos=(0.1328,-0.7760,-0.6166) dist=1559km type=ocean elev=-3.912
+  v[2]: pos=(0.1430,-0.7765,-0.6136) dist=1557km type=ocean elev=-3.912
+
+CONT->OCEAN pt=70863 pos=(-0.0426,-0.9078,-0.4173) plate=8
+  tri=1203 vertices=[586,602,592]
+  v[0]: pos=(0.0129,-0.7698,-0.6382) dist=1701km type=ocean elev=-3.913
+  v[1]: pos=(0.0105,-0.7614,-0.6482) dist=1780km type=ocean elev=-3.913
+  v[2]: pos=(0.0206,-0.7632,-0.6458) dist=1775km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70884 pos=(-0.1632,-0.8938,-0.4177) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1882km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1953km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1960km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70897 pos=(0.0325,-0.9079,-0.4180) plate=8
+  tri=1077 vertices=[516,532,522]
+  v[0]: pos=(0.0843,-0.7797,-0.6204) dist=1566km type=ocean elev=-3.913
+  v[1]: pos=(0.0819,-0.7718,-0.6306) dist=1644km type=ocean elev=-3.913
+  v[2]: pos=(0.0921,-0.7728,-0.6279) dist=1640km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70918 pos=(-0.0888,-0.9039,-0.4184) plate=8
+  tri=1274 vertices=[626,642,632]
+  v[0]: pos=(-0.0277,-0.7618,-0.6473) dist=1765km type=ocean elev=-3.913
+  v[1]: pos=(-0.0302,-0.7531,-0.6572) dist=1844km type=ocean elev=-3.913
+  v[2]: pos=(-0.0201,-0.7554,-0.6550) dist=1839km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70931 pos=(0.1073,-0.9018,-0.4186) plate=8
+  tri=916 vertices=[435,454,442]
+  v[0]: pos=(0.1556,-0.7845,-0.6002) dist=1414km type=ocean elev=-3.912
+  v[1]: pos=(0.1531,-0.7770,-0.6106) dist=1491km type=ocean elev=-3.912
+  v[2]: pos=(0.1633,-0.7773,-0.6076) dist=1488km type=ocean elev=-3.911
+
+CONT->OCEAN pt=70939 pos=(-0.2085,-0.8838,-0.4188) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1982km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2045km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2062km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70952 pos=(-0.0139,-0.9079,-0.4190) plate=8
+  tri=1149 vertices=[556,572,562]
+  v[0]: pos=(0.0435,-0.7747,-0.6308) dist=1640km type=ocean elev=-3.913
+  v[1]: pos=(0.0410,-0.7665,-0.6409) dist=1717km type=ocean elev=-3.913
+  v[2]: pos=(0.0512,-0.7680,-0.6384) dist=1714km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70973 pos=(-0.1348,-0.8977,-0.4195) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1821km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1896km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1897km type=ocean elev=-3.913
+
+CONT->OCEAN pt=70986 pos=(0.0611,-0.9056,-0.4197) plate=8
+  tri=1004 vertices=[483,502,490]
+  v[0]: pos=(0.1149,-0.7824,-0.6121) dist=1498km type=ocean elev=-3.913
+  v[1]: pos=(0.1125,-0.7746,-0.6224) dist=1575km type=ocean elev=-3.913
+  v[2]: pos=(0.1226,-0.7753,-0.6195) dist=1573km type=ocean elev=-3.912
+
+CONT->OCEAN pt=71007 pos=(-0.0602,-0.9055,-0.4202) plate=8
+  tri=1221 vertices=[596,612,602]
+  v[0]: pos=(0.0027,-0.7680,-0.6405) dist=1707km type=ocean elev=-3.913
+  v[1]: pos=(0.0003,-0.7595,-0.6505) dist=1785km type=ocean elev=-3.913
+  v[2]: pos=(0.0105,-0.7614,-0.6482) dist=1782km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71028 pos=(-0.1803,-0.8892,-0.4206) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1900km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1968km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1979km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71041 pos=(0.0148,-0.9070,-0.4208) plate=8
+  tri=1095 vertices=[526,542,532]
+  v[0]: pos=(0.0741,-0.7786,-0.6231) dist=1576km type=ocean elev=-3.913
+  v[1]: pos=(0.0717,-0.7706,-0.6333) dist=1653km type=ocean elev=-3.913
+  v[2]: pos=(0.0819,-0.7718,-0.6306) dist=1651km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71062 pos=(-0.1063,-0.9007,-0.4212) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1774km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1853km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1847km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71075 pos=(0.0896,-0.9024,-0.4215) plate=8
+  tri=938 vertices=[447,466,454]
+  v[0]: pos=(0.1454,-0.7842,-0.6033) dist=1429km type=ocean elev=-3.912
+  v[1]: pos=(0.1430,-0.7765,-0.6136) dist=1506km type=ocean elev=-3.912
+  v[2]: pos=(0.1531,-0.7770,-0.6106) dist=1505km type=ocean elev=-3.912
+
+CONT->OCEAN pt=71083 pos=(-0.2254,-0.8783,-0.4217) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=2013km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2073km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2093km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71096 pos=(-0.0315,-0.9061,-0.4219) plate=8
+  tri=1185 vertices=[576,592,582]
+  v[0]: pos=(0.0231,-0.7715,-0.6358) dist=1651km type=ocean elev=-3.913
+  v[1]: pos=(0.0206,-0.7632,-0.6458) dist=1729km type=ocean elev=-3.913
+  v[2]: pos=(0.0308,-0.7649,-0.6434) dist=1725km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71117 pos=(-0.1520,-0.8936,-0.4224) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1830km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1903km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1908km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71130 pos=(0.0434,-0.9053,-0.4226) plate=8
+  tri=1059 vertices=[506,522,512]
+  v[0]: pos=(0.0945,-0.7807,-0.6177) dist=1514km type=ocean elev=-3.913
+  v[1]: pos=(0.0921,-0.7728,-0.6279) dist=1591km type=ocean elev=-3.913
+  v[2]: pos=(0.1023,-0.7738,-0.6252) dist=1588km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71151 pos=(-0.0777,-0.9028,-0.4230) plate=8
+  tri=1257 vertices=[616,632,622]
+  v[0]: pos=(-0.0176,-0.7639,-0.6450) dist=1717km type=ocean elev=-3.913
+  v[1]: pos=(-0.0201,-0.7554,-0.6550) dist=1795km type=ocean elev=-3.913
+  v[2]: pos=(-0.0099,-0.7575,-0.6528) dist=1790km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71164 pos=(0.1179,-0.8983,-0.4233) plate=8
+  tri=890 vertices=[422,442,430]
+  v[0]: pos=(0.1657,-0.7848,-0.5971) dist=1359km type=ocean elev=-3.912
+  v[1]: pos=(0.1633,-0.7773,-0.6076) dist=1437km type=ocean elev=-3.911
+  v[2]: pos=(0.1734,-0.7775,-0.6044) dist=1434km type=ocean elev=-3.911
+
+CONT->OCEAN pt=71172 pos=(-0.1974,-0.8842,-0.4235) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1923km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1988km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2003km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71185 pos=(-0.0029,-0.9058,-0.4237) plate=8
+  tri=1131 vertices=[546,562,552]
+  v[0]: pos=(0.0537,-0.7761,-0.6283) dist=1589km type=ocean elev=-3.913
+  v[1]: pos=(0.0512,-0.7680,-0.6384) dist=1666km type=ocean elev=-3.913
+  v[2]: pos=(0.0615,-0.7693,-0.6359) dist=1663km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71206 pos=(-0.1236,-0.8971,-0.4241) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1774km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1850km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1849km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71219 pos=(0.0719,-0.9026,-0.4244) plate=8
+  tri=982 vertices=[471,490,478]
+  v[0]: pos=(0.1251,-0.7831,-0.6092) dist=1446km type=ocean elev=-3.913
+  v[1]: pos=(0.1226,-0.7753,-0.6195) dist=1522km type=ocean elev=-3.912
+  v[2]: pos=(0.1328,-0.7760,-0.6166) dist=1520km type=ocean elev=-3.912
+
+CONT->OCEAN pt=71240 pos=(-0.0491,-0.9039,-0.4248) plate=8
+  tri=1203 vertices=[586,602,592]
+  v[0]: pos=(0.0129,-0.7698,-0.6382) dist=1658km type=ocean elev=-3.913
+  v[1]: pos=(0.0105,-0.7614,-0.6482) dist=1735km type=ocean elev=-3.913
+  v[2]: pos=(0.0206,-0.7632,-0.6458) dist=1732km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71261 pos=(-0.1692,-0.8891,-0.4252) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1845km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1915km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1924km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71274 pos=(0.0257,-0.9046,-0.4255) plate=8
+  tri=1077 vertices=[516,532,522]
+  v[0]: pos=(0.0843,-0.7797,-0.6204) dist=1525km type=ocean elev=-3.913
+  v[1]: pos=(0.0819,-0.7718,-0.6306) dist=1602km type=ocean elev=-3.913
+  v[2]: pos=(0.0921,-0.7728,-0.6279) dist=1600km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71295 pos=(-0.0952,-0.8997,-0.4259) plate=8
+  tri=1293 vertices=[636,652,642]
+  v[0]: pos=(-0.0379,-0.7595,-0.6494) dist=1725km type=ocean elev=-3.913
+  v[1]: pos=(-0.0403,-0.7508,-0.6593) dist=1804km type=ocean elev=-3.913
+  v[2]: pos=(-0.0302,-0.7531,-0.6572) dist=1799km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71308 pos=(0.1002,-0.8991,-0.4262) plate=8
+  tri=916 vertices=[435,454,442]
+  v[0]: pos=(0.1556,-0.7845,-0.6002) dist=1376km type=ocean elev=-3.912
+  v[1]: pos=(0.1531,-0.7770,-0.6106) dist=1452km type=ocean elev=-3.912
+  v[2]: pos=(0.1633,-0.7773,-0.6076) dist=1452km type=ocean elev=-3.911
+
+CONT->OCEAN pt=71316 pos=(-0.2143,-0.8788,-0.4263) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1952km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=2014km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=2032km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71329 pos=(-0.0205,-0.9042,-0.4266) plate=8
+  tri=1167 vertices=[566,582,572]
+  v[0]: pos=(0.0333,-0.7732,-0.6333) dist=1601km type=ocean elev=-3.913
+  v[1]: pos=(0.0308,-0.7649,-0.6434) dist=1679km type=ocean elev=-3.913
+  v[2]: pos=(0.0410,-0.7665,-0.6409) dist=1675km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71350 pos=(-0.1409,-0.8932,-0.4270) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1780km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1854km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1857km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71363 pos=(0.0542,-0.9025,-0.4273) plate=8
+  tri=1038 vertices=[495,512,502]
+  v[0]: pos=(0.1047,-0.7816,-0.6149) dist=1461km type=ocean elev=-3.913
+  v[1]: pos=(0.1023,-0.7738,-0.6252) dist=1539km type=ocean elev=-3.913
+  v[2]: pos=(0.1125,-0.7746,-0.6224) dist=1535km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71384 pos=(-0.0667,-0.9015,-0.4277) plate=8
+  tri=1239 vertices=[606,622,612]
+  v[0]: pos=(-0.0074,-0.7660,-0.6428) dist=1667km type=ocean elev=-3.913
+  v[1]: pos=(-0.0099,-0.7575,-0.6528) dist=1745km type=ocean elev=-3.913
+  v[2]: pos=(0.0003,-0.7595,-0.6505) dist=1741km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71405 pos=(-0.1862,-0.8843,-0.4281) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1866km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1933km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1946km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71418 pos=(0.0080,-0.9036,-0.4284) plate=8
+  tri=1113 vertices=[536,552,542]
+  v[0]: pos=(0.0639,-0.7774,-0.6257) dist=1538km type=ocean elev=-3.913
+  v[1]: pos=(0.0615,-0.7693,-0.6359) dist=1615km type=ocean elev=-3.913
+  v[2]: pos=(0.0717,-0.7706,-0.6333) dist=1612km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71439 pos=(-0.1125,-0.8964,-0.4288) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1729km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1806km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1803km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71452 pos=(0.0825,-0.8995,-0.4290) plate=8
+  tri=960 vertices=[459,478,466]
+  v[0]: pos=(0.1353,-0.7837,-0.6063) dist=1393km type=ocean elev=-3.912
+  v[1]: pos=(0.1328,-0.7760,-0.6166) dist=1469km type=ocean elev=-3.912
+  v[2]: pos=(0.1430,-0.7765,-0.6136) dist=1468km type=ocean elev=-3.912
+
+CONT->OCEAN pt=71460 pos=(-0.2310,-0.8732,-0.4292) plate=8
+  tri=776 vertices=[363,378,387]
+  v[0]: pos=(0.2061,-0.7850,-0.5842) dist=3036km type=ocean elev=-3.911
+  v[1]: pos=(0.1960,-0.7851,-0.5875) dist=2982km type=ocean elev=-3.911
+  v[2]: pos=(0.2037,-0.7777,-0.5947) dist=3054km type=ocean elev=-3.911
+
+CONT->OCEAN pt=71473 pos=(-0.0381,-0.9023,-0.4295) plate=8
+  tri=1203 vertices=[586,602,592]
+  v[0]: pos=(0.0129,-0.7698,-0.6382) dist=1612km type=ocean elev=-3.913
+  v[1]: pos=(0.0105,-0.7614,-0.6482) dist=1691km type=ocean elev=-3.913
+  v[2]: pos=(0.0206,-0.7632,-0.6458) dist=1685km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71494 pos=(-0.1581,-0.8889,-0.4299) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1792km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1863km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1870km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71507 pos=(0.0365,-0.9020,-0.4302) plate=8
+  tri=1059 vertices=[506,522,512]
+  v[0]: pos=(0.0945,-0.7807,-0.6177) dist=1473km type=ocean elev=-3.913
+  v[1]: pos=(0.0921,-0.7728,-0.6279) dist=1550km type=ocean elev=-3.913
+  v[2]: pos=(0.1023,-0.7738,-0.6252) dist=1549km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71528 pos=(-0.0841,-0.8986,-0.4306) plate=8
+  tri=1274 vertices=[626,642,632]
+  v[0]: pos=(-0.0277,-0.7618,-0.6473) dist=1676km type=ocean elev=-3.913
+  v[1]: pos=(-0.0302,-0.7531,-0.6572) dist=1755km type=ocean elev=-3.913
+  v[2]: pos=(-0.0201,-0.7554,-0.6550) dist=1750km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71541 pos=(0.1108,-0.8956,-0.4308) plate=8
+  tri=916 vertices=[435,454,442]
+  v[0]: pos=(0.1556,-0.7845,-0.6002) dist=1324km type=ocean elev=-3.912
+  v[1]: pos=(0.1531,-0.7770,-0.6106) dist=1401km type=ocean elev=-3.912
+  v[2]: pos=(0.1633,-0.7773,-0.6076) dist=1398km type=ocean elev=-3.911
+
+CONT->OCEAN pt=71549 pos=(-0.2031,-0.8792,-0.4310) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1892km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1956km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1972km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71562 pos=(-0.0096,-0.9022,-0.4312) plate=8
+  tri=1149 vertices=[556,572,562]
+  v[0]: pos=(0.0435,-0.7747,-0.6308) dist=1550km type=ocean elev=-3.913
+  v[1]: pos=(0.0410,-0.7665,-0.6409) dist=1628km type=ocean elev=-3.913
+  v[2]: pos=(0.0512,-0.7680,-0.6384) dist=1624km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71583 pos=(-0.1298,-0.8926,-0.4317) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1731km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1807km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1807km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71596 pos=(0.0649,-0.8996,-0.4319) plate=8
+  tri=1004 vertices=[483,502,490]
+  v[0]: pos=(0.1149,-0.7824,-0.6121) dist=1408km type=ocean elev=-3.913
+  v[1]: pos=(0.1125,-0.7746,-0.6224) dist=1486km type=ocean elev=-3.913
+  v[2]: pos=(0.1226,-0.7753,-0.6195) dist=1483km type=ocean elev=-3.912
+
+CONT->OCEAN pt=71617 pos=(-0.0556,-0.9000,-0.4324) plate=8
+  tri=1221 vertices=[596,612,602]
+  v[0]: pos=(0.0027,-0.7680,-0.6405) dist=1618km type=ocean elev=-3.913
+  v[1]: pos=(0.0003,-0.7595,-0.6505) dist=1696km type=ocean elev=-3.913
+  v[2]: pos=(0.0105,-0.7614,-0.6482) dist=1692km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71638 pos=(-0.1751,-0.8843,-0.4328) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1810km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1878km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1889km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71651 pos=(0.0188,-0.9012,-0.4330) plate=8
+  tri=1095 vertices=[526,542,532]
+  v[0]: pos=(0.0741,-0.7786,-0.6231) dist=1486km type=ocean elev=-3.913
+  v[1]: pos=(0.0717,-0.7706,-0.6333) dist=1564km type=ocean elev=-3.913
+  v[2]: pos=(0.0819,-0.7718,-0.6306) dist=1561km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71672 pos=(-0.1015,-0.8954,-0.4334) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1685km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1764km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1758km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71685 pos=(0.0932,-0.8962,-0.4337) plate=8
+  tri=938 vertices=[447,466,454]
+  v[0]: pos=(0.1454,-0.7842,-0.6033) dist=1339km type=ocean elev=-3.912
+  v[1]: pos=(0.1430,-0.7765,-0.6136) dist=1416km type=ocean elev=-3.912
+  v[2]: pos=(0.1531,-0.7770,-0.6106) dist=1415km type=ocean elev=-3.912
+
+CONT->OCEAN pt=71693 pos=(-0.2199,-0.8737,-0.4339) plate=8
+  tri=776 vertices=[363,378,387]
+  v[0]: pos=(0.2061,-0.7850,-0.5842) dist=2959km type=ocean elev=-3.911
+  v[1]: pos=(0.1960,-0.7851,-0.5875) dist=2906km type=ocean elev=-3.911
+  v[2]: pos=(0.2037,-0.7777,-0.5947) dist=2978km type=ocean elev=-3.911
+
+CONT->OCEAN pt=71706 pos=(-0.0272,-0.9004,-0.4341) plate=8
+  tri=1185 vertices=[576,592,582]
+  v[0]: pos=(0.0231,-0.7715,-0.6358) dist=1562km type=ocean elev=-3.913
+  v[1]: pos=(0.0206,-0.7632,-0.6458) dist=1640km type=ocean elev=-3.913
+  v[2]: pos=(0.0308,-0.7649,-0.6434) dist=1635km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71727 pos=(-0.1470,-0.8886,-0.4345) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1740km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1813km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1818km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71740 pos=(0.0472,-0.8993,-0.4348) plate=8
+  tri=1059 vertices=[506,522,512]
+  v[0]: pos=(0.0945,-0.7807,-0.6177) dist=1424km type=ocean elev=-3.913
+  v[1]: pos=(0.0921,-0.7728,-0.6279) dist=1501km type=ocean elev=-3.913
+  v[2]: pos=(0.1023,-0.7738,-0.6252) dist=1498km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71761 pos=(-0.0731,-0.8973,-0.4352) plate=8
+  tri=1257 vertices=[616,632,622]
+  v[0]: pos=(-0.0176,-0.7639,-0.6450) dist=1627km type=ocean elev=-3.913
+  v[1]: pos=(-0.0201,-0.7554,-0.6550) dist=1706km type=ocean elev=-3.913
+  v[2]: pos=(-0.0099,-0.7575,-0.6528) dist=1701km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71774 pos=(0.1213,-0.8920,-0.4355) plate=8
+  tri=890 vertices=[422,442,430]
+  v[0]: pos=(0.1657,-0.7848,-0.5971) dist=1269km type=ocean elev=-3.912
+  v[1]: pos=(0.1633,-0.7773,-0.6076) dist=1347km type=ocean elev=-3.911
+  v[2]: pos=(0.1734,-0.7775,-0.6044) dist=1344km type=ocean elev=-3.911
+
+CONT->OCEAN pt=71782 pos=(-0.1920,-0.8794,-0.4357) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1834km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1899km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1914km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71795 pos=(0.0013,-0.9000,-0.4359) plate=8
+  tri=1131 vertices=[546,562,552]
+  v[0]: pos=(0.0537,-0.7761,-0.6283) dist=1499km type=ocean elev=-3.913
+  v[1]: pos=(0.0512,-0.7680,-0.6384) dist=1577km type=ocean elev=-3.913
+  v[2]: pos=(0.0615,-0.7693,-0.6359) dist=1573km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71816 pos=(-0.1187,-0.8919,-0.4363) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1684km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1761km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1759km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71829 pos=(0.0755,-0.8965,-0.4366) plate=8
+  tri=982 vertices=[471,490,478]
+  v[0]: pos=(0.1251,-0.7831,-0.6092) dist=1355km type=ocean elev=-3.913
+  v[1]: pos=(0.1226,-0.7753,-0.6195) dist=1432km type=ocean elev=-3.912
+  v[2]: pos=(0.1328,-0.7760,-0.6166) dist=1430km type=ocean elev=-3.912
+
+CONT->OCEAN pt=71850 pos=(-0.0447,-0.8983,-0.4370) plate=8
+  tri=1203 vertices=[586,602,592]
+  v[0]: pos=(0.0129,-0.7698,-0.6382) dist=1568km type=ocean elev=-3.913
+  v[1]: pos=(0.0105,-0.7614,-0.6482) dist=1646km type=ocean elev=-3.913
+  v[2]: pos=(0.0206,-0.7632,-0.6458) dist=1643km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71871 pos=(-0.1640,-0.8842,-0.4374) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1755km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1825km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1834km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71884 pos=(0.0296,-0.8986,-0.4377) plate=8
+  tri=1077 vertices=[516,532,522]
+  v[0]: pos=(0.0843,-0.7797,-0.6204) dist=1435km type=ocean elev=-3.913
+  v[1]: pos=(0.0819,-0.7718,-0.6306) dist=1512km type=ocean elev=-3.913
+  v[2]: pos=(0.0921,-0.7728,-0.6279) dist=1510km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71905 pos=(-0.0904,-0.8944,-0.4381) plate=8
+  tri=1293 vertices=[636,652,642]
+  v[0]: pos=(-0.0379,-0.7595,-0.6494) dist=1636km type=ocean elev=-3.913
+  v[1]: pos=(-0.0403,-0.7508,-0.6593) dist=1715km type=ocean elev=-3.913
+  v[2]: pos=(-0.0302,-0.7531,-0.6572) dist=1709km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71918 pos=(0.1037,-0.8928,-0.4384) plate=8
+  tri=916 vertices=[435,454,442]
+  v[0]: pos=(0.1556,-0.7845,-0.6002) dist=1286km type=ocean elev=-3.912
+  v[1]: pos=(0.1531,-0.7770,-0.6106) dist=1362km type=ocean elev=-3.912
+  v[2]: pos=(0.1633,-0.7773,-0.6076) dist=1362km type=ocean elev=-3.911
+
+CONT->OCEAN pt=71926 pos=(-0.2088,-0.8741,-0.4385) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1863km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1924km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1943km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71939 pos=(-0.0163,-0.8984,-0.4388) plate=8
+  tri=1167 vertices=[566,582,572]
+  v[0]: pos=(0.0333,-0.7732,-0.6333) dist=1511km type=ocean elev=-3.913
+  v[1]: pos=(0.0308,-0.7649,-0.6434) dist=1589km type=ocean elev=-3.913
+  v[2]: pos=(0.0410,-0.7665,-0.6409) dist=1585km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71960 pos=(-0.1359,-0.8880,-0.4392) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1690km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1764km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1767km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71973 pos=(0.0579,-0.8964,-0.4395) plate=8
+  tri=1038 vertices=[495,512,502]
+  v[0]: pos=(0.1047,-0.7816,-0.6149) dist=1371km type=ocean elev=-3.913
+  v[1]: pos=(0.1023,-0.7738,-0.6252) dist=1449km type=ocean elev=-3.913
+  v[2]: pos=(0.1125,-0.7746,-0.6224) dist=1445km type=ocean elev=-3.913
+
+CONT->OCEAN pt=71994 pos=(-0.0621,-0.8959,-0.4399) plate=8
+  tri=1239 vertices=[606,622,612]
+  v[0]: pos=(-0.0074,-0.7660,-0.6428) dist=1578km type=ocean elev=-3.913
+  v[1]: pos=(-0.0099,-0.7575,-0.6528) dist=1656km type=ocean elev=-3.913
+  v[2]: pos=(0.0003,-0.7595,-0.6505) dist=1651km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72015 pos=(-0.1810,-0.8794,-0.4403) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1776km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1843km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1856km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72028 pos=(0.0121,-0.8976,-0.4406) plate=8
+  tri=1113 vertices=[536,552,542]
+  v[0]: pos=(0.0639,-0.7774,-0.6257) dist=1448km type=ocean elev=-3.913
+  v[1]: pos=(0.0615,-0.7693,-0.6359) dist=1525km type=ocean elev=-3.913
+  v[2]: pos=(0.0717,-0.7706,-0.6333) dist=1522km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72049 pos=(-0.1077,-0.8910,-0.4410) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1639km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1717km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1713km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72062 pos=(0.0861,-0.8932,-0.4412) plate=8
+  tri=960 vertices=[459,478,466]
+  v[0]: pos=(0.1353,-0.7837,-0.6063) dist=1302km type=ocean elev=-3.912
+  v[1]: pos=(0.1328,-0.7760,-0.6166) dist=1379km type=ocean elev=-3.912
+  v[2]: pos=(0.1430,-0.7765,-0.6136) dist=1377km type=ocean elev=-3.912
+
+CONT->OCEAN pt=72070 pos=(-0.2255,-0.8685,-0.4414) plate=8
+  tri=804 vertices=[378,393,402]
+  v[0]: pos=(0.1960,-0.7851,-0.5875) dist=2916km type=ocean elev=-3.911
+  v[1]: pos=(0.1859,-0.7851,-0.5908) dist=2862km type=ocean elev=-3.911
+  v[2]: pos=(0.1936,-0.7777,-0.5980) dist=2934km type=ocean elev=-3.911
+
+CONT->OCEAN pt=72083 pos=(-0.0338,-0.8965,-0.4417) plate=8
+  tri=1185 vertices=[576,592,582]
+  v[0]: pos=(0.0231,-0.7715,-0.6358) dist=1518km type=ocean elev=-3.913
+  v[1]: pos=(0.0206,-0.7632,-0.6458) dist=1595km type=ocean elev=-3.913
+  v[2]: pos=(0.0308,-0.7649,-0.6434) dist=1593km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72104 pos=(-0.1530,-0.8838,-0.4421) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1702km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1773km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1780km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72117 pos=(0.0404,-0.8959,-0.4424) plate=8
+  tri=1059 vertices=[506,522,512]
+  v[0]: pos=(0.0945,-0.7807,-0.6177) dist=1383km type=ocean elev=-3.913
+  v[1]: pos=(0.0921,-0.7728,-0.6279) dist=1460km type=ocean elev=-3.913
+  v[2]: pos=(0.1023,-0.7738,-0.6252) dist=1458km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72138 pos=(-0.0794,-0.8931,-0.4428) plate=8
+  tri=1274 vertices=[626,642,632]
+  v[0]: pos=(-0.0277,-0.7618,-0.6473) dist=1587km type=ocean elev=-3.913
+  v[1]: pos=(-0.0302,-0.7531,-0.6572) dist=1666km type=ocean elev=-3.913
+  v[2]: pos=(-0.0201,-0.7554,-0.6550) dist=1660km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72151 pos=(0.1142,-0.8892,-0.4430) plate=8
+  tri=916 vertices=[435,454,442]
+  v[0]: pos=(0.1556,-0.7845,-0.6002) dist=1234km type=ocean elev=-3.912
+  v[1]: pos=(0.1531,-0.7770,-0.6106) dist=1311km type=ocean elev=-3.912
+  v[2]: pos=(0.1633,-0.7773,-0.6076) dist=1308km type=ocean elev=-3.911
+
+CONT->OCEAN pt=72159 pos=(-0.1978,-0.8743,-0.4432) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1803km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1866km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1883km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72172 pos=(-0.0054,-0.8963,-0.4434) plate=8
+  tri=1149 vertices=[556,572,562]
+  v[0]: pos=(0.0435,-0.7747,-0.6308) dist=1460km type=ocean elev=-3.913
+  v[1]: pos=(0.0410,-0.7665,-0.6409) dist=1538km type=ocean elev=-3.913
+  v[2]: pos=(0.0512,-0.7680,-0.6384) dist=1534km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72193 pos=(-0.1249,-0.8873,-0.4439) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1641km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1717km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1717km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72206 pos=(0.0686,-0.8933,-0.4441) plate=8
+  tri=1004 vertices=[483,502,490]
+  v[0]: pos=(0.1149,-0.7824,-0.6121) dist=1318km type=ocean elev=-3.913
+  v[1]: pos=(0.1125,-0.7746,-0.6224) dist=1395km type=ocean elev=-3.913
+  v[2]: pos=(0.1226,-0.7753,-0.6195) dist=1393km type=ocean elev=-3.912
+
+CONT->OCEAN pt=72227 pos=(-0.0512,-0.8943,-0.4446) plate=8
+  tri=1221 vertices=[596,612,602]
+  v[0]: pos=(0.0027,-0.7680,-0.6405) dist=1528km type=ocean elev=-3.913
+  v[1]: pos=(0.0003,-0.7595,-0.6505) dist=1606km type=ocean elev=-3.913
+  v[2]: pos=(0.0105,-0.7614,-0.6482) dist=1602km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72248 pos=(-0.1699,-0.8793,-0.4450) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1720km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1788km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1799km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72261 pos=(0.0228,-0.8951,-0.4452) plate=8
+  tri=1095 vertices=[526,542,532]
+  v[0]: pos=(0.0741,-0.7786,-0.6231) dist=1396km type=ocean elev=-3.913
+  v[1]: pos=(0.0717,-0.7706,-0.6333) dist=1473km type=ocean elev=-3.913
+  v[2]: pos=(0.0819,-0.7718,-0.6306) dist=1471km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72282 pos=(-0.0967,-0.8900,-0.4457) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1596km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1675km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1668km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72295 pos=(0.0966,-0.8898,-0.4459) plate=8
+  tri=938 vertices=[447,466,454]
+  v[0]: pos=(0.1454,-0.7842,-0.6033) dist=1249km type=ocean elev=-3.912
+  v[1]: pos=(0.1430,-0.7765,-0.6136) dist=1325km type=ocean elev=-3.912
+  v[2]: pos=(0.1531,-0.7770,-0.6106) dist=1324km type=ocean elev=-3.912
+
+CONT->OCEAN pt=72303 pos=(-0.2145,-0.8689,-0.4461) plate=8
+  tri=804 vertices=[378,393,402]
+  v[0]: pos=(0.1960,-0.7851,-0.5875) dist=2840km type=ocean elev=-3.911
+  v[1]: pos=(0.1859,-0.7851,-0.5908) dist=2786km type=ocean elev=-3.911
+  v[2]: pos=(0.1936,-0.7777,-0.5980) dist=2858km type=ocean elev=-3.911
+
+CONT->OCEAN pt=72316 pos=(-0.0229,-0.8946,-0.4463) plate=8
+  tri=1167 vertices=[566,582,572]
+  v[0]: pos=(0.0333,-0.7732,-0.6333) dist=1468km type=ocean elev=-3.913
+  v[1]: pos=(0.0308,-0.7649,-0.6434) dist=1545km type=ocean elev=-3.913
+  v[2]: pos=(0.0410,-0.7665,-0.6409) dist=1543km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72337 pos=(-0.1419,-0.8833,-0.4467) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1650km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1722km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1727km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72350 pos=(0.0510,-0.8931,-0.4470) plate=8
+  tri=1059 vertices=[506,522,512]
+  v[0]: pos=(0.0945,-0.7807,-0.6177) dist=1333km type=ocean elev=-3.913
+  v[1]: pos=(0.0921,-0.7728,-0.6279) dist=1411km type=ocean elev=-3.913
+  v[2]: pos=(0.1023,-0.7738,-0.6252) dist=1407km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72371 pos=(-0.0685,-0.8917,-0.4474) plate=8
+  tri=1257 vertices=[616,632,622]
+  v[0]: pos=(-0.0176,-0.7639,-0.6450) dist=1537km type=ocean elev=-3.913
+  v[1]: pos=(-0.0201,-0.7554,-0.6550) dist=1616km type=ocean elev=-3.913
+  v[2]: pos=(-0.0099,-0.7575,-0.6528) dist=1611km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72384 pos=(0.1246,-0.8855,-0.4477) plate=8
+  tri=890 vertices=[422,442,430]
+  v[0]: pos=(0.1657,-0.7848,-0.5971) dist=1179km type=ocean elev=-3.912
+  v[1]: pos=(0.1633,-0.7773,-0.6076) dist=1256km type=ocean elev=-3.911
+  v[2]: pos=(0.1734,-0.7775,-0.6044) dist=1254km type=ocean elev=-3.911
+
+CONT->OCEAN pt=72392 pos=(-0.1867,-0.8744,-0.4479) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1744km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1809km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1824km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72405 pos=(0.0054,-0.8940,-0.4481) plate=8
+  tri=1131 vertices=[546,562,552]
+  v[0]: pos=(0.0537,-0.7761,-0.6283) dist=1409km type=ocean elev=-3.913
+  v[1]: pos=(0.0512,-0.7680,-0.6384) dist=1486km type=ocean elev=-3.913
+  v[2]: pos=(0.0615,-0.7693,-0.6359) dist=1483km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72426 pos=(-0.1139,-0.8865,-0.4485) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1594km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1671km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1669km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72439 pos=(0.0791,-0.8901,-0.4488) plate=8
+  tri=982 vertices=[471,490,478]
+  v[0]: pos=(0.1251,-0.7831,-0.6092) dist=1265km type=ocean elev=-3.913
+  v[1]: pos=(0.1226,-0.7753,-0.6195) dist=1342km type=ocean elev=-3.912
+  v[2]: pos=(0.1328,-0.7760,-0.6166) dist=1340km type=ocean elev=-3.912
+
+CONT->OCEAN pt=72460 pos=(-0.0403,-0.8925,-0.4492) plate=8
+  tri=1203 vertices=[586,602,592]
+  v[0]: pos=(0.0129,-0.7698,-0.6382) dist=1478km type=ocean elev=-3.913
+  v[1]: pos=(0.0105,-0.7614,-0.6482) dist=1556km type=ocean elev=-3.913
+  v[2]: pos=(0.0206,-0.7632,-0.6458) dist=1552km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72481 pos=(-0.1589,-0.8790,-0.4496) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1665km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1734km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1743km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72494 pos=(0.0336,-0.8925,-0.4499) plate=8
+  tri=1077 vertices=[516,532,522]
+  v[0]: pos=(0.0843,-0.7797,-0.6204) dist=1344km type=ocean elev=-3.913
+  v[1]: pos=(0.0819,-0.7718,-0.6306) dist=1421km type=ocean elev=-3.913
+  v[2]: pos=(0.0921,-0.7728,-0.6279) dist=1419km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72515 pos=(-0.0857,-0.8887,-0.4503) plate=8
+  tri=1293 vertices=[636,652,642]
+  v[0]: pos=(-0.0379,-0.7595,-0.6494) dist=1546km type=ocean elev=-3.913
+  v[1]: pos=(-0.0403,-0.7508,-0.6593) dist=1626km type=ocean elev=-3.913
+  v[2]: pos=(-0.0302,-0.7531,-0.6572) dist=1619km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72528 pos=(0.1071,-0.8863,-0.4506) plate=8
+  tri=916 vertices=[435,454,442]
+  v[0]: pos=(0.1556,-0.7845,-0.6002) dist=1195km type=ocean elev=-3.912
+  v[1]: pos=(0.1531,-0.7770,-0.6106) dist=1271km type=ocean elev=-3.912
+  v[2]: pos=(0.1633,-0.7773,-0.6076) dist=1271km type=ocean elev=-3.911
+
+CONT->OCEAN pt=72536 pos=(-0.2034,-0.8692,-0.4507) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1774km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1835km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1854km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72549 pos=(-0.0121,-0.8924,-0.4510) plate=8
+  tri=1167 vertices=[566,582,572]
+  v[0]: pos=(0.0333,-0.7732,-0.6333) dist=1421km type=ocean elev=-3.913
+  v[1]: pos=(0.0308,-0.7649,-0.6434) dist=1499km type=ocean elev=-3.913
+  v[2]: pos=(0.0410,-0.7665,-0.6409) dist=1494km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72570 pos=(-0.1309,-0.8827,-0.4514) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1599km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1673km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1676km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72583 pos=(0.0616,-0.8901,-0.4517) plate=8
+  tri=1038 vertices=[495,512,502]
+  v[0]: pos=(0.1047,-0.7816,-0.6149) dist=1280km type=ocean elev=-3.913
+  v[1]: pos=(0.1023,-0.7738,-0.6252) dist=1358km type=ocean elev=-3.913
+  v[2]: pos=(0.1125,-0.7746,-0.6224) dist=1355km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72604 pos=(-0.0576,-0.8901,-0.4521) plate=8
+  tri=1239 vertices=[606,622,612]
+  v[0]: pos=(-0.0074,-0.7660,-0.6428) dist=1488km type=ocean elev=-3.913
+  v[1]: pos=(-0.0099,-0.7575,-0.6528) dist=1566km type=ocean elev=-3.913
+  v[2]: pos=(0.0003,-0.7595,-0.6505) dist=1561km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72625 pos=(-0.1757,-0.8743,-0.4525) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1686km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1752km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1766km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72638 pos=(0.0161,-0.8915,-0.4528) plate=8
+  tri=1113 vertices=[536,552,542]
+  v[0]: pos=(0.0639,-0.7774,-0.6257) dist=1357km type=ocean elev=-3.913
+  v[1]: pos=(0.0615,-0.7693,-0.6359) dist=1435km type=ocean elev=-3.913
+  v[2]: pos=(0.0717,-0.7706,-0.6333) dist=1431km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72659 pos=(-0.1029,-0.8855,-0.4532) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1549km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1627km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1623km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72672 pos=(0.0896,-0.8868,-0.4534) plate=8
+  tri=960 vertices=[459,478,466]
+  v[0]: pos=(0.1353,-0.7837,-0.6063) dist=1212km type=ocean elev=-3.912
+  v[1]: pos=(0.1328,-0.7760,-0.6166) dist=1288km type=ocean elev=-3.912
+  v[2]: pos=(0.1430,-0.7765,-0.6136) dist=1287km type=ocean elev=-3.912
+
+CONT->OCEAN pt=72680 pos=(-0.2200,-0.8636,-0.4536) plate=8
+  tri=865 vertices=[408,422,430]
+  v[0]: pos=(0.1758,-0.7850,-0.5940) dist=2743km type=ocean elev=-3.911
+  v[1]: pos=(0.1657,-0.7848,-0.5971) dist=2689km type=ocean elev=-3.912
+  v[2]: pos=(0.1734,-0.7775,-0.6044) dist=2761km type=ocean elev=-3.911
+
+CONT->OCEAN pt=72693 pos=(-0.0294,-0.8906,-0.4539) plate=8
+  tri=1185 vertices=[576,592,582]
+  v[0]: pos=(0.0231,-0.7715,-0.6358) dist=1428km type=ocean elev=-3.913
+  v[1]: pos=(0.0206,-0.7632,-0.6458) dist=1505km type=ocean elev=-3.913
+  v[2]: pos=(0.0308,-0.7649,-0.6434) dist=1502km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72714 pos=(-0.1479,-0.8785,-0.4543) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1611km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1682km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1689km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72727 pos=(0.0442,-0.8896,-0.4546) plate=8
+  tri=1059 vertices=[506,522,512]
+  v[0]: pos=(0.0945,-0.7807,-0.6177) dist=1292km type=ocean elev=-3.913
+  v[1]: pos=(0.0921,-0.7728,-0.6279) dist=1369km type=ocean elev=-3.913
+  v[2]: pos=(0.1023,-0.7738,-0.6252) dist=1368km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72748 pos=(-0.0748,-0.8874,-0.4550) plate=8
+  tri=1274 vertices=[626,642,632]
+  v[0]: pos=(-0.0277,-0.7618,-0.6473) dist=1497km type=ocean elev=-3.913
+  v[1]: pos=(-0.0302,-0.7531,-0.6572) dist=1576km type=ocean elev=-3.913
+  v[2]: pos=(-0.0201,-0.7554,-0.6550) dist=1570km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72761 pos=(0.1174,-0.8826,-0.4552) plate=8
+  tri=916 vertices=[435,454,442]
+  v[0]: pos=(0.1556,-0.7845,-0.6002) dist=1143km type=ocean elev=-3.912
+  v[1]: pos=(0.1531,-0.7770,-0.6106) dist=1220km type=ocean elev=-3.912
+  v[2]: pos=(0.1633,-0.7773,-0.6076) dist=1217km type=ocean elev=-3.911
+
+CONT->OCEAN pt=72769 pos=(-0.1924,-0.8692,-0.4554) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1713km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1776km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1793km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72782 pos=(-0.0013,-0.8902,-0.4557) plate=8
+  tri=1149 vertices=[556,572,562]
+  v[0]: pos=(0.0435,-0.7747,-0.6308) dist=1369km type=ocean elev=-3.913
+  v[1]: pos=(0.0410,-0.7665,-0.6409) dist=1448km type=ocean elev=-3.913
+  v[2]: pos=(0.0512,-0.7680,-0.6384) dist=1443km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72803 pos=(-0.1200,-0.8818,-0.4561) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1550km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1626km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1626km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72816 pos=(0.0722,-0.8869,-0.4563) plate=8
+  tri=1004 vertices=[483,502,490]
+  v[0]: pos=(0.1149,-0.7824,-0.6121) dist=1227km type=ocean elev=-3.913
+  v[1]: pos=(0.1125,-0.7746,-0.6224) dist=1305km type=ocean elev=-3.913
+  v[2]: pos=(0.1226,-0.7753,-0.6195) dist=1302km type=ocean elev=-3.912
+
+CONT->OCEAN pt=72837 pos=(-0.0467,-0.8884,-0.4567) plate=8
+  tri=1221 vertices=[596,612,602]
+  v[0]: pos=(0.0027,-0.7680,-0.6405) dist=1437km type=ocean elev=-3.913
+  v[1]: pos=(0.0003,-0.7595,-0.6505) dist=1516km type=ocean elev=-3.913
+  v[2]: pos=(0.0105,-0.7614,-0.6482) dist=1511km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72858 pos=(-0.1647,-0.8740,-0.4572) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1629km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1697km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1709km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72871 pos=(0.0268,-0.8888,-0.4574) plate=8
+  tri=1095 vertices=[526,542,532]
+  v[0]: pos=(0.0741,-0.7786,-0.6231) dist=1305km type=ocean elev=-3.913
+  v[1]: pos=(0.0717,-0.7706,-0.6333) dist=1383km type=ocean elev=-3.913
+  v[2]: pos=(0.0819,-0.7718,-0.6306) dist=1380km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72892 pos=(-0.0920,-0.8843,-0.4579) plate=8
+  tri=1293 vertices=[636,652,642]
+  v[0]: pos=(-0.0379,-0.7595,-0.6494) dist=1500km type=ocean elev=-3.913
+  v[1]: pos=(-0.0403,-0.7508,-0.6593) dist=1578km type=ocean elev=-3.913
+  v[2]: pos=(-0.0302,-0.7531,-0.6572) dist=1574km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72905 pos=(0.1000,-0.8832,-0.4581) plate=8
+  tri=938 vertices=[447,466,454]
+  v[0]: pos=(0.1454,-0.7842,-0.6033) dist=1158km type=ocean elev=-3.912
+  v[1]: pos=(0.1430,-0.7765,-0.6136) dist=1234km type=ocean elev=-3.912
+  v[2]: pos=(0.1531,-0.7770,-0.6106) dist=1233km type=ocean elev=-3.912
+
+CONT->OCEAN pt=72913 pos=(-0.2090,-0.8639,-0.4583) plate=8
+  tri=865 vertices=[408,422,430]
+  v[0]: pos=(0.1758,-0.7850,-0.5940) dist=2667km type=ocean elev=-3.911
+  v[1]: pos=(0.1657,-0.7848,-0.5971) dist=2613km type=ocean elev=-3.912
+  v[2]: pos=(0.1734,-0.7775,-0.6044) dist=2685km type=ocean elev=-3.911
+
+CONT->OCEAN pt=72926 pos=(-0.0186,-0.8885,-0.4585) plate=8
+  tri=1167 vertices=[566,582,572]
+  v[0]: pos=(0.0333,-0.7732,-0.6333) dist=1377km type=ocean elev=-3.913
+  v[1]: pos=(0.0308,-0.7649,-0.6434) dist=1454km type=ocean elev=-3.913
+  v[2]: pos=(0.0410,-0.7665,-0.6409) dist=1452km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72947 pos=(-0.1369,-0.8779,-0.4589) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1559km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1631km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1636km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72960 pos=(0.0548,-0.8866,-0.4592) plate=8
+  tri=1038 vertices=[495,512,502]
+  v[0]: pos=(0.1047,-0.7816,-0.6149) dist=1240km type=ocean elev=-3.913
+  v[1]: pos=(0.1023,-0.7738,-0.6252) dist=1316km type=ocean elev=-3.913
+  v[2]: pos=(0.1125,-0.7746,-0.6224) dist=1316km type=ocean elev=-3.913
+
+CONT->OCEAN pt=72981 pos=(-0.0639,-0.8858,-0.4596) plate=8
+  tri=1257 vertices=[616,632,622]
+  v[0]: pos=(-0.0176,-0.7639,-0.6450) dist=1447km type=ocean elev=-3.913
+  v[1]: pos=(-0.0201,-0.7554,-0.6550) dist=1526km type=ocean elev=-3.913
+  v[2]: pos=(-0.0099,-0.7575,-0.6528) dist=1520km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73002 pos=(-0.1814,-0.8692,-0.4601) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1654km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1718km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1734km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73015 pos=(0.0094,-0.8877,-0.4603) plate=8
+  tri=1131 vertices=[546,562,552]
+  v[0]: pos=(0.0537,-0.7761,-0.6283) dist=1318km type=ocean elev=-3.913
+  v[1]: pos=(0.0512,-0.7680,-0.6384) dist=1396km type=ocean elev=-3.913
+  v[2]: pos=(0.0615,-0.7693,-0.6359) dist=1392km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73036 pos=(-0.1090,-0.8808,-0.4607) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1503km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1581km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1578km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73049 pos=(0.0826,-0.8835,-0.4610) plate=8
+  tri=982 vertices=[471,490,478]
+  v[0]: pos=(0.1251,-0.7831,-0.6092) dist=1174km type=ocean elev=-3.913
+  v[1]: pos=(0.1226,-0.7753,-0.6195) dist=1251km type=ocean elev=-3.912
+  v[2]: pos=(0.1328,-0.7760,-0.6166) dist=1249km type=ocean elev=-3.912
+
+CONT->OCEAN pt=73070 pos=(-0.0359,-0.8865,-0.4614) plate=8
+  tri=1203 vertices=[586,602,592]
+  v[0]: pos=(0.0129,-0.7698,-0.6382) dist=1387km type=ocean elev=-3.913
+  v[1]: pos=(0.0105,-0.7614,-0.6482) dist=1465km type=ocean elev=-3.913
+  v[2]: pos=(0.0206,-0.7632,-0.6458) dist=1461km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73091 pos=(-0.1537,-0.8735,-0.4618) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1574km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1643km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1653km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73104 pos=(0.0374,-0.8860,-0.4621) plate=8
+  tri=1077 vertices=[516,532,522]
+  v[0]: pos=(0.0843,-0.7797,-0.6204) dist=1253km type=ocean elev=-3.913
+  v[1]: pos=(0.0819,-0.7718,-0.6306) dist=1330km type=ocean elev=-3.913
+  v[2]: pos=(0.0921,-0.7728,-0.6279) dist=1328km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73125 pos=(-0.0811,-0.8829,-0.4625) plate=8
+  tri=1274 vertices=[626,642,632]
+  v[0]: pos=(-0.0277,-0.7618,-0.6473) dist=1451km type=ocean elev=-3.913
+  v[1]: pos=(-0.0302,-0.7531,-0.6572) dist=1529km type=ocean elev=-3.913
+  v[2]: pos=(-0.0201,-0.7554,-0.6550) dist=1525km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73138 pos=(0.1104,-0.8796,-0.4628) plate=8
+  tri=916 vertices=[435,454,442]
+  v[0]: pos=(0.1556,-0.7845,-0.6002) dist=1104km type=ocean elev=-3.912
+  v[1]: pos=(0.1531,-0.7770,-0.6106) dist=1180km type=ocean elev=-3.912
+  v[2]: pos=(0.1633,-0.7773,-0.6076) dist=1180km type=ocean elev=-3.911
+
+CONT->OCEAN pt=73146 pos=(-0.1980,-0.8640,-0.4629) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1684km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1745km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1765km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73159 pos=(-0.0079,-0.8862,-0.4632) plate=8
+  tri=1149 vertices=[556,572,562]
+  v[0]: pos=(0.0435,-0.7747,-0.6308) dist=1326km type=ocean elev=-3.913
+  v[1]: pos=(0.0410,-0.7665,-0.6409) dist=1403km type=ocean elev=-3.913
+  v[2]: pos=(0.0512,-0.7680,-0.6384) dist=1401km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73180 pos=(-0.1260,-0.8770,-0.4636) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1508km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1582km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1585km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73193 pos=(0.0653,-0.8835,-0.4639) plate=8
+  tri=1038 vertices=[495,512,502]
+  v[0]: pos=(0.1047,-0.7816,-0.6149) dist=1189km type=ocean elev=-3.913
+  v[1]: pos=(0.1023,-0.7738,-0.6252) dist=1267km type=ocean elev=-3.913
+  v[2]: pos=(0.1125,-0.7746,-0.6224) dist=1263km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73214 pos=(-0.0531,-0.8841,-0.4643) plate=8
+  tri=1239 vertices=[606,622,612]
+  v[0]: pos=(-0.0074,-0.7660,-0.6428) dist=1397km type=ocean elev=-3.913
+  v[1]: pos=(-0.0099,-0.7575,-0.6528) dist=1475km type=ocean elev=-3.913
+  v[2]: pos=(0.0003,-0.7595,-0.6505) dist=1470km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73235 pos=(-0.1705,-0.8689,-0.4647) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1595km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1661km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1675km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73248 pos=(0.0201,-0.8851,-0.4650) plate=8
+  tri=1113 vertices=[536,552,542]
+  v[0]: pos=(0.0639,-0.7774,-0.6257) dist=1266km type=ocean elev=-3.913
+  v[1]: pos=(0.0615,-0.7693,-0.6359) dist=1344km type=ocean elev=-3.913
+  v[2]: pos=(0.0717,-0.7706,-0.6333) dist=1340km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73269 pos=(-0.0981,-0.8797,-0.4654) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1458km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1537km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1532km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73282 pos=(0.0930,-0.8801,-0.4656) plate=8
+  tri=960 vertices=[459,478,466]
+  v[0]: pos=(0.1353,-0.7837,-0.6063) dist=1120km type=ocean elev=-3.912
+  v[1]: pos=(0.1328,-0.7760,-0.6166) dist=1197km type=ocean elev=-3.912
+  v[2]: pos=(0.1430,-0.7765,-0.6136) dist=1196km type=ocean elev=-3.912
+
+CONT->OCEAN pt=73290 pos=(-0.2145,-0.8585,-0.4658) plate=8
+  tri=889 vertices=[422,435,442]
+  v[0]: pos=(0.1657,-0.7848,-0.5971) dist=2623km type=ocean elev=-3.912
+  v[1]: pos=(0.1556,-0.7845,-0.6002) dist=2569km type=ocean elev=-3.912
+  v[2]: pos=(0.1633,-0.7773,-0.6076) dist=2641km type=ocean elev=-3.911
+
+CONT->OCEAN pt=73303 pos=(-0.0251,-0.8844,-0.4661) plate=8
+  tri=1185 vertices=[576,592,582]
+  v[0]: pos=(0.0231,-0.7715,-0.6358) dist=1337km type=ocean elev=-3.913
+  v[1]: pos=(0.0206,-0.7632,-0.6458) dist=1414km type=ocean elev=-3.913
+  v[2]: pos=(0.0308,-0.7649,-0.6434) dist=1411km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73324 pos=(-0.1428,-0.8729,-0.4665) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1520km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1591km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1598km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73337 pos=(0.0479,-0.8831,-0.4667) plate=8
+  tri=1059 vertices=[506,522,512]
+  v[0]: pos=(0.0945,-0.7807,-0.6177) dist=1201km type=ocean elev=-3.913
+  v[1]: pos=(0.0921,-0.7728,-0.6279) dist=1278km type=ocean elev=-3.913
+  v[2]: pos=(0.1023,-0.7738,-0.6252) dist=1276km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73358 pos=(-0.0702,-0.8814,-0.4672) plate=8
+  tri=1257 vertices=[616,632,622]
+  v[0]: pos=(-0.0176,-0.7639,-0.6450) dist=1401km type=ocean elev=-3.913
+  v[1]: pos=(-0.0201,-0.7554,-0.6550) dist=1479km type=ocean elev=-3.913
+  v[2]: pos=(-0.0099,-0.7575,-0.6528) dist=1476km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73379 pos=(-0.1871,-0.8639,-0.4676) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1623km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1685km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1703km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73392 pos=(0.0028,-0.8838,-0.4679) plate=8
+  tri=1149 vertices=[556,572,562]
+  v[0]: pos=(0.0435,-0.7747,-0.6308) dist=1278km type=ocean elev=-3.913
+  v[1]: pos=(0.0410,-0.7665,-0.6409) dist=1357km type=ocean elev=-3.913
+  v[2]: pos=(0.0512,-0.7680,-0.6384) dist=1352km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73413 pos=(-0.1151,-0.8761,-0.4683) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1459km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1535km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1535km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73426 pos=(0.0757,-0.8802,-0.4685) plate=8
+  tri=1004 vertices=[483,502,490]
+  v[0]: pos=(0.1149,-0.7824,-0.6121) dist=1136km type=ocean elev=-3.913
+  v[1]: pos=(0.1125,-0.7746,-0.6224) dist=1213km type=ocean elev=-3.913
+  v[2]: pos=(0.1226,-0.7753,-0.6195) dist=1210km type=ocean elev=-3.912
+
+CONT->OCEAN pt=73447 pos=(-0.0423,-0.8822,-0.4689) plate=8
+  tri=1221 vertices=[596,612,602]
+  v[0]: pos=(0.0027,-0.7680,-0.6405) dist=1346km type=ocean elev=-3.913
+  v[1]: pos=(0.0003,-0.7595,-0.6505) dist=1425km type=ocean elev=-3.913
+  v[2]: pos=(0.0105,-0.7614,-0.6482) dist=1420km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73468 pos=(-0.1595,-0.8685,-0.4694) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1538km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1606km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1618km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73481 pos=(0.0307,-0.8823,-0.4696) plate=8
+  tri=1095 vertices=[526,542,532]
+  v[0]: pos=(0.0741,-0.7786,-0.6231) dist=1214km type=ocean elev=-3.913
+  v[1]: pos=(0.0717,-0.7706,-0.6333) dist=1291km type=ocean elev=-3.913
+  v[2]: pos=(0.0819,-0.7718,-0.6306) dist=1288km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73502 pos=(-0.0873,-0.8783,-0.4701) plate=8
+  tri=1293 vertices=[636,652,642]
+  v[0]: pos=(-0.0379,-0.7595,-0.6494) dist=1409km type=ocean elev=-3.913
+  v[1]: pos=(-0.0403,-0.7508,-0.6593) dist=1487km type=ocean elev=-3.913
+  v[2]: pos=(-0.0302,-0.7531,-0.6572) dist=1483km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73515 pos=(0.1034,-0.8764,-0.4703) plate=8
+  tri=938 vertices=[447,466,454]
+  v[0]: pos=(0.1454,-0.7842,-0.6033) dist=1066km type=ocean elev=-3.912
+  v[1]: pos=(0.1430,-0.7765,-0.6136) dist=1143km type=ocean elev=-3.912
+  v[2]: pos=(0.1531,-0.7770,-0.6106) dist=1142km type=ocean elev=-3.912
+
+CONT->OCEAN pt=73523 pos=(-0.2035,-0.8586,-0.4705) plate=8
+  tri=889 vertices=[422,435,442]
+  v[0]: pos=(0.1657,-0.7848,-0.5971) dist=2548km type=ocean elev=-3.912
+  v[1]: pos=(0.1556,-0.7845,-0.6002) dist=2494km type=ocean elev=-3.912
+  v[2]: pos=(0.1633,-0.7773,-0.6076) dist=2565km type=ocean elev=-3.911
+
+CONT->OCEAN pt=73536 pos=(-0.0144,-0.8822,-0.4707) plate=8
+  tri=1167 vertices=[566,582,572]
+  v[0]: pos=(0.0333,-0.7732,-0.6333) dist=1286km type=ocean elev=-3.913
+  v[1]: pos=(0.0308,-0.7649,-0.6434) dist=1363km type=ocean elev=-3.913
+  v[2]: pos=(0.0410,-0.7665,-0.6409) dist=1360km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73557 pos=(-0.1319,-0.8721,-0.4711) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1467km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1540km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1545km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73570 pos=(0.0584,-0.8800,-0.4714) plate=8
+  tri=1038 vertices=[495,512,502]
+  v[0]: pos=(0.1047,-0.7816,-0.6149) dist=1148km type=ocean elev=-3.913
+  v[1]: pos=(0.1023,-0.7738,-0.6252) dist=1225km type=ocean elev=-3.913
+  v[2]: pos=(0.1125,-0.7746,-0.6224) dist=1224km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73591 pos=(-0.0594,-0.8797,-0.4718) plate=8
+  tri=1257 vertices=[616,632,622]
+  v[0]: pos=(-0.0176,-0.7639,-0.6450) dist=1356km type=ocean elev=-3.913
+  v[1]: pos=(-0.0201,-0.7554,-0.6550) dist=1435km type=ocean elev=-3.913
+  v[2]: pos=(-0.0099,-0.7575,-0.6528) dist=1429km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73612 pos=(-0.1761,-0.8637,-0.4723) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1563km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1627km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1643km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73625 pos=(0.0134,-0.8812,-0.4725) plate=8
+  tri=1131 vertices=[546,562,552]
+  v[0]: pos=(0.0537,-0.7761,-0.6283) dist=1226km type=ocean elev=-3.913
+  v[1]: pos=(0.0512,-0.7680,-0.6384) dist=1304km type=ocean elev=-3.913
+  v[2]: pos=(0.0615,-0.7693,-0.6359) dist=1300km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73646 pos=(-0.1042,-0.8749,-0.4729) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1412km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1490km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1487km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73659 pos=(0.0861,-0.8767,-0.4732) plate=8
+  tri=982 vertices=[471,490,478]
+  v[0]: pos=(0.1251,-0.7831,-0.6092) dist=1082km type=ocean elev=-3.913
+  v[1]: pos=(0.1226,-0.7753,-0.6195) dist=1159km type=ocean elev=-3.912
+  v[2]: pos=(0.1328,-0.7760,-0.6166) dist=1157km type=ocean elev=-3.912
+
+CONT->OCEAN pt=73680 pos=(-0.0316,-0.8802,-0.4736) plate=8
+  tri=1203 vertices=[586,602,592]
+  v[0]: pos=(0.0129,-0.7698,-0.6382) dist=1296km type=ocean elev=-3.913
+  v[1]: pos=(0.0105,-0.7614,-0.6482) dist=1374km type=ocean elev=-3.913
+  v[2]: pos=(0.0206,-0.7632,-0.6458) dist=1370km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73701 pos=(-0.1486,-0.8679,-0.4740) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1482km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1552km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1561km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73714 pos=(0.0412,-0.8794,-0.4743) plate=8
+  tri=1077 vertices=[516,532,522]
+  v[0]: pos=(0.0843,-0.7797,-0.6204) dist=1162km type=ocean elev=-3.913
+  v[1]: pos=(0.0819,-0.7718,-0.6306) dist=1239km type=ocean elev=-3.913
+  v[2]: pos=(0.0921,-0.7728,-0.6279) dist=1236km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73735 pos=(-0.0764,-0.8768,-0.4747) plate=8
+  tri=1274 vertices=[626,642,632]
+  v[0]: pos=(-0.0277,-0.7618,-0.6473) dist=1360km type=ocean elev=-3.913
+  v[1]: pos=(-0.0302,-0.7531,-0.6572) dist=1438km type=ocean elev=-3.913
+  v[2]: pos=(-0.0201,-0.7554,-0.6550) dist=1433km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73756 pos=(-0.1926,-0.8586,-0.4751) plate=8
+  tri=889 vertices=[422,435,442]
+  v[0]: pos=(0.1657,-0.7848,-0.5971) dist=2472km type=ocean elev=-3.912
+  v[1]: pos=(0.1556,-0.7845,-0.6002) dist=2418km type=ocean elev=-3.912
+  v[2]: pos=(0.1633,-0.7773,-0.6076) dist=2490km type=ocean elev=-3.911
+
+CONT->OCEAN pt=73769 pos=(-0.0038,-0.8798,-0.4754) plate=8
+  tri=1149 vertices=[556,572,562]
+  v[0]: pos=(0.0435,-0.7747,-0.6308) dist=1235km type=ocean elev=-3.913
+  v[1]: pos=(0.0410,-0.7665,-0.6409) dist=1312km type=ocean elev=-3.913
+  v[2]: pos=(0.0512,-0.7680,-0.6384) dist=1310km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73790 pos=(-0.1210,-0.8712,-0.4758) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1416km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1491km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1493km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73803 pos=(0.0688,-0.8767,-0.4761) plate=8
+  tri=1038 vertices=[495,512,502]
+  v[0]: pos=(0.1047,-0.7816,-0.6149) dist=1097km type=ocean elev=-3.913
+  v[1]: pos=(0.1023,-0.7738,-0.6252) dist=1175km type=ocean elev=-3.913
+  v[2]: pos=(0.1125,-0.7746,-0.6224) dist=1172km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73824 pos=(-0.0487,-0.8778,-0.4765) plate=8
+  tri=1239 vertices=[606,622,612]
+  v[0]: pos=(-0.0074,-0.7660,-0.6428) dist=1306km type=ocean elev=-3.913
+  v[1]: pos=(-0.0099,-0.7575,-0.6528) dist=1384km type=ocean elev=-3.913
+  v[2]: pos=(0.0003,-0.7595,-0.6505) dist=1379km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73845 pos=(-0.1652,-0.8633,-0.4769) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1504km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1570km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1584km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73858 pos=(0.0240,-0.8785,-0.4772) plate=8
+  tri=1113 vertices=[536,552,542]
+  v[0]: pos=(0.0639,-0.7774,-0.6257) dist=1174km type=ocean elev=-3.913
+  v[1]: pos=(0.0615,-0.7693,-0.6359) dist=1252km type=ocean elev=-3.913
+  v[2]: pos=(0.0717,-0.7706,-0.6333) dist=1248km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73879 pos=(-0.0934,-0.8736,-0.4776) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1367km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1446km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1440km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73892 pos=(0.0964,-0.8731,-0.4779) plate=8
+  tri=960 vertices=[459,478,466]
+  v[0]: pos=(0.1353,-0.7837,-0.6063) dist=1028km type=ocean elev=-3.912
+  v[1]: pos=(0.1328,-0.7760,-0.6166) dist=1105km type=ocean elev=-3.912
+  v[2]: pos=(0.1430,-0.7765,-0.6136) dist=1104km type=ocean elev=-3.912
+
+CONT->OCEAN pt=73900 pos=(-0.2090,-0.8531,-0.4780) plate=8
+  tri=937 vertices=[447,459,466]
+  v[0]: pos=(0.1454,-0.7842,-0.6033) dist=2449km type=ocean elev=-3.912
+  v[1]: pos=(0.1353,-0.7837,-0.6063) dist=2396km type=ocean elev=-3.912
+  v[2]: pos=(0.1430,-0.7765,-0.6136) dist=2467km type=ocean elev=-3.912
+
+CONT->OCEAN pt=73913 pos=(-0.0209,-0.8780,-0.4783) plate=8
+  tri=1185 vertices=[576,592,582]
+  v[0]: pos=(0.0231,-0.7715,-0.6358) dist=1245km type=ocean elev=-3.913
+  v[1]: pos=(0.0206,-0.7632,-0.6458) dist=1323km type=ocean elev=-3.913
+  v[2]: pos=(0.0308,-0.7649,-0.6434) dist=1319km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73934 pos=(-0.1378,-0.8671,-0.4787) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1428km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1499km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1506km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73947 pos=(0.0516,-0.8763,-0.4789) plate=8
+  tri=1059 vertices=[506,522,512]
+  v[0]: pos=(0.0945,-0.7807,-0.6177) dist=1109km type=ocean elev=-3.913
+  v[1]: pos=(0.0921,-0.7728,-0.6279) dist=1186km type=ocean elev=-3.913
+  v[2]: pos=(0.1023,-0.7738,-0.6252) dist=1184km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73968 pos=(-0.0657,-0.8752,-0.4794) plate=8
+  tri=1257 vertices=[616,632,622]
+  v[0]: pos=(-0.0176,-0.7639,-0.6450) dist=1310km type=ocean elev=-3.913
+  v[1]: pos=(-0.0201,-0.7554,-0.6550) dist=1388km type=ocean elev=-3.913
+  v[2]: pos=(-0.0099,-0.7575,-0.6528) dist=1384km type=ocean elev=-3.913
+
+CONT->OCEAN pt=73989 pos=(-0.1817,-0.8584,-0.4798) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1533km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1594km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1613km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74002 pos=(0.0068,-0.8772,-0.4801) plate=8
+  tri=1131 vertices=[546,562,552]
+  v[0]: pos=(0.0537,-0.7761,-0.6283) dist=1183km type=ocean elev=-3.913
+  v[1]: pos=(0.0512,-0.7680,-0.6384) dist=1260km type=ocean elev=-3.913
+  v[2]: pos=(0.0615,-0.7693,-0.6359) dist=1259km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74023 pos=(-0.1102,-0.8701,-0.4805) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1367km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1443km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1443km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74036 pos=(0.0792,-0.8733,-0.4807) plate=8
+  tri=1004 vertices=[483,502,490]
+  v[0]: pos=(0.1149,-0.7824,-0.6121) dist=1044km type=ocean elev=-3.913
+  v[1]: pos=(0.1125,-0.7746,-0.6224) dist=1121km type=ocean elev=-3.913
+  v[2]: pos=(0.1226,-0.7753,-0.6195) dist=1118km type=ocean elev=-3.912
+
+CONT->OCEAN pt=74057 pos=(-0.0380,-0.8758,-0.4811) plate=8
+  tri=1221 vertices=[596,612,602]
+  v[0]: pos=(0.0027,-0.7680,-0.6405) dist=1255km type=ocean elev=-3.913
+  v[1]: pos=(0.0003,-0.7595,-0.6505) dist=1333km type=ocean elev=-3.913
+  v[2]: pos=(0.0105,-0.7614,-0.6482) dist=1328km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74078 pos=(-0.1544,-0.8627,-0.4816) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1447km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1514km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1526km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74091 pos=(0.0345,-0.8756,-0.4818) plate=8
+  tri=1095 vertices=[526,542,532]
+  v[0]: pos=(0.0741,-0.7786,-0.6231) dist=1122km type=ocean elev=-3.913
+  v[1]: pos=(0.0717,-0.7706,-0.6333) dist=1199km type=ocean elev=-3.913
+  v[2]: pos=(0.0819,-0.7718,-0.6306) dist=1196km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74112 pos=(-0.0826,-0.8721,-0.4823) plate=8
+  tri=1293 vertices=[636,652,642]
+  v[0]: pos=(-0.0379,-0.7595,-0.6494) dist=1318km type=ocean elev=-3.913
+  v[1]: pos=(-0.0403,-0.7508,-0.6593) dist=1396km type=ocean elev=-3.913
+  v[2]: pos=(-0.0302,-0.7531,-0.6572) dist=1391km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74133 pos=(-0.1981,-0.8531,-0.4827) plate=8
+  tri=937 vertices=[447,459,466]
+  v[0]: pos=(0.1454,-0.7842,-0.6033) dist=2374km type=ocean elev=-3.912
+  v[1]: pos=(0.1353,-0.7837,-0.6063) dist=2320km type=ocean elev=-3.912
+  v[2]: pos=(0.1430,-0.7765,-0.6136) dist=2392km type=ocean elev=-3.912
+
+CONT->OCEAN pt=74146 pos=(-0.0103,-0.8756,-0.4829) plate=8
+  tri=1167 vertices=[566,582,572]
+  v[0]: pos=(0.0333,-0.7732,-0.6333) dist=1194km type=ocean elev=-3.913
+  v[1]: pos=(0.0308,-0.7649,-0.6434) dist=1271km type=ocean elev=-3.913
+  v[2]: pos=(0.0410,-0.7665,-0.6409) dist=1268km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74167 pos=(-0.1269,-0.8662,-0.4833) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1375km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1448km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1453km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74180 pos=(0.0620,-0.8731,-0.4836) plate=8
+  tri=1038 vertices=[495,512,502]
+  v[0]: pos=(0.1047,-0.7816,-0.6149) dist=1056km type=ocean elev=-3.913
+  v[1]: pos=(0.1023,-0.7738,-0.6252) dist=1133km type=ocean elev=-3.913
+  v[2]: pos=(0.1125,-0.7746,-0.6224) dist=1132km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74201 pos=(-0.0549,-0.8733,-0.4840) plate=8
+  tri=1239 vertices=[606,622,612]
+  v[0]: pos=(-0.0074,-0.7660,-0.6428) dist=1260km type=ocean elev=-3.913
+  v[1]: pos=(-0.0099,-0.7575,-0.6528) dist=1337km type=ocean elev=-3.913
+  v[2]: pos=(0.0003,-0.7595,-0.6505) dist=1334km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74222 pos=(-0.1709,-0.8580,-0.4845) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1472km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1536km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1552km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74235 pos=(0.0173,-0.8745,-0.4847) plate=8
+  tri=1131 vertices=[546,562,552]
+  v[0]: pos=(0.0537,-0.7761,-0.6283) dist=1134km type=ocean elev=-3.913
+  v[1]: pos=(0.0512,-0.7680,-0.6384) dist=1213km type=ocean elev=-3.913
+  v[2]: pos=(0.0615,-0.7693,-0.6359) dist=1208km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74256 pos=(-0.0994,-0.8688,-0.4851) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1320km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1398km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1395km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74269 pos=(0.0894,-0.8697,-0.4854) plate=8
+  tri=982 vertices=[471,490,478]
+  v[0]: pos=(0.1251,-0.7831,-0.6092) dist=990km type=ocean elev=-3.913
+  v[1]: pos=(0.1226,-0.7753,-0.6195) dist=1067km type=ocean elev=-3.912
+  v[2]: pos=(0.1328,-0.7760,-0.6166) dist=1065km type=ocean elev=-3.912
+
+CONT->OCEAN pt=74290 pos=(-0.0273,-0.8736,-0.4858) plate=8
+  tri=1203 vertices=[586,602,592]
+  v[0]: pos=(0.0129,-0.7698,-0.6382) dist=1204km type=ocean elev=-3.913
+  v[1]: pos=(0.0105,-0.7614,-0.6482) dist=1282km type=ocean elev=-3.913
+  v[2]: pos=(0.0206,-0.7632,-0.6458) dist=1278km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74311 pos=(-0.1435,-0.8620,-0.4862) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1390km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1459km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1469km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74324 pos=(0.0449,-0.8725,-0.4865) plate=8
+  tri=1077 vertices=[516,532,522]
+  v[0]: pos=(0.0843,-0.7797,-0.6204) dist=1069km type=ocean elev=-3.913
+  v[1]: pos=(0.0819,-0.7718,-0.6306) dist=1146km type=ocean elev=-3.913
+  v[2]: pos=(0.0921,-0.7728,-0.6279) dist=1144km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74345 pos=(-0.0718,-0.8705,-0.4869) plate=8
+  tri=1274 vertices=[626,642,632]
+  v[0]: pos=(-0.0277,-0.7618,-0.6473) dist=1268km type=ocean elev=-3.913
+  v[1]: pos=(-0.0302,-0.7531,-0.6572) dist=1346km type=ocean elev=-3.913
+  v[2]: pos=(-0.0201,-0.7554,-0.6550) dist=1341km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74366 pos=(-0.1872,-0.8529,-0.4873) plate=8
+  tri=937 vertices=[447,459,466]
+  v[0]: pos=(0.1454,-0.7842,-0.6033) dist=2299km type=ocean elev=-3.912
+  v[1]: pos=(0.1353,-0.7837,-0.6063) dist=2245km type=ocean elev=-3.912
+  v[2]: pos=(0.1430,-0.7765,-0.6136) dist=2317km type=ocean elev=-3.912
+
+CONT->OCEAN pt=74379 pos=(0.0003,-0.8731,-0.4876) plate=8
+  tri=1149 vertices=[556,572,562]
+  v[0]: pos=(0.0435,-0.7747,-0.6308) dist=1142km type=ocean elev=-3.913
+  v[1]: pos=(0.0410,-0.7665,-0.6409) dist=1219km type=ocean elev=-3.913
+  v[2]: pos=(0.0512,-0.7680,-0.6384) dist=1217km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74400 pos=(-0.1161,-0.8651,-0.4880) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1324km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1399km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1401km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74434 pos=(-0.0443,-0.8713,-0.4887) plate=8
+  tri=1239 vertices=[606,622,612]
+  v[0]: pos=(-0.0074,-0.7660,-0.6428) dist=1214km type=ocean elev=-3.913
+  v[1]: pos=(-0.0099,-0.7575,-0.6528) dist=1293km type=ocean elev=-3.913
+  v[2]: pos=(0.0003,-0.7595,-0.6505) dist=1287km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74455 pos=(-0.1600,-0.8574,-0.4891) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1413km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1478km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1493km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74468 pos=(0.0278,-0.8716,-0.4894) plate=8
+  tri=1113 vertices=[536,552,542]
+  v[0]: pos=(0.0639,-0.7774,-0.6257) dist=1082km type=ocean elev=-3.913
+  v[1]: pos=(0.0615,-0.7693,-0.6359) dist=1160km type=ocean elev=-3.913
+  v[2]: pos=(0.0717,-0.7706,-0.6333) dist=1156km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74489 pos=(-0.0887,-0.8673,-0.4898) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1276km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1355km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1349km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74510 pos=(-0.2035,-0.8475,-0.4902) plate=8
+  tri=1335 vertices=[662,677,673]
+  v[0]: pos=(-0.0504,-0.7483,-0.6614) dist=1597km type=ocean elev=-3.913
+  v[1]: pos=(0.0296,-0.6976,-0.7158) dist=2289km type=ocean elev=-3.912
+  v[2]: pos=(-0.0101,-0.7243,-0.6894) dist=1943km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74523 pos=(-0.0167,-0.8713,-0.4905) plate=8
+  tri=1185 vertices=[576,592,582]
+  v[0]: pos=(0.0231,-0.7715,-0.6358) dist=1153km type=ocean elev=-3.913
+  v[1]: pos=(0.0206,-0.7632,-0.6458) dist=1231km type=ocean elev=-3.913
+  v[2]: pos=(0.0308,-0.7649,-0.6434) dist=1227km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74544 pos=(-0.1327,-0.8611,-0.4909) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1336km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1406km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1414km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74557 pos=(0.0552,-0.8693,-0.4911) plate=8
+  tri=1059 vertices=[506,522,512]
+  v[0]: pos=(0.0945,-0.7807,-0.6177) dist=1016km type=ocean elev=-3.913
+  v[1]: pos=(0.0921,-0.7728,-0.6279) dist=1093km type=ocean elev=-3.913
+  v[2]: pos=(0.1023,-0.7738,-0.6252) dist=1092km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74578 pos=(-0.0612,-0.8687,-0.4916) plate=8
+  tri=1257 vertices=[616,632,622]
+  v[0]: pos=(-0.0176,-0.7639,-0.6450) dist=1218km type=ocean elev=-3.913
+  v[1]: pos=(-0.0201,-0.7554,-0.6550) dist=1296km type=ocean elev=-3.913
+  v[2]: pos=(-0.0099,-0.7575,-0.6528) dist=1292km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74599 pos=(-0.1764,-0.8525,-0.4920) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1442km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1503km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1523km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74612 pos=(0.0108,-0.8704,-0.4923) plate=8
+  tri=1131 vertices=[546,562,552]
+  v[0]: pos=(0.0537,-0.7761,-0.6283) dist=1091km type=ocean elev=-3.913
+  v[1]: pos=(0.0512,-0.7680,-0.6384) dist=1168km type=ocean elev=-3.913
+  v[2]: pos=(0.0615,-0.7693,-0.6359) dist=1166km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74633 pos=(-0.1054,-0.8638,-0.4927) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1275km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1351km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1350km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74667 pos=(-0.0337,-0.8692,-0.4933) plate=8
+  tri=1221 vertices=[596,612,602]
+  v[0]: pos=(0.0027,-0.7680,-0.6405) dist=1163km type=ocean elev=-3.913
+  v[1]: pos=(0.0003,-0.7595,-0.6505) dist=1242km type=ocean elev=-3.913
+  v[2]: pos=(0.0105,-0.7614,-0.6482) dist=1236km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74688 pos=(-0.1492,-0.8567,-0.4938) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1355km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1422km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1434km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74701 pos=(0.0382,-0.8686,-0.4940) plate=8
+  tri=1095 vertices=[526,542,532]
+  v[0]: pos=(0.0741,-0.7786,-0.6231) dist=1029km type=ocean elev=-3.913
+  v[1]: pos=(0.0717,-0.7706,-0.6333) dist=1107km type=ocean elev=-3.913
+  v[2]: pos=(0.0819,-0.7718,-0.6306) dist=1104km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74722 pos=(-0.0780,-0.8657,-0.4945) plate=8
+  tri=1293 vertices=[636,652,642]
+  v[0]: pos=(-0.0379,-0.7595,-0.6494) dist=1226km type=ocean elev=-3.913
+  v[1]: pos=(-0.0403,-0.7508,-0.6593) dist=1305km type=ocean elev=-3.913
+  v[2]: pos=(-0.0302,-0.7531,-0.6572) dist=1299km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74743 pos=(-0.1926,-0.8473,-0.4949) plate=8
+  tri=981 vertices=[471,483,490]
+  v[0]: pos=(0.1251,-0.7831,-0.6092) dist=2201km type=ocean elev=-3.913
+  v[1]: pos=(0.1149,-0.7824,-0.6121) dist=2147km type=ocean elev=-3.913
+  v[2]: pos=(0.1226,-0.7753,-0.6195) dist=2219km type=ocean elev=-3.912
+
+CONT->OCEAN pt=74756 pos=(-0.0062,-0.8688,-0.4951) plate=8
+  tri=1167 vertices=[566,582,572]
+  v[0]: pos=(0.0333,-0.7732,-0.6333) dist=1101km type=ocean elev=-3.913
+  v[1]: pos=(0.0308,-0.7649,-0.6434) dist=1179km type=ocean elev=-3.913
+  v[2]: pos=(0.0410,-0.7665,-0.6409) dist=1176km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74777 pos=(-0.1220,-0.8600,-0.4955) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1282km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1355km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1360km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74811 pos=(-0.0505,-0.8667,-0.4962) plate=8
+  tri=1239 vertices=[606,622,612]
+  v[0]: pos=(-0.0074,-0.7660,-0.6428) dist=1167km type=ocean elev=-3.913
+  v[1]: pos=(-0.0099,-0.7575,-0.6528) dist=1245km type=ocean elev=-3.913
+  v[2]: pos=(0.0003,-0.7595,-0.6505) dist=1242km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74832 pos=(-0.1656,-0.8520,-0.4967) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1381km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1444km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1461km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74845 pos=(0.0212,-0.8675,-0.4969) plate=8
+  tri=1131 vertices=[546,562,552]
+  v[0]: pos=(0.0537,-0.7761,-0.6283) dist=1042km type=ocean elev=-3.913
+  v[1]: pos=(0.0512,-0.7680,-0.6384) dist=1120km type=ocean elev=-3.913
+  v[2]: pos=(0.0615,-0.7693,-0.6359) dist=1115km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74866 pos=(-0.0946,-0.8624,-0.4973) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1228km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1306km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1302km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74900 pos=(-0.0231,-0.8669,-0.4980) plate=8
+  tri=1203 vertices=[586,602,592]
+  v[0]: pos=(0.0129,-0.7698,-0.6382) dist=1111km type=ocean elev=-3.913
+  v[1]: pos=(0.0105,-0.7614,-0.6482) dist=1190km type=ocean elev=-3.913
+  v[2]: pos=(0.0206,-0.7632,-0.6458) dist=1185km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74921 pos=(-0.1385,-0.8558,-0.4984) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1298km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1367km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1377km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74934 pos=(0.0485,-0.8654,-0.4987) plate=8
+  tri=1077 vertices=[516,532,522]
+  v[0]: pos=(0.0843,-0.7797,-0.6204) dist=976km type=ocean elev=-3.913
+  v[1]: pos=(0.0819,-0.7718,-0.6306) dist=1054km type=ocean elev=-3.913
+  v[2]: pos=(0.0921,-0.7728,-0.6279) dist=1051km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74955 pos=(-0.0673,-0.8639,-0.4991) plate=8
+  tri=1274 vertices=[626,642,632]
+  v[0]: pos=(-0.0277,-0.7618,-0.6473) dist=1175km type=ocean elev=-3.913
+  v[1]: pos=(-0.0302,-0.7531,-0.6572) dist=1254km type=ocean elev=-3.913
+  v[2]: pos=(-0.0201,-0.7554,-0.6550) dist=1249km type=ocean elev=-3.913
+
+CONT->OCEAN pt=74976 pos=(-0.1818,-0.8470,-0.4995) plate=8
+  tri=981 vertices=[471,483,490]
+  v[0]: pos=(0.1251,-0.7831,-0.6092) dist=2126km type=ocean elev=-3.913
+  v[1]: pos=(0.1149,-0.7824,-0.6121) dist=2072km type=ocean elev=-3.913
+  v[2]: pos=(0.1226,-0.7753,-0.6195) dist=2144km type=ocean elev=-3.912
+
+CONT->OCEAN pt=74989 pos=(0.0043,-0.8661,-0.4998) plate=8
+  tri=1149 vertices=[556,572,562]
+  v[0]: pos=(0.0435,-0.7747,-0.6308) dist=1049km type=ocean elev=-3.913
+  v[1]: pos=(0.0410,-0.7665,-0.6409) dist=1127km type=ocean elev=-3.913
+  v[2]: pos=(0.0512,-0.7680,-0.6384) dist=1124km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75010 pos=(-0.1112,-0.8587,-0.5002) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1231km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1306km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1308km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75044 pos=(-0.0399,-0.8646,-0.5009) plate=8
+  tri=1221 vertices=[596,612,602]
+  v[0]: pos=(0.0027,-0.7680,-0.6405) dist=1117km type=ocean elev=-3.913
+  v[1]: pos=(0.0003,-0.7595,-0.6505) dist=1194km type=ocean elev=-3.913
+  v[2]: pos=(0.0105,-0.7614,-0.6482) dist=1191km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75065 pos=(-0.1548,-0.8513,-0.5013) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1321km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1386km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1401km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75078 pos=(0.0316,-0.8645,-0.5016) plate=8
+  tri=1113 vertices=[536,552,542]
+  v[0]: pos=(0.0639,-0.7774,-0.6257) dist=989km type=ocean elev=-3.913
+  v[1]: pos=(0.0615,-0.7693,-0.6359) dist=1067km type=ocean elev=-3.913
+  v[2]: pos=(0.0717,-0.7706,-0.6333) dist=1063km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75099 pos=(-0.0840,-0.8608,-0.5020) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1183km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1263km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1256km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75120 pos=(-0.1980,-0.8417,-0.5024) plate=8
+  tri=1335 vertices=[662,677,673]
+  v[0]: pos=(-0.0504,-0.7483,-0.6614) dist=1508km type=ocean elev=-3.913
+  v[1]: pos=(0.0296,-0.6976,-0.7158) dist=2200km type=ocean elev=-3.912
+  v[2]: pos=(-0.0101,-0.7243,-0.6894) dist=1854km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75133 pos=(-0.0126,-0.8644,-0.5027) plate=8
+  tri=1185 vertices=[576,592,582]
+  v[0]: pos=(0.0231,-0.7715,-0.6358) dist=1060km type=ocean elev=-3.913
+  v[1]: pos=(0.0206,-0.7632,-0.6458) dist=1138km type=ocean elev=-3.913
+  v[2]: pos=(0.0308,-0.7649,-0.6434) dist=1134km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75154 pos=(-0.1277,-0.8547,-0.5031) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1243km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1313km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1321km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75188 pos=(-0.0567,-0.8620,-0.5038) plate=8
+  tri=1257 vertices=[616,632,622]
+  v[0]: pos=(-0.0176,-0.7639,-0.6450) dist=1125km type=ocean elev=-3.913
+  v[1]: pos=(-0.0201,-0.7554,-0.6550) dist=1203km type=ocean elev=-3.913
+  v[2]: pos=(-0.0099,-0.7575,-0.6528) dist=1199km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75209 pos=(-0.1711,-0.8465,-0.5042) plate=8
+  tri=959 vertices=[459,471,478]
+  v[0]: pos=(0.1353,-0.7837,-0.6063) dist=2105km type=ocean elev=-3.912
+  v[1]: pos=(0.1251,-0.7831,-0.6092) dist=2051km type=ocean elev=-3.913
+  v[2]: pos=(0.1328,-0.7760,-0.6166) dist=2122km type=ocean elev=-3.912
+
+CONT->OCEAN pt=75222 pos=(0.0147,-0.8633,-0.5045) plate=8
+  tri=1131 vertices=[546,562,552]
+  v[0]: pos=(0.0537,-0.7761,-0.6283) dist=998km type=ocean elev=-3.913
+  v[1]: pos=(0.0512,-0.7680,-0.6384) dist=1074km type=ocean elev=-3.913
+  v[2]: pos=(0.0615,-0.7693,-0.6359) dist=1073km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75243 pos=(-0.1006,-0.8573,-0.5049) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1182km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1258km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1257km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75277 pos=(-0.0294,-0.8623,-0.5055) plate=8
+  tri=1221 vertices=[596,612,602]
+  v[0]: pos=(0.0027,-0.7680,-0.6405) dist=1070km type=ocean elev=-3.913
+  v[1]: pos=(0.0003,-0.7595,-0.6505) dist=1149km type=ocean elev=-3.913
+  v[2]: pos=(0.0105,-0.7614,-0.6482) dist=1143km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75298 pos=(-0.1441,-0.8504,-0.5060) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1262km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1329km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1342km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75311 pos=(0.0419,-0.8614,-0.5062) plate=8
+  tri=1095 vertices=[526,542,532]
+  v[0]: pos=(0.0741,-0.7786,-0.6231) dist=936km type=ocean elev=-3.913
+  v[1]: pos=(0.0717,-0.7706,-0.6333) dist=1014km type=ocean elev=-3.913
+  v[2]: pos=(0.0819,-0.7718,-0.6306) dist=1010km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75332 pos=(-0.0734,-0.8590,-0.5067) plate=8
+  tri=1293 vertices=[636,652,642]
+  v[0]: pos=(-0.0379,-0.7595,-0.6494) dist=1133km type=ocean elev=-3.913
+  v[1]: pos=(-0.0403,-0.7508,-0.6593) dist=1212km type=ocean elev=-3.913
+  v[2]: pos=(-0.0302,-0.7531,-0.6572) dist=1206km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75353 pos=(-0.1872,-0.8413,-0.5071) plate=8
+  tri=1003 vertices=[483,495,502]
+  v[0]: pos=(0.1149,-0.7824,-0.6121) dist=2081km type=ocean elev=-3.913
+  v[1]: pos=(0.1047,-0.7816,-0.6149) dist=2027km type=ocean elev=-3.913
+  v[2]: pos=(0.1125,-0.7746,-0.6224) dist=2098km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75366 pos=(-0.0022,-0.8617,-0.5073) plate=8
+  tri=1167 vertices=[566,582,572]
+  v[0]: pos=(0.0333,-0.7732,-0.6333) dist=1008km type=ocean elev=-3.913
+  v[1]: pos=(0.0308,-0.7649,-0.6434) dist=1086km type=ocean elev=-3.913
+  v[2]: pos=(0.0410,-0.7665,-0.6409) dist=1082km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75387 pos=(-0.1170,-0.8535,-0.5077) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1189km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1262km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1267km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75421 pos=(-0.0462,-0.8599,-0.5084) plate=8
+  tri=1239 vertices=[606,622,612]
+  v[0]: pos=(-0.0074,-0.7660,-0.6428) dist=1074km type=ocean elev=-3.913
+  v[1]: pos=(-0.0099,-0.7575,-0.6528) dist=1152km type=ocean elev=-3.913
+  v[2]: pos=(0.0003,-0.7595,-0.6505) dist=1148km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75442 pos=(-0.1604,-0.8458,-0.5089) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1290km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1352km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1370km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75455 pos=(0.0250,-0.8603,-0.5091) plate=8
+  tri=1131 vertices=[546,562,552]
+  v[0]: pos=(0.0537,-0.7761,-0.6283) dist=949km type=ocean elev=-3.913
+  v[1]: pos=(0.0512,-0.7680,-0.6384) dist=1027km type=ocean elev=-3.913
+  v[2]: pos=(0.0615,-0.7693,-0.6359) dist=1022km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75476 pos=(-0.0899,-0.8557,-0.5095) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1135km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1213km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1209km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75510 pos=(-0.0190,-0.8598,-0.5102) plate=8
+  tri=1203 vertices=[586,602,592]
+  v[0]: pos=(0.0129,-0.7698,-0.6382) dist=1018km type=ocean elev=-3.913
+  v[1]: pos=(0.0105,-0.7614,-0.6482) dist=1097km type=ocean elev=-3.913
+  v[2]: pos=(0.0206,-0.7632,-0.6458) dist=1092km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75531 pos=(-0.1334,-0.8494,-0.5106) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1205km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1273km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1284km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75565 pos=(-0.0628,-0.8571,-0.5113) plate=8
+  tri=1274 vertices=[626,642,632]
+  v[0]: pos=(-0.0277,-0.7618,-0.6473) dist=1082km type=ocean elev=-3.913
+  v[1]: pos=(-0.0302,-0.7531,-0.6572) dist=1161km type=ocean elev=-3.913
+  v[2]: pos=(-0.0201,-0.7554,-0.6550) dist=1156km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75586 pos=(-0.1765,-0.8408,-0.5117) plate=8
+  tri=1003 vertices=[483,495,502]
+  v[0]: pos=(0.1149,-0.7824,-0.6121) dist=2006km type=ocean elev=-3.913
+  v[1]: pos=(0.1047,-0.7816,-0.6149) dist=1953km type=ocean elev=-3.913
+  v[2]: pos=(0.1125,-0.7746,-0.6224) dist=2024km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75599 pos=(0.0082,-0.8590,-0.5120) plate=8
+  tri=1149 vertices=[556,572,562]
+  v[0]: pos=(0.0435,-0.7747,-0.6308) dist=956km type=ocean elev=-3.913
+  v[1]: pos=(0.0410,-0.7665,-0.6409) dist=1033km type=ocean elev=-3.913
+  v[2]: pos=(0.0512,-0.7680,-0.6384) dist=1031km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75620 pos=(-0.1064,-0.8521,-0.5124) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1137km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1212km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1214km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75654 pos=(-0.0357,-0.8576,-0.5131) plate=8
+  tri=1221 vertices=[596,612,602]
+  v[0]: pos=(0.0027,-0.7680,-0.6405) dist=1023km type=ocean elev=-3.913
+  v[1]: pos=(0.0003,-0.7595,-0.6505) dist=1101km type=ocean elev=-3.913
+  v[2]: pos=(0.0105,-0.7614,-0.6482) dist=1098km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75675 pos=(-0.1497,-0.8449,-0.5135) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1229km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1293km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1309km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75709 pos=(-0.0794,-0.8540,-0.5142) plate=8
+  tri=1293 vertices=[636,652,642]
+  v[0]: pos=(-0.0379,-0.7595,-0.6494) dist=1085km type=ocean elev=-3.913
+  v[1]: pos=(-0.0403,-0.7508,-0.6593) dist=1163km type=ocean elev=-3.913
+  v[2]: pos=(-0.0302,-0.7531,-0.6572) dist=1159km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75730 pos=(-0.1925,-0.8355,-0.5146) plate=8
+  tri=1335 vertices=[662,677,673]
+  v[0]: pos=(-0.0504,-0.7483,-0.6614) dist=1418km type=ocean elev=-3.913
+  v[1]: pos=(0.0296,-0.6976,-0.7158) dist=2111km type=ocean elev=-3.912
+  v[2]: pos=(-0.0101,-0.7243,-0.6894) dist=1764km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75743 pos=(-0.0086,-0.8572,-0.5149) plate=8
+  tri=1185 vertices=[576,592,582]
+  v[0]: pos=(0.0231,-0.7715,-0.6358) dist=966km type=ocean elev=-3.913
+  v[1]: pos=(0.0206,-0.7632,-0.6458) dist=1045km type=ocean elev=-3.913
+  v[2]: pos=(0.0308,-0.7649,-0.6434) dist=1040km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75764 pos=(-0.1228,-0.8482,-0.5153) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1149km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1220km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1227km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75798 pos=(-0.0523,-0.8550,-0.5160) plate=8
+  tri=1257 vertices=[616,632,622]
+  v[0]: pos=(-0.0176,-0.7639,-0.6450) dist=1031km type=ocean elev=-3.913
+  v[1]: pos=(-0.0201,-0.7554,-0.6550) dist=1110km type=ocean elev=-3.913
+  v[2]: pos=(-0.0099,-0.7575,-0.6528) dist=1105km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75819 pos=(-0.1658,-0.8402,-0.5164) plate=8
+  tri=1003 vertices=[483,495,502]
+  v[0]: pos=(0.1149,-0.7824,-0.6121) dist=1932km type=ocean elev=-3.913
+  v[1]: pos=(0.1047,-0.7816,-0.6149) dist=1878km type=ocean elev=-3.913
+  v[2]: pos=(0.1125,-0.7746,-0.6224) dist=1950km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75832 pos=(0.0185,-0.8560,-0.5167) plate=8
+  tri=1131 vertices=[546,562,552]
+  v[0]: pos=(0.0537,-0.7761,-0.6283) dist=904km type=ocean elev=-3.913
+  v[1]: pos=(0.0512,-0.7680,-0.6384) dist=981km type=ocean elev=-3.913
+  v[2]: pos=(0.0615,-0.7693,-0.6359) dist=979km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75853 pos=(-0.0958,-0.8506,-0.5171) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1088km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1165km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1163km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75887 pos=(-0.0252,-0.8552,-0.5177) plate=8
+  tri=1203 vertices=[586,602,592]
+  v[0]: pos=(0.0129,-0.7698,-0.6382) dist=972km type=ocean elev=-3.913
+  v[1]: pos=(0.0105,-0.7614,-0.6482) dist=1049km type=ocean elev=-3.913
+  v[2]: pos=(0.0206,-0.7632,-0.6458) dist=1047km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75908 pos=(-0.1390,-0.8439,-0.5182) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1169km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1235km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1249km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75942 pos=(-0.0688,-0.8521,-0.5189) plate=8
+  tri=1293 vertices=[636,652,642]
+  v[0]: pos=(-0.0379,-0.7595,-0.6494) dist=1040km type=ocean elev=-3.913
+  v[1]: pos=(-0.0403,-0.7508,-0.6593) dist=1119km type=ocean elev=-3.913
+  v[2]: pos=(-0.0302,-0.7531,-0.6572) dist=1112km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75963 pos=(-0.1818,-0.8351,-0.5193) plate=8
+  tri=1335 vertices=[662,677,673]
+  v[0]: pos=(-0.0504,-0.7483,-0.6614) dist=1353km type=ocean elev=-3.913
+  v[1]: pos=(0.0296,-0.6976,-0.7158) dist=2045km type=ocean elev=-3.912
+  v[2]: pos=(-0.0101,-0.7243,-0.6894) dist=1699km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75976 pos=(0.0018,-0.8545,-0.5195) plate=8
+  tri=1167 vertices=[566,582,572]
+  v[0]: pos=(0.0333,-0.7732,-0.6333) dist=914km type=ocean elev=-3.913
+  v[1]: pos=(0.0308,-0.7649,-0.6434) dist=992km type=ocean elev=-3.913
+  v[2]: pos=(0.0410,-0.7665,-0.6409) dist=988km type=ocean elev=-3.913
+
+CONT->OCEAN pt=75997 pos=(-0.1122,-0.8468,-0.5199) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1095km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1168km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1173km type=ocean elev=-3.913
+
+CONT->OCEAN pt=76031 pos=(-0.0418,-0.8528,-0.5206) plate=8
+  tri=1239 vertices=[606,622,612]
+  v[0]: pos=(-0.0074,-0.7660,-0.6428) dist=980km type=ocean elev=-3.913
+  v[1]: pos=(-0.0099,-0.7575,-0.6528) dist=1059km type=ocean elev=-3.913
+  v[2]: pos=(0.0003,-0.7595,-0.6505) dist=1054km type=ocean elev=-3.913
+
+CONT->OCEAN pt=76052 pos=(-0.1551,-0.8393,-0.5211) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1198km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1259km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1278km type=ocean elev=-3.913
+
+CONT->OCEAN pt=76086 pos=(-0.0853,-0.8488,-0.5217) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1041km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1120km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1115km type=ocean elev=-3.913
+
+CONT->OCEAN pt=76107 pos=(-0.1976,-0.8296,-0.5221) plate=8
+  tri=1335 vertices=[662,677,673]
+  v[0]: pos=(-0.0504,-0.7483,-0.6614) dist=1393km type=ocean elev=-3.913
+  v[1]: pos=(0.0296,-0.6976,-0.7158) dist=2089km type=ocean elev=-3.912
+  v[2]: pos=(-0.0101,-0.7243,-0.6894) dist=1741km type=ocean elev=-3.913
+
+CONT->OCEAN pt=76120 pos=(-0.0149,-0.8526,-0.5224) plate=8
+  tri=1203 vertices=[586,602,592]
+  v[0]: pos=(0.0129,-0.7698,-0.6382) dist=924km type=ocean elev=-3.913
+  v[1]: pos=(0.0105,-0.7614,-0.6482) dist=1003km type=ocean elev=-3.913
+  v[2]: pos=(0.0206,-0.7632,-0.6458) dist=997km type=ocean elev=-3.913
+
+CONT->OCEAN pt=76141 pos=(-0.1284,-0.8427,-0.5228) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1111km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1179km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1191km type=ocean elev=-3.913
+
+CONT->OCEAN pt=76175 pos=(-0.0583,-0.8500,-0.5235) plate=8
+  tri=1274 vertices=[626,642,632]
+  v[0]: pos=(-0.0277,-0.7618,-0.6473) dist=989km type=ocean elev=-3.913
+  v[1]: pos=(-0.0302,-0.7531,-0.6572) dist=1068km type=ocean elev=-3.913
+  v[2]: pos=(-0.0201,-0.7554,-0.6550) dist=1062km type=ocean elev=-3.913
+
+CONT->OCEAN pt=76196 pos=(-0.1711,-0.8344,-0.5239) plate=8
+  tri=1058 vertices=[506,516,522]
+  v[0]: pos=(0.0945,-0.7807,-0.6177) dist=1833km type=ocean elev=-3.913
+  v[1]: pos=(0.0843,-0.7797,-0.6204) dist=1780km type=ocean elev=-3.913
+  v[2]: pos=(0.0921,-0.7728,-0.6279) dist=1851km type=ocean elev=-3.913
+
+CONT->OCEAN pt=76209 pos=(0.0120,-0.8515,-0.5242) plate=8
+  tri=1149 vertices=[556,572,562]
+  v[0]: pos=(0.0435,-0.7747,-0.6308) dist=862km type=ocean elev=-3.913
+  v[1]: pos=(0.0410,-0.7665,-0.6409) dist=939km type=ocean elev=-3.913
+  v[2]: pos=(0.0512,-0.7680,-0.6384) dist=936km type=ocean elev=-3.913
+
+CONT->OCEAN pt=76230 pos=(-0.1016,-0.8453,-0.5246) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1043km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1118km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1120km type=ocean elev=-3.913
+
+CONT->OCEAN pt=76264 pos=(-0.0314,-0.8503,-0.5253) plate=8
+  tri=1221 vertices=[596,612,602]
+  v[0]: pos=(0.0027,-0.7680,-0.6405) dist=929km type=ocean elev=-3.913
+  v[1]: pos=(0.0003,-0.7595,-0.6505) dist=1007km type=ocean elev=-3.913
+  v[2]: pos=(0.0105,-0.7614,-0.6482) dist=1003km type=ocean elev=-3.913
+
+CONT->OCEAN pt=76285 pos=(-0.1445,-0.8383,-0.5257) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1136km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1199km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1216km type=ocean elev=-3.913
+
+CONT->OCEAN pt=76319 pos=(-0.0748,-0.8469,-0.5264) plate=8
+  tri=1293 vertices=[636,652,642]
+  v[0]: pos=(-0.0379,-0.7595,-0.6494) dist=991km type=ocean elev=-3.913
+  v[1]: pos=(-0.0403,-0.7508,-0.6593) dist=1069km type=ocean elev=-3.913
+  v[2]: pos=(-0.0302,-0.7531,-0.6572) dist=1065km type=ocean elev=-3.913
+
+CONT->OCEAN pt=76340 pos=(-0.1870,-0.8292,-0.5268) plate=8
+  tri=1335 vertices=[662,677,673]
+  v[0]: pos=(-0.0504,-0.7483,-0.6614) dist=1328km type=ocean elev=-3.913
+  v[1]: pos=(0.0296,-0.6976,-0.7158) dist=2022km type=ocean elev=-3.912
+  v[2]: pos=(-0.0101,-0.7243,-0.6894) dist=1675km type=ocean elev=-3.913
+
+CONT->OCEAN pt=76353 pos=(-0.0046,-0.8498,-0.5271) plate=8
+  tri=1185 vertices=[576,592,582]
+  v[0]: pos=(0.0231,-0.7715,-0.6358) dist=872km type=ocean elev=-3.913
+  v[1]: pos=(0.0206,-0.7632,-0.6458) dist=951km type=ocean elev=-3.913
+  v[2]: pos=(0.0308,-0.7649,-0.6434) dist=946km type=ocean elev=-3.913
+
+CONT->OCEAN pt=76374 pos=(-0.1178,-0.8414,-0.5275) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1055km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1125km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1133km type=ocean elev=-3.913
+
+CONT->OCEAN pt=76408 pos=(-0.0479,-0.8478,-0.5282) plate=8
+  tri=1257 vertices=[616,632,622]
+  v[0]: pos=(-0.0176,-0.7639,-0.6450) dist=937km type=ocean elev=-3.913
+  v[1]: pos=(-0.0201,-0.7554,-0.6550) dist=1016km type=ocean elev=-3.913
+  v[2]: pos=(-0.0099,-0.7575,-0.6528) dist=1011km type=ocean elev=-3.913
+
+CONT->OCEAN pt=76429 pos=(-0.1605,-0.8336,-0.5286) plate=8
+  tri=1058 vertices=[506,516,522]
+  v[0]: pos=(0.0945,-0.7807,-0.6177) dist=1759km type=ocean elev=-3.913
+  v[1]: pos=(0.0843,-0.7797,-0.6204) dist=1706km type=ocean elev=-3.913
+  v[2]: pos=(0.0921,-0.7728,-0.6279) dist=1777km type=ocean elev=-3.913
+
+CONT->OCEAN pt=76442 pos=(0.0222,-0.8484,-0.5289) plate=8
+  tri=1131 vertices=[546,562,552]
+  v[0]: pos=(0.0537,-0.7761,-0.6283) dist=809km type=ocean elev=-3.913
+  v[1]: pos=(0.0512,-0.7680,-0.6384) dist=886km type=ocean elev=-3.913
+  v[2]: pos=(0.0615,-0.7693,-0.6359) dist=885km type=ocean elev=-3.913
+
+CONT->OCEAN pt=76463 pos=(-0.0911,-0.8436,-0.5293) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=994km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1071km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1069km type=ocean elev=-3.913
+
+CONT->OCEAN pt=76497 pos=(-0.0211,-0.8478,-0.5299) plate=8
+  tri=1203 vertices=[586,602,592]
+  v[0]: pos=(0.0129,-0.7698,-0.6382) dist=877km type=ocean elev=-3.913
+  v[1]: pos=(0.0105,-0.7614,-0.6482) dist=955km type=ocean elev=-3.913
+  v[2]: pos=(0.0206,-0.7632,-0.6458) dist=952km type=ocean elev=-3.913
+
+CONT->OCEAN pt=76518 pos=(-0.1339,-0.8371,-0.5304) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1076km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1141km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1156km type=ocean elev=-3.913
+
+CONT->OCEAN pt=76552 pos=(-0.0643,-0.8449,-0.5311) plate=8
+  tri=1274 vertices=[626,642,632]
+  v[0]: pos=(-0.0277,-0.7618,-0.6473) dist=940km type=ocean elev=-3.913
+  v[1]: pos=(-0.0302,-0.7531,-0.6572) dist=1018km type=ocean elev=-3.913
+  v[2]: pos=(-0.0201,-0.7554,-0.6550) dist=1015km type=ocean elev=-3.913
+
+CONT->OCEAN pt=76573 pos=(-0.1764,-0.8285,-0.5315) plate=8
+  tri=1335 vertices=[662,677,673]
+  v[0]: pos=(-0.0504,-0.7483,-0.6614) dist=1263km type=ocean elev=-3.913
+  v[1]: pos=(0.0296,-0.6976,-0.7158) dist=1956km type=ocean elev=-3.912
+  v[2]: pos=(-0.0101,-0.7243,-0.6894) dist=1609km type=ocean elev=-3.913
+
+CONT->OCEAN pt=76586 pos=(0.0057,-0.8469,-0.5317) plate=8
+  tri=1167 vertices=[566,582,572]
+  v[0]: pos=(0.0333,-0.7732,-0.6333) dist=819km type=ocean elev=-3.913
+  v[1]: pos=(0.0308,-0.7649,-0.6434) dist=898km type=ocean elev=-3.913
+  v[2]: pos=(0.0410,-0.7665,-0.6409) dist=894km type=ocean elev=-3.913
+
+CONT->OCEAN pt=76607 pos=(-0.1073,-0.8398,-0.5321) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1000km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1073km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1078km type=ocean elev=-3.913
+
+CONT->OCEAN pt=76641 pos=(-0.0376,-0.8454,-0.5328) plate=8
+  tri=1239 vertices=[606,622,612]
+  v[0]: pos=(-0.0074,-0.7660,-0.6428) dist=886km type=ocean elev=-3.913
+  v[1]: pos=(-0.0099,-0.7575,-0.6528) dist=964km type=ocean elev=-3.913
+  v[2]: pos=(0.0003,-0.7595,-0.6505) dist=960km type=ocean elev=-3.913
+
+CONT->OCEAN pt=76662 pos=(-0.1499,-0.8326,-0.5333) plate=8
+  tri=1058 vertices=[506,516,522]
+  v[0]: pos=(0.0945,-0.7807,-0.6177) dist=1685km type=ocean elev=-3.913
+  v[1]: pos=(0.0843,-0.7797,-0.6204) dist=1632km type=ocean elev=-3.913
+  v[2]: pos=(0.0921,-0.7728,-0.6279) dist=1704km type=ocean elev=-3.913
+
+CONT->OCEAN pt=76696 pos=(-0.0806,-0.8417,-0.5339) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=947km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1026km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1020km type=ocean elev=-3.913
+
+CONT->OCEAN pt=76717 pos=(-0.1921,-0.8232,-0.5344) plate=8
+  tri=1335 vertices=[662,677,673]
+  v[0]: pos=(-0.0504,-0.7483,-0.6614) dist=1305km type=ocean elev=-3.913
+  v[1]: pos=(0.0296,-0.6976,-0.7158) dist=2001km type=ocean elev=-3.912
+  v[2]: pos=(-0.0101,-0.7243,-0.6894) dist=1653km type=ocean elev=-3.913
+
+CONT->OCEAN pt=76730 pos=(-0.0108,-0.8450,-0.5346) plate=8
+  tri=1203 vertices=[586,602,592]
+  v[0]: pos=(0.0129,-0.7698,-0.6382) dist=830km type=ocean elev=-3.913
+  v[1]: pos=(0.0105,-0.7614,-0.6482) dist=909km type=ocean elev=-3.913
+  v[2]: pos=(0.0206,-0.7632,-0.6458) dist=903km type=ocean elev=-3.913
+
+CONT->OCEAN pt=76751 pos=(-0.1234,-0.8358,-0.5350) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1017km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1085km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1097km type=ocean elev=-3.913
+
+CONT->OCEAN pt=76785 pos=(-0.0539,-0.8427,-0.5357) plate=8
+  tri=1274 vertices=[626,642,632]
+  v[0]: pos=(-0.0277,-0.7618,-0.6473) dist=894km type=ocean elev=-3.913
+  v[1]: pos=(-0.0302,-0.7531,-0.6572) dist=974km type=ocean elev=-3.913
+  v[2]: pos=(-0.0201,-0.7554,-0.6550) dist=967km type=ocean elev=-3.913
+
+CONT->OCEAN pt=76806 pos=(-0.1658,-0.8277,-0.5361) plate=8
+  tri=1335 vertices=[662,677,673]
+  v[0]: pos=(-0.0504,-0.7483,-0.6614) dist=1198km type=ocean elev=-3.913
+  v[1]: pos=(0.0296,-0.6976,-0.7158) dist=1890km type=ocean elev=-3.912
+  v[2]: pos=(-0.0101,-0.7243,-0.6894) dist=1544km type=ocean elev=-3.913
+
+CONT->OCEAN pt=76840 pos=(-0.0968,-0.8381,-0.5368) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=948km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1023km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1025km type=ocean elev=-3.913
+
+CONT->OCEAN pt=76874 pos=(-0.0273,-0.8428,-0.5375) plate=8
+  tri=1221 vertices=[596,612,602]
+  v[0]: pos=(0.0027,-0.7680,-0.6405) dist=834km type=ocean elev=-3.913
+  v[1]: pos=(0.0003,-0.7595,-0.6505) dist=912km type=ocean elev=-3.913
+  v[2]: pos=(0.0105,-0.7614,-0.6482) dist=908km type=ocean elev=-3.913
+
+CONT->OCEAN pt=76895 pos=(-0.1394,-0.8314,-0.5379) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=1044km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1106km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1124km type=ocean elev=-3.913
+
+CONT->OCEAN pt=76929 pos=(-0.0702,-0.8396,-0.5386) plate=8
+  tri=1293 vertices=[636,652,642]
+  v[0]: pos=(-0.0379,-0.7595,-0.6494) dist=896km type=ocean elev=-3.913
+  v[1]: pos=(-0.0403,-0.7508,-0.6593) dist=975km type=ocean elev=-3.913
+  v[2]: pos=(-0.0302,-0.7531,-0.6572) dist=970km type=ocean elev=-3.913
+
+CONT->OCEAN pt=76950 pos=(-0.1815,-0.8225,-0.5390) plate=8
+  tri=1335 vertices=[662,677,673]
+  v[0]: pos=(-0.0504,-0.7483,-0.6614) dist=1238km type=ocean elev=-3.913
+  v[1]: pos=(0.0296,-0.6976,-0.7158) dist=1933km type=ocean elev=-3.912
+  v[2]: pos=(-0.0101,-0.7243,-0.6894) dist=1586km type=ocean elev=-3.913
+
+CONT->OCEAN pt=76963 pos=(-0.0007,-0.8421,-0.5393) plate=8
+  tri=1185 vertices=[576,592,582]
+  v[0]: pos=(0.0231,-0.7715,-0.6358) dist=777km type=ocean elev=-3.913
+  v[1]: pos=(0.0206,-0.7632,-0.6458) dist=856km type=ocean elev=-3.913
+  v[2]: pos=(0.0308,-0.7649,-0.6434) dist=850km type=ocean elev=-3.913
+
+CONT->OCEAN pt=76984 pos=(-0.1129,-0.8343,-0.5397) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=960km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1030km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1039km type=ocean elev=-3.913
+
+CONT->OCEAN pt=77018 pos=(-0.0436,-0.8403,-0.5404) plate=8
+  tri=1257 vertices=[616,632,622]
+  v[0]: pos=(-0.0176,-0.7639,-0.6450) dist=842km type=ocean elev=-3.913
+  v[1]: pos=(-0.0201,-0.7554,-0.6550) dist=922km type=ocean elev=-3.913
+  v[2]: pos=(-0.0099,-0.7575,-0.6528) dist=916km type=ocean elev=-3.913
+
+CONT->OCEAN pt=77039 pos=(-0.1552,-0.8267,-0.5408) plate=8
+  tri=1076 vertices=[516,526,532]
+  v[0]: pos=(0.0843,-0.7797,-0.6204) dist=1640km type=ocean elev=-3.913
+  v[1]: pos=(0.0741,-0.7786,-0.6231) dist=1586km type=ocean elev=-3.913
+  v[2]: pos=(0.0819,-0.7718,-0.6306) dist=1657km type=ocean elev=-3.913
+
+CONT->OCEAN pt=77073 pos=(-0.0864,-0.8363,-0.5415) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=898km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=976km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=974km type=ocean elev=-3.913
+
+CONT->OCEAN pt=77094 pos=(-0.1971,-0.8170,-0.5419) plate=8
+  tri=1335 vertices=[662,677,673]
+  v[0]: pos=(-0.0504,-0.7483,-0.6614) dist=1284km type=ocean elev=-3.913
+  v[1]: pos=(0.0296,-0.6976,-0.7158) dist=1981km type=ocean elev=-3.912
+  v[2]: pos=(-0.0101,-0.7243,-0.6894) dist=1633km type=ocean elev=-3.913
+
+CONT->OCEAN pt=77107 pos=(-0.0170,-0.8401,-0.5421) plate=8
+  tri=1203 vertices=[586,602,592]
+  v[0]: pos=(0.0129,-0.7698,-0.6382) dist=782km type=ocean elev=-3.913
+  v[1]: pos=(0.0105,-0.7614,-0.6482) dist=860km type=ocean elev=-3.913
+  v[2]: pos=(0.0206,-0.7632,-0.6458) dist=857km type=ocean elev=-3.913
+
+CONT->OCEAN pt=77128 pos=(-0.1289,-0.8301,-0.5426) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=982km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1047km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1062km type=ocean elev=-3.913
+
+CONT->OCEAN pt=77162 pos=(-0.0599,-0.8374,-0.5433) plate=8
+  tri=1274 vertices=[626,642,632]
+  v[0]: pos=(-0.0277,-0.7618,-0.6473) dist=845km type=ocean elev=-3.913
+  v[1]: pos=(-0.0302,-0.7531,-0.6572) dist=923km type=ocean elev=-3.913
+  v[2]: pos=(-0.0201,-0.7554,-0.6550) dist=920km type=ocean elev=-3.913
+
+CONT->OCEAN pt=77183 pos=(-0.1710,-0.8217,-0.5437) plate=8
+  tri=1335 vertices=[662,677,673]
+  v[0]: pos=(-0.0504,-0.7483,-0.6614) dist=1172km type=ocean elev=-3.913
+  v[1]: pos=(0.0296,-0.6976,-0.7158) dist=1867km type=ocean elev=-3.912
+  v[2]: pos=(-0.0101,-0.7243,-0.6894) dist=1520km type=ocean elev=-3.913
+
+CONT->OCEAN pt=77217 pos=(-0.1025,-0.8326,-0.5443) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=905km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=978km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=983km type=ocean elev=-3.913
+
+CONT->OCEAN pt=77251 pos=(-0.0334,-0.8378,-0.5450) plate=8
+  tri=1239 vertices=[606,622,612]
+  v[0]: pos=(-0.0074,-0.7660,-0.6428) dist=790km type=ocean elev=-3.913
+  v[1]: pos=(-0.0099,-0.7575,-0.6528) dist=869km type=ocean elev=-3.913
+  v[2]: pos=(0.0003,-0.7595,-0.6505) dist=864km type=ocean elev=-3.913
+
+CONT->OCEAN pt=77272 pos=(-0.1447,-0.8256,-0.5454) plate=8
+  tri=1076 vertices=[516,526,532]
+  v[0]: pos=(0.0843,-0.7797,-0.6204) dist=1567km type=ocean elev=-3.913
+  v[1]: pos=(0.0741,-0.7786,-0.6231) dist=1513km type=ocean elev=-3.913
+  v[2]: pos=(0.0819,-0.7718,-0.6306) dist=1584km type=ocean elev=-3.913
+
+CONT->OCEAN pt=77306 pos=(-0.0760,-0.8342,-0.5461) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=852km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=931km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=925km type=ocean elev=-3.913
+
+CONT->OCEAN pt=77327 pos=(-0.1865,-0.8164,-0.5466) plate=8
+  tri=1335 vertices=[662,677,673]
+  v[0]: pos=(-0.0504,-0.7483,-0.6614) dist=1216km type=ocean elev=-3.913
+  v[1]: pos=(0.0296,-0.6976,-0.7158) dist=1913km type=ocean elev=-3.912
+  v[2]: pos=(-0.0101,-0.7243,-0.6894) dist=1565km type=ocean elev=-3.913
+
+CONT->OCEAN pt=77361 pos=(-0.1184,-0.8286,-0.5472) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=923km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=990km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1002km type=ocean elev=-3.913
+
+CONT->OCEAN pt=77395 pos=(-0.0496,-0.8351,-0.5479) plate=8
+  tri=1257 vertices=[616,632,622]
+  v[0]: pos=(-0.0176,-0.7639,-0.6450) dist=794km type=ocean elev=-3.913
+  v[1]: pos=(-0.0201,-0.7554,-0.6550) dist=871km type=ocean elev=-3.913
+  v[2]: pos=(-0.0099,-0.7575,-0.6528) dist=869km type=ocean elev=-3.913
+
+CONT->OCEAN pt=77416 pos=(-0.1605,-0.8207,-0.5483) plate=8
+  tri=1335 vertices=[662,677,673]
+  v[0]: pos=(-0.0504,-0.7483,-0.6614) dist=1107km type=ocean elev=-3.913
+  v[1]: pos=(0.0296,-0.6976,-0.7158) dist=1800km type=ocean elev=-3.912
+  v[2]: pos=(-0.0101,-0.7243,-0.6894) dist=1453km type=ocean elev=-3.913
+
+CONT->OCEAN pt=77450 pos=(-0.0921,-0.8307,-0.5490) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=852km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=927km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=929km type=ocean elev=-3.913
+
+CONT->OCEAN pt=77484 pos=(-0.0232,-0.8350,-0.5497) plate=8
+  tri=1221 vertices=[596,612,602]
+  v[0]: pos=(0.0027,-0.7680,-0.6405) dist=738km type=ocean elev=-3.913
+  v[1]: pos=(0.0003,-0.7595,-0.6505) dist=817km type=ocean elev=-3.913
+  v[2]: pos=(0.0105,-0.7614,-0.6482) dist=813km type=ocean elev=-3.913
+
+CONT->OCEAN pt=77505 pos=(-0.1343,-0.8242,-0.5501) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=951km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=1012km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=1031km type=ocean elev=-3.913
+
+CONT->OCEAN pt=77539 pos=(-0.0657,-0.8321,-0.5508) plate=8
+  tri=1293 vertices=[636,652,642]
+  v[0]: pos=(-0.0379,-0.7595,-0.6494) dist=800km type=ocean elev=-3.913
+  v[1]: pos=(-0.0403,-0.7508,-0.6593) dist=879km type=ocean elev=-3.913
+  v[2]: pos=(-0.0302,-0.7531,-0.6572) dist=874km type=ocean elev=-3.913
+
+CONT->OCEAN pt=77560 pos=(-0.1760,-0.8156,-0.5512) plate=8
+  tri=1335 vertices=[662,677,673]
+  v[0]: pos=(-0.0504,-0.7483,-0.6614) dist=1149km type=ocean elev=-3.913
+  v[1]: pos=(0.0296,-0.6976,-0.7158) dist=1845km type=ocean elev=-3.912
+  v[2]: pos=(-0.0101,-0.7243,-0.6894) dist=1497km type=ocean elev=-3.913
+
+CONT->OCEAN pt=77594 pos=(-0.1080,-0.8269,-0.5519) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=865km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=934km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=944km type=ocean elev=-3.913
+
+CONT->OCEAN pt=77628 pos=(-0.0394,-0.8325,-0.5526) plate=8
+  tri=1257 vertices=[616,632,622]
+  v[0]: pos=(-0.0176,-0.7639,-0.6450) dist=747km type=ocean elev=-3.913
+  v[1]: pos=(-0.0201,-0.7554,-0.6550) dist=827km type=ocean elev=-3.913
+  v[2]: pos=(-0.0099,-0.7575,-0.6528) dist=820km type=ocean elev=-3.913
+
+CONT->OCEAN pt=77649 pos=(-0.1500,-0.8196,-0.5530) plate=8
+  tri=1112 vertices=[536,546,552]
+  v[0]: pos=(0.0639,-0.7774,-0.6257) dist=1467km type=ocean elev=-3.913
+  v[1]: pos=(0.0537,-0.7761,-0.6283) dist=1414km type=ocean elev=-3.913
+  v[2]: pos=(0.0615,-0.7693,-0.6359) dist=1485km type=ocean elev=-3.913
+
+CONT->OCEAN pt=77683 pos=(-0.0818,-0.8287,-0.5537) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=802km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=880km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=877km type=ocean elev=-3.913
+
+CONT->OCEAN pt=77738 pos=(-0.1239,-0.8227,-0.5548) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=889km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=952km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=969km type=ocean elev=-3.913
+
+CONT->OCEAN pt=77772 pos=(-0.0555,-0.8297,-0.5554) plate=8
+  tri=1274 vertices=[626,642,632]
+  v[0]: pos=(-0.0277,-0.7618,-0.6473) dist=749km type=ocean elev=-3.913
+  v[1]: pos=(-0.0302,-0.7531,-0.6572) dist=827km type=ocean elev=-3.913
+  v[2]: pos=(-0.0201,-0.7554,-0.6550) dist=823km type=ocean elev=-3.913
+
+CONT->OCEAN pt=77793 pos=(-0.1656,-0.8146,-0.5559) plate=8
+  tri=1335 vertices=[662,677,673]
+  v[0]: pos=(-0.0504,-0.7483,-0.6614) dist=1082km type=ocean elev=-3.913
+  v[1]: pos=(0.0296,-0.6976,-0.7158) dist=1778km type=ocean elev=-3.912
+  v[2]: pos=(-0.0101,-0.7243,-0.6894) dist=1430km type=ocean elev=-3.913
+
+CONT->OCEAN pt=77827 pos=(-0.0977,-0.8251,-0.5566) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=809km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=881km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=887km type=ocean elev=-3.913
+
+CONT->OCEAN pt=77861 pos=(-0.0292,-0.8298,-0.5572) plate=8
+  tri=1239 vertices=[606,622,612]
+  v[0]: pos=(-0.0074,-0.7660,-0.6428) dist=694km type=ocean elev=-3.913
+  v[1]: pos=(-0.0099,-0.7575,-0.6528) dist=774km type=ocean elev=-3.913
+  v[2]: pos=(0.0003,-0.7595,-0.6505) dist=768km type=ocean elev=-3.913
+
+CONT->OCEAN pt=77882 pos=(-0.1396,-0.8183,-0.5576) plate=8
+  tri=1112 vertices=[536,546,552]
+  v[0]: pos=(0.0639,-0.7774,-0.6257) dist=1394km type=ocean elev=-3.913
+  v[1]: pos=(0.0537,-0.7761,-0.6283) dist=1341km type=ocean elev=-3.913
+  v[2]: pos=(0.0615,-0.7693,-0.6359) dist=1412km type=ocean elev=-3.913
+
+CONT->OCEAN pt=77916 pos=(-0.0715,-0.8265,-0.5583) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=756km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=836km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=829km type=ocean elev=-3.913
+
+CONT->OCEAN pt=77971 pos=(-0.1135,-0.8211,-0.5594) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=828km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=894km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=908km type=ocean elev=-3.913
+
+CONT->OCEAN pt=78005 pos=(-0.0453,-0.8272,-0.5601) plate=8
+  tri=1257 vertices=[616,632,622]
+  v[0]: pos=(-0.0176,-0.7639,-0.6450) dist=698km type=ocean elev=-3.913
+  v[1]: pos=(-0.0201,-0.7554,-0.6550) dist=775km type=ocean elev=-3.913
+  v[2]: pos=(-0.0099,-0.7575,-0.6528) dist=773km type=ocean elev=-3.913
+
+CONT->OCEAN pt=78026 pos=(-0.1551,-0.8135,-0.5605) plate=8
+  tri=1335 vertices=[662,677,673]
+  v[0]: pos=(-0.0504,-0.7483,-0.6614) dist=1016km type=ocean elev=-3.913
+  v[1]: pos=(0.0296,-0.6976,-0.7158) dist=1710km type=ocean elev=-3.912
+  v[2]: pos=(-0.0101,-0.7243,-0.6894) dist=1363km type=ocean elev=-3.913
+
+CONT->OCEAN pt=78060 pos=(-0.0874,-0.8230,-0.5612) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=756km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=831km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=833km type=ocean elev=-3.913
+
+CONT->OCEAN pt=78094 pos=(-0.0191,-0.8270,-0.5619) plate=8
+  tri=1221 vertices=[596,612,602]
+  v[0]: pos=(0.0027,-0.7680,-0.6405) dist=642km type=ocean elev=-3.913
+  v[1]: pos=(0.0003,-0.7595,-0.6505) dist=720km type=ocean elev=-3.913
+  v[2]: pos=(0.0105,-0.7614,-0.6482) dist=716km type=ocean elev=-3.913
+
+CONT->OCEAN pt=78115 pos=(-0.1292,-0.8168,-0.5623) plate=8
+  tri=1112 vertices=[536,546,552]
+  v[0]: pos=(0.0639,-0.7774,-0.6257) dist=1321km type=ocean elev=-3.913
+  v[1]: pos=(0.0537,-0.7761,-0.6283) dist=1268km type=ocean elev=-3.913
+  v[2]: pos=(0.0615,-0.7693,-0.6359) dist=1339km type=ocean elev=-3.913
+
+CONT->OCEAN pt=78149 pos=(-0.0613,-0.8242,-0.5630) plate=8
+  tri=1293 vertices=[636,652,642]
+  v[0]: pos=(-0.0379,-0.7595,-0.6494) dist=704km type=ocean elev=-3.913
+  v[1]: pos=(-0.0403,-0.7508,-0.6593) dist=783km type=ocean elev=-3.913
+  v[2]: pos=(-0.0302,-0.7531,-0.6572) dist=778km type=ocean elev=-3.913
+
+CONT->OCEAN pt=78204 pos=(-0.1032,-0.8192,-0.5641) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=769km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=838km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=848km type=ocean elev=-3.913
+
+CONT->OCEAN pt=78238 pos=(-0.0352,-0.8245,-0.5648) plate=8
+  tri=1257 vertices=[616,632,622]
+  v[0]: pos=(-0.0176,-0.7639,-0.6450) dist=651km type=ocean elev=-3.913
+  v[1]: pos=(-0.0201,-0.7554,-0.6550) dist=731km type=ocean elev=-3.913
+  v[2]: pos=(-0.0099,-0.7575,-0.6528) dist=723km type=ocean elev=-3.913
+
+CONT->OCEAN pt=78259 pos=(-0.1448,-0.8122,-0.5652) plate=8
+  tri=1335 vertices=[662,677,673]
+  v[0]: pos=(-0.0504,-0.7483,-0.6614) dist=951km type=ocean elev=-3.913
+  v[1]: pos=(0.0296,-0.6976,-0.7158) dist=1644km type=ocean elev=-3.912
+  v[2]: pos=(-0.0101,-0.7243,-0.6894) dist=1297km type=ocean elev=-3.913
+
+CONT->OCEAN pt=78293 pos=(-0.0772,-0.8209,-0.5659) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=706km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=783km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=781km type=ocean elev=-3.913
+
+CONT->OCEAN pt=78348 pos=(-0.1189,-0.8151,-0.5670) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=795km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=857km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=875km type=ocean elev=-3.913
+
+CONT->OCEAN pt=78382 pos=(-0.0511,-0.8217,-0.5676) plate=8
+  tri=1274 vertices=[626,642,632]
+  v[0]: pos=(-0.0277,-0.7618,-0.6473) dist=652km type=ocean elev=-3.913
+  v[1]: pos=(-0.0302,-0.7531,-0.6572) dist=731km type=ocean elev=-3.913
+  v[2]: pos=(-0.0201,-0.7554,-0.6550) dist=726km type=ocean elev=-3.913
+
+CONT->OCEAN pt=78437 pos=(-0.0930,-0.8172,-0.5688) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=712km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=784km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=791km type=ocean elev=-3.913
+
+CONT->OCEAN pt=78471 pos=(-0.0251,-0.8217,-0.5694) plate=8
+  tri=1239 vertices=[606,622,612]
+  v[0]: pos=(-0.0074,-0.7660,-0.6428) dist=598km type=ocean elev=-3.913
+  v[1]: pos=(-0.0099,-0.7575,-0.6528) dist=677km type=ocean elev=-3.913
+  v[2]: pos=(0.0003,-0.7595,-0.6505) dist=671km type=ocean elev=-3.913
+
+CONT->OCEAN pt=78492 pos=(-0.1344,-0.8107,-0.5698) plate=8
+  tri=1148 vertices=[556,566,572]
+  v[0]: pos=(0.0435,-0.7747,-0.6308) dist=1222km type=ocean elev=-3.913
+  v[1]: pos=(0.0333,-0.7732,-0.6333) dist=1169km type=ocean elev=-3.913
+  v[2]: pos=(0.0410,-0.7665,-0.6409) dist=1240km type=ocean elev=-3.913
+
+CONT->OCEAN pt=78526 pos=(-0.0670,-0.8185,-0.5705) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=659km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=739km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=732km type=ocean elev=-3.913
+
+CONT->OCEAN pt=78581 pos=(-0.1086,-0.8133,-0.5716) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=733km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=798km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=813km type=ocean elev=-3.913
+
+CONT->OCEAN pt=78615 pos=(-0.0411,-0.8190,-0.5723) plate=8
+  tri=1257 vertices=[616,632,622]
+  v[0]: pos=(-0.0176,-0.7639,-0.6450) dist=600km type=ocean elev=-3.913
+  v[1]: pos=(-0.0201,-0.7554,-0.6550) dist=678km type=ocean elev=-3.913
+  v[2]: pos=(-0.0099,-0.7575,-0.6528) dist=675km type=ocean elev=-3.913
+
+CONT->OCEAN pt=78670 pos=(-0.0828,-0.8151,-0.5734) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=658km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=733km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=735km type=ocean elev=-3.913
+
+CONT->OCEAN pt=78725 pos=(-0.1242,-0.8090,-0.5745) plate=8
+  tri=1148 vertices=[556,566,572]
+  v[0]: pos=(0.0435,-0.7747,-0.6308) dist=1149km type=ocean elev=-3.913
+  v[1]: pos=(0.0333,-0.7732,-0.6333) dist=1096km type=ocean elev=-3.913
+  v[2]: pos=(0.0410,-0.7665,-0.6409) dist=1168km type=ocean elev=-3.913
+
+CONT->OCEAN pt=78759 pos=(-0.0569,-0.8160,-0.5752) plate=8
+  tri=1293 vertices=[636,652,642]
+  v[0]: pos=(-0.0379,-0.7595,-0.6494) dist=607km type=ocean elev=-3.913
+  v[1]: pos=(-0.0403,-0.7508,-0.6593) dist=687km type=ocean elev=-3.913
+  v[2]: pos=(-0.0302,-0.7531,-0.6572) dist=680km type=ocean elev=-3.913
+
+CONT->OCEAN pt=78814 pos=(-0.0984,-0.8113,-0.5763) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=673km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=741km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=752km type=ocean elev=-3.913
+
+CONT->OCEAN pt=78848 pos=(-0.0311,-0.8162,-0.5770) plate=8
+  tri=1239 vertices=[606,622,612]
+  v[0]: pos=(-0.0074,-0.7660,-0.6428) dist=548km type=ocean elev=-3.913
+  v[1]: pos=(-0.0099,-0.7575,-0.6528) dist=625km type=ocean elev=-3.913
+  v[2]: pos=(0.0003,-0.7595,-0.6505) dist=624km type=ocean elev=-3.913
+
+CONT->OCEAN pt=78903 pos=(-0.0726,-0.8127,-0.5781) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=608km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=686km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=683km type=ocean elev=-3.913
+
+CONT->OCEAN pt=78958 pos=(-0.1139,-0.8072,-0.5792) plate=8
+  tri=1148 vertices=[556,566,572]
+  v[0]: pos=(0.0435,-0.7747,-0.6308) dist=1077km type=ocean elev=-3.913
+  v[1]: pos=(0.0333,-0.7732,-0.6333) dist=1024km type=ocean elev=-3.913
+  v[2]: pos=(0.0410,-0.7665,-0.6409) dist=1095km type=ocean elev=-3.913
+
+CONT->OCEAN pt=78992 pos=(-0.0469,-0.8134,-0.5798) plate=8
+  tri=1274 vertices=[626,642,632]
+  v[0]: pos=(-0.0277,-0.7618,-0.6473) dist=554km type=ocean elev=-3.913
+  v[1]: pos=(-0.0302,-0.7531,-0.6572) dist=634km type=ocean elev=-3.913
+  v[2]: pos=(-0.0201,-0.7554,-0.6550) dist=629km type=ocean elev=-3.913
+
+CONT->OCEAN pt=79047 pos=(-0.0883,-0.8091,-0.5810) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=615km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=686km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=693km type=ocean elev=-3.913
+
+CONT->OCEAN pt=79136 pos=(-0.0626,-0.8103,-0.5827) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=562km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=643km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=634km type=ocean elev=-3.913
+
+CONT->OCEAN pt=79191 pos=(-0.1038,-0.8052,-0.5838) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=638km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=701km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=718km type=ocean elev=-3.913
+
+CONT->OCEAN pt=79225 pos=(-0.0369,-0.8105,-0.5845) plate=8
+  tri=1257 vertices=[616,632,622]
+  v[0]: pos=(-0.0176,-0.7639,-0.6450) dist=502km type=ocean elev=-3.913
+  v[1]: pos=(-0.0201,-0.7554,-0.6550) dist=580km type=ocean elev=-3.913
+  v[2]: pos=(-0.0099,-0.7575,-0.6528) dist=577km type=ocean elev=-3.913
+
+CONT->OCEAN pt=79280 pos=(-0.0782,-0.8068,-0.5856) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=560km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=635km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=637km type=ocean elev=-3.913
+
+CONT->OCEAN pt=79369 pos=(-0.0526,-0.8076,-0.5874) plate=8
+  tri=1293 vertices=[636,652,642]
+  v[0]: pos=(-0.0379,-0.7595,-0.6494) dist=509km type=ocean elev=-3.913
+  v[1]: pos=(-0.0403,-0.7508,-0.6593) dist=589km type=ocean elev=-3.913
+  v[2]: pos=(-0.0302,-0.7531,-0.6572) dist=582km type=ocean elev=-3.913
+
+CONT->OCEAN pt=79424 pos=(-0.0937,-0.8031,-0.5885) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=576km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=643km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=656km type=ocean elev=-3.913
+
+CONT->OCEAN pt=79513 pos=(-0.0681,-0.8043,-0.5903) plate=8
+  tri=1311 vertices=[646,662,652]
+  v[0]: pos=(-0.0480,-0.7571,-0.6515) dist=509km type=ocean elev=-3.913
+  v[1]: pos=(-0.0504,-0.7483,-0.6614) dist=588km type=ocean elev=-3.913
+  v[2]: pos=(-0.0403,-0.7508,-0.6593) dist=584km type=ocean elev=-3.913
+
+CONT->OCEAN pt=79602 pos=(-0.0427,-0.8048,-0.5920) plate=8
+  tri=1274 vertices=[626,642,632]
+  v[0]: pos=(-0.0277,-0.7618,-0.6473) dist=456km type=ocean elev=-3.913
+  v[1]: pos=(-0.0302,-0.7531,-0.6572) dist=535km type=ocean elev=-3.913
+  v[2]: pos=(-0.0201,-0.7554,-0.6550) dist=530km type=ocean elev=-3.913
+
+CONT->OCEAN pt=79746 pos=(-0.0582,-0.8017,-0.5949) plate=8
+  tri=1293 vertices=[636,652,642]
+  v[0]: pos=(-0.0379,-0.7595,-0.6494) dist=458km type=ocean elev=-3.913
+  v[1]: pos=(-0.0403,-0.7508,-0.6593) dist=535km type=ocean elev=-3.913
+  v[2]: pos=(-0.0302,-0.7531,-0.6572) dist=534km type=ocean elev=-3.913
+

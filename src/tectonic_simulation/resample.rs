@@ -2,15 +2,12 @@ use glam::DVec3;
 
 use super::fibonnaci_spiral::SphericalFibonacci;
 use super::plate_seed_placement::{Adjacency, flood_fill_from_seeds_warped};
-use super::plates::{CrustData, Plate};
+use super::plates::CrustData;
 use super::simulate::Simulation;
 use super::spherical_delaunay_triangulation::SphericalDelaunay;
 
 /// How many steps between resamples.
 pub const RESAMPLE_INTERVAL: usize = 20;
-/// Minimum points a plate needs for Delaunay triangulation.
-/// Below this, nearest-point fallback is used instead.
-const MIN_DELAUNAY_POINTS: usize = 10;
 /// Barycentric weight sum below which all three vertices are weighted equally.
 /// Guards against degenerate triangles where all coordinates are near zero.
 const MIN_BARYCENTRIC_WEIGHT: f64 = 1e-30;
@@ -19,12 +16,14 @@ const FLOOD_FILL_SEED: u32 = 42;
 
 /// Resample the simulation onto a fresh Fibonacci grid.
 ///
-/// Plate assignment: noise-warped flood fill from plate centroids (clean, contiguous,
-/// organic boundaries). Crust interpolation: per-plate Delaunay on drifted points
-/// (all triangle vertices same-plate, no cross-plate blending).
+/// Plate assignment: noise-warped flood fill from plate centroids.
+/// Crust interpolation: global Delaunay for spatial location (avoids back-side
+/// triangles), but only interpolates from same-plate vertices (avoids cross-plate
+/// contamination).
 pub fn resample(sim: &mut Simulation, point_count: u32) {
-    let plate_delaunays = build_plate_delaunays(sim);
-    let plate_points = collect_plate_points(sim);
+    let global_crust = build_global_crust_lookup(sim);
+    let point_to_plate = build_point_to_plate(sim);
+    let global_delaunay = build_global_delaunay(sim);
 
     let fib = SphericalFibonacci::new(point_count);
     let new_points = fib.all_points();
@@ -33,7 +32,7 @@ pub fn resample(sim: &mut Simulation, point_count: u32) {
 
     let new_plate_ids = assign_plates_by_flood_fill(sim, &fib, &new_points, &new_adjacency);
     let (new_plate_points, new_plate_crust) = interpolate_crust(
-        sim, &new_points, &new_plate_ids, &plate_delaunays, &plate_points,
+        sim, &new_points, &new_plate_ids, &global_delaunay, &global_crust, &point_to_plate,
     );
 
     for (plate_idx, plate) in sim.plates.iter_mut().enumerate() {
@@ -45,26 +44,33 @@ pub fn resample(sim: &mut Simulation, point_count: u32) {
     sim.points = new_points;
 }
 
-fn collect_plate_points(sim: &Simulation) -> Vec<Vec<DVec3>> {
-    sim.plates.iter().map(|plate| {
-        plate.point_indices.iter().map(|&gi| sim.points[gi as usize]).collect()
-    }).collect()
+/// Map global point index -> CrustData.
+fn build_global_crust_lookup(sim: &Simulation) -> Vec<CrustData> {
+    let mut crust = vec![CrustData::oceanic(7.0, -4.0, 0.0, DVec3::X); sim.points.len()];
+    for plate in &sim.plates {
+        for (local, &global) in plate.point_indices.iter().enumerate() {
+            crust[global as usize] = plate.crust[local].clone();
+        }
+    }
+    crust
 }
 
-fn build_plate_delaunays(sim: &Simulation) -> Vec<Option<SphericalDelaunay>> {
-    let plate_points = collect_plate_points(sim);
-    plate_points.iter().map(|pts| {
-        if pts.len() >= MIN_DELAUNAY_POINTS {
-            // Drifted plates can have degenerate point distributions (near-coplanar,
-            // clustered) that cause the incremental Delaunay builder to fail.
-            // Fall back to nearest-point interpolation for those plates.
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                SphericalDelaunay::from_points(pts)
-            })).ok()
-        } else {
-            None
+/// Map global point index -> plate index.
+fn build_point_to_plate(sim: &Simulation) -> Vec<u32> {
+    let mut mapping = vec![u32::MAX; sim.points.len()];
+    for (plate_idx, plate) in sim.plates.iter().enumerate() {
+        for &global in &plate.point_indices {
+            mapping[global as usize] = plate_idx as u32;
         }
-    }).collect()
+    }
+    mapping
+}
+
+/// Build one Delaunay from all old simulation points.
+fn build_global_delaunay(sim: &Simulation) -> Option<SphericalDelaunay> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        SphericalDelaunay::from_points(&sim.points)
+    })).ok()
 }
 
 fn assign_plates_by_flood_fill(
@@ -89,24 +95,25 @@ fn interpolate_crust(
     sim: &Simulation,
     new_points: &[DVec3],
     new_plate_ids: &[u32],
-    plate_delaunays: &[Option<SphericalDelaunay>],
-    plate_points: &[Vec<DVec3>],
+    global_delaunay: &Option<SphericalDelaunay>,
+    global_crust: &[CrustData],
+    point_to_plate: &[u32],
 ) -> (Vec<Vec<u32>>, Vec<Vec<CrustData>>) {
     let plate_count = sim.plates.len();
     let mut new_plate_points: Vec<Vec<u32>> = vec![Vec::new(); plate_count];
     let mut new_plate_crust: Vec<Vec<CrustData>> = vec![Vec::new(); plate_count];
-    let mut last_tris = vec![0usize; plate_count];
+    let mut last_tri = 0usize;
 
     for (new_idx, &new_p) in new_points.iter().enumerate() {
         let owner = new_plate_ids[new_idx] as usize;
 
-        let crust = if let Some(del) = &plate_delaunays[owner] {
-            interpolate_from_delaunay(
-                del, new_p, &plate_points[owner],
-                &sim.plates[owner].crust, &mut last_tris[owner],
+        let crust = if let Some(del) = global_delaunay {
+            interpolate_same_plate(
+                del, new_p, owner as u32, &sim.points,
+                global_crust, point_to_plate, &mut last_tri,
             )
         } else {
-            nearest_crust(new_p, &plate_points[owner], &sim.plates[owner].crust)
+            nearest_crust_for_plate(new_p, owner as u32, &sim.points, global_crust, point_to_plate)
         };
 
         new_plate_points[owner].push(new_idx as u32);
@@ -116,61 +123,95 @@ fn interpolate_crust(
     (new_plate_points, new_plate_crust)
 }
 
-fn interpolate_from_delaunay(
+/// Locate the triangle in the global Delaunay, then interpolate only from vertices
+/// belonging to the same plate as the query point. Falls back to nearest same-plate
+/// point when no matching vertex is found.
+fn interpolate_same_plate(
     del: &SphericalDelaunay,
     point: DVec3,
-    plate_points: &[DVec3],
-    plate_crust: &[CrustData],
+    owner_plate: u32,
+    old_points: &[DVec3],
+    global_crust: &[CrustData],
+    point_to_plate: &[u32],
     last_tri: &mut usize,
 ) -> CrustData {
-    let (tri, b1, b2, b3) = del.locate(point, plate_points, *last_tri);
+    let (tri, b1, b2, b3) = del.locate(point, old_points, *last_tri);
     *last_tri = tri;
 
     let base = tri * 3;
-    let local_vi = [
+    let gi = [
         del.triangles[base] as usize,
         del.triangles[base + 1] as usize,
         del.triangles[base + 2] as usize,
     ];
+    let raw_w = [b1.max(0.0), b2.max(0.0), b3.max(0.0)];
 
-    let total_w = b1.max(0.0) + b2.max(0.0) + b3.max(0.0);
-    let w = if total_w > MIN_BARYCENTRIC_WEIGHT {
-        [b1.max(0.0) / total_w, b2.max(0.0) / total_w, b3.max(0.0) / total_w]
+    // Filter to same-plate vertices only.
+    let same_plate: Vec<usize> = (0..3)
+        .filter(|&i| point_to_plate[gi[i]] == owner_plate)
+        .collect();
+
+    if same_plate.is_empty() {
+        return nearest_crust_for_plate(point, owner_plate, old_points, global_crust, point_to_plate);
+    }
+
+    // Re-normalize weights over same-plate vertices.
+    let total_w: f64 = same_plate.iter().map(|&i| raw_w[i]).sum();
+    let w: Vec<f64> = if total_w > MIN_BARYCENTRIC_WEIGHT {
+        same_plate.iter().map(|&i| raw_w[i] / total_w).collect()
     } else {
-        [1.0 / 3.0; 3]
+        vec![1.0 / same_plate.len() as f64; same_plate.len()]
     };
 
-    let dom = if w[0] >= w[1] && w[0] >= w[2] { 0 }
-              else if w[1] >= w[2] { 1 }
-              else { 2 };
-
-    let crusts: [&CrustData; 3] = std::array::from_fn(|i| &plate_crust[local_vi[i]]);
+    let dom = same_plate[w.iter().enumerate()
+        .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+        .map(|(i, _)| i)
+        .unwrap_or(0)];
 
     let mut thickness = 0.0;
     let mut elevation = 0.0;
     let mut age = 0.0;
     let mut direction = DVec3::ZERO;
-    for i in 0..3 {
-        thickness += crusts[i].thickness * w[i];
-        elevation += crusts[i].elevation * w[i];
-        age += crusts[i].age * w[i];
-        direction += crusts[i].local_direction * w[i];
+    for (wi, &vi) in w.iter().zip(&same_plate) {
+        let c = &global_crust[gi[vi]];
+        thickness += c.thickness * wi;
+        elevation += c.elevation * wi;
+        age += c.age * wi;
+        direction += c.local_direction * wi;
     }
 
     CrustData {
-        crust_type: crusts[dom].crust_type,
+        crust_type: global_crust[gi[dom]].crust_type,
         thickness, elevation, age,
         local_direction: direction.normalize_or_zero(),
-        orogeny_type: crusts[dom].orogeny_type,
+        orogeny_type: global_crust[gi[dom]].orogeny_type,
     }
 }
 
-fn nearest_crust(point: DVec3, plate_points: &[DVec3], plate_crust: &[CrustData]) -> CrustData {
-    let nearest_local = plate_points.iter().enumerate()
+/// Nearest old point belonging to the given plate.
+fn nearest_crust_for_plate(
+    point: DVec3,
+    owner_plate: u32,
+    old_points: &[DVec3],
+    global_crust: &[CrustData],
+    point_to_plate: &[u32],
+) -> CrustData {
+    let nearest = old_points.iter().enumerate()
+        .filter(|(i, _)| point_to_plate[*i] == owner_plate)
         .max_by(|(_, a), (_, b)| point.dot(**a).partial_cmp(&point.dot(**b)).unwrap())
-        .map(|(i, _)| i)
-        .unwrap_or(0);
-    plate_crust[nearest_local].clone()
+        .map(|(i, _)| i);
+
+    match nearest {
+        Some(i) => global_crust[i].clone(),
+        None => {
+            // No old points for this plate — use nearest overall.
+            let i = old_points.iter().enumerate()
+                .max_by(|(_, a), (_, b)| point.dot(**a).partial_cmp(&point.dot(**b)).unwrap())
+                .map(|(i, _)| i)
+                .unwrap_or(0);
+            global_crust[i].clone()
+        }
+    }
 }
 
 #[cfg(test)]
