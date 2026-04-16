@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::collections::HashSet;
 
 use glam::{DQuat, DVec3};
 use noise::{Fbm, MultiFractal, NoiseFn, Perlin};
@@ -88,6 +87,7 @@ impl Simulation {
         let boundary = find_boundary_edges(&self.plates, &self.points, &self.adjacency);
         self.process_subduction(&boundary);
         self.process_collisions(&boundary);
+        self.remove_empty_plates();
 
         let boundary = self.maybe_rift(boundary);
         self.maybe_generate_oceanic_crust(&boundary);
@@ -185,8 +185,10 @@ impl Simulation {
                     crust.elevation = new_z;
                     crust.local_direction = new_fold;
                     crust.age = new_age;
-                    if crust.elevation > 0.0 && crust.crust_type == CrustType::Oceanic {
+                    if crust.crust_type == CrustType::Oceanic && crust.elevation > 0.0 {
                         crust.crust_type = CrustType::Continental;
+                        crust.orogeny_type = Some(OrogenyType::Andean);
+                    } else if crust.crust_type == CrustType::Continental {
                         crust.orogeny_type = Some(OrogenyType::Andean);
                     }
                 }
@@ -210,7 +212,7 @@ impl Simulation {
     }
 
     fn process_collisions(&mut self, boundary: &[BoundaryEdge]) {
-        let mut collision_pairs: HashSet<(u32, u32)> = HashSet::new();
+        let mut collision_boundaries: HashMap<(u32, u32), Vec<DVec3>> = HashMap::new();
         for edge in boundary {
             if edge.crust_a != CrustType::Continental || edge.crust_b != CrustType::Continental {
                 continue;
@@ -225,15 +227,15 @@ impl Simulation {
                 continue;
             }
             let pair = (edge.plate_a.min(edge.plate_b), edge.plate_a.max(edge.plate_b));
-            collision_pairs.insert(pair);
+            collision_boundaries.entry(pair).or_default().push(self.points[edge.point as usize]);
         }
 
-        for (plate_a, plate_b) in collision_pairs {
-            self.try_collision(plate_a, plate_b);
+        for ((plate_a, plate_b), boundary_points) in collision_boundaries {
+            self.try_collision(plate_a, plate_b, &boundary_points);
         }
     }
 
-    fn try_collision(&mut self, plate_a: u32, plate_b: u32) {
+    fn try_collision(&mut self, plate_a: u32, plate_b: u32, boundary_points: &[DVec3]) {
         let terranes_a = continental_collision::find_terranes(
             &self.plates[plate_a as usize], &self.points, &self.adjacency,
         );
@@ -241,15 +243,13 @@ impl Simulation {
             return;
         }
 
-        let center_b = plate_centroid(&self.plates[plate_b as usize], &self.points);
-
         let nearest = terranes_a.iter().min_by(|a, b| {
-            let da = arc_distance(a.centroid, center_b);
-            let db = arc_distance(b.centroid, center_b);
+            let da = min_arc_distance(a.centroid, boundary_points);
+            let db = min_arc_distance(b.centroid, boundary_points);
             da.partial_cmp(&db).unwrap()
         }).unwrap();
 
-        let dist_to_boundary = arc_distance(nearest.centroid, center_b);
+        let dist_to_boundary = min_arc_distance(nearest.centroid, boundary_points);
         if dist_to_boundary > COLLISION_THRESHOLD {
             return;
         }
@@ -283,6 +283,10 @@ impl Simulation {
 
         let (src, dst) = borrow_two_mut(&mut self.plates, plate_a as usize, plate_b as usize);
         continental_collision::transfer_terrane(nearest, src, dst);
+    }
+
+    fn remove_empty_plates(&mut self) {
+        self.plates.retain(|p| !p.point_indices.is_empty());
     }
 
     fn maybe_rift(&mut self, boundary: Vec<BoundaryEdge>) -> Vec<BoundaryEdge> {
@@ -462,6 +466,12 @@ fn cluster_bin(p: DVec3, _bin_count: usize) -> usize {
 
 fn arc_distance(a: DVec3, b: DVec3) -> f64 {
     a.normalize().dot(b.normalize()).clamp(-1.0, 1.0).acos() * PLANET_RADIUS
+}
+
+fn min_arc_distance(point: DVec3, targets: &[DVec3]) -> f64 {
+    targets.iter()
+        .map(|&t| arc_distance(point, t))
+        .fold(f64::MAX, f64::min)
 }
 
 /// Rough terrane area estimate from point count, assuming uniform density.

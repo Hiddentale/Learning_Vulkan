@@ -339,7 +339,7 @@ mod tests {
         generate_and_save(42, output);
     }
 
-    const TIMELAPSE_POINTS: u32 = 250_000;
+    const TIMELAPSE_POINTS: u32 = 100_000;
     const TIMELAPSE_STEPS: usize = 200;
     /// Render every N resample cycles. Each cycle = RESAMPLE_INTERVAL steps.
     const TIMELAPSE_RENDER_EVERY_N_RESAMPLES: usize = 1;
@@ -417,7 +417,12 @@ mod tests {
             if step % steps_per_frame == 0 {
                 recorder.record(&sim);
                 let pct = step * 100 / total_steps;
-                print!("\r[{:>3}%] Recorded frame {} (t={:.0} Myr)        ", pct, recorder.frame_count(), sim.time);
+                print!(
+                    "\r[{:>3}%] Recorded frame {} (t={:.0} Myr)        ",
+                    pct,
+                    recorder.frame_count(),
+                    sim.time
+                );
                 std::io::stdout().flush().unwrap();
             }
         }
