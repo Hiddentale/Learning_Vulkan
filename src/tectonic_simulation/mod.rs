@@ -8,5 +8,7 @@ pub mod plate_visualizer;
 pub mod plates;
 pub mod resample;
 pub mod simulate;
+pub mod sphere_grid;
 pub mod spherical_delaunay_triangulation;
 pub mod subduction;
+pub mod tectonic_map;
