@@ -1,6 +1,7 @@
 mod adjacency_lists;
 mod boundary;
 pub mod continental_collision;
+pub mod debug_export;
 pub mod fibonnaci_spiral;
 pub mod oceanic_crust_generation;
 pub mod orient3d;

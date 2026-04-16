@@ -387,6 +387,47 @@ mod tests {
         println!("\r[100%] Done — {} frames in {}        ", total_frames, output_dir.display());
     }
 
+    const DEBUG_EXPORT_POINTS: u32 = 100_000;
+    const DEBUG_EXPORT_STEPS: usize = 200;
+    const DEBUG_EXPORT_RECORD_EVERY_N_RESAMPLES: usize = 1;
+
+    #[test]
+    #[ignore] // Run with: cargo test --release debug_export -- --ignored --nocapture
+    fn debug_export() {
+        use super::super::debug_export::DebugRecorder;
+        use super::super::resample;
+        use std::io::Write;
+
+        let fibonacci = SphericalFibonacci::new(DEBUG_EXPORT_POINTS);
+        let points = fibonacci.all_points();
+        let delaunay = SphericalDelaunay::from_points(&points);
+        let assignment = assign_plates(&points, &fibonacci, &delaunay, PLATE_COUNT, 42, &WarpParams::default());
+        let plates = initialize_plates(&points, &delaunay, &assignment, &InitParams::default());
+        let mut sim = Simulation::new(points, plates, &delaunay);
+
+        let mut recorder = DebugRecorder::new();
+        recorder.set_triangulation(&delaunay);
+        recorder.record(&sim);
+
+        let steps_per_frame = resample::RESAMPLE_INTERVAL * DEBUG_EXPORT_RECORD_EVERY_N_RESAMPLES;
+        let total_steps = DEBUG_EXPORT_STEPS;
+
+        for step in 1..=total_steps {
+            sim.step();
+            if step % steps_per_frame == 0 {
+                recorder.record(&sim);
+                let pct = step * 100 / total_steps;
+                print!("\r[{:>3}%] Recorded frame {} (t={:.0} Myr)        ", pct, recorder.frame_count(), sim.time);
+                std::io::stdout().flush().unwrap();
+            }
+        }
+        println!();
+
+        let output = Path::new("tools/debug_viewer/sim_data.bin");
+        std::fs::create_dir_all(output.parent().unwrap()).unwrap();
+        recorder.save(output).expect("failed to save debug export");
+    }
+
     #[test]
     #[ignore] // Run with: cargo test --release initialized_plate_map -- --ignored --nocapture
     fn initialized_plate_map() {
