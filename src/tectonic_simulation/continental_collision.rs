@@ -14,6 +14,8 @@ const MAX_INFLUENCE_RADIUS: f64 = 4200.0;
 const COLLISION_COEFFICIENT: f64 = 1.3e-5;
 /// Reference plate speed v_0 in mm/yr.
 const REFERENCE_SPEED: f64 = 100.0;
+/// Distance below which a point is treated as coincident with the terrane centroid.
+const COINCIDENT_THRESHOLD: f64 = 1e-12;
 
 /// Influence radius scales with convergence speed and terrane size so that
 /// fast, large collisions deform a wider area than slow, small ones.
@@ -45,7 +47,7 @@ pub fn elevation_surge(terrane_area: f64, distance: f64, radius: f64) -> f64 {
 pub fn fold_direction(point: DVec3, terrane_centroid: DVec3) -> DVec3 {
     let normal = point.normalize();
     let diff = point - terrane_centroid;
-    if diff.length() < 1e-12 {
+    if diff.length() < COINCIDENT_THRESHOLD {
         return DVec3::ZERO;
     }
     let radial = diff.normalize();

@@ -1,10 +1,10 @@
+use std::collections::HashMap;
 use std::collections::HashSet;
-use std::io::Write;
-use std::time::Instant;
 
 use glam::{DQuat, DVec3};
 use noise::{Fbm, MultiFractal, NoiseFn, Perlin};
 
+use super::boundary::{find_boundary_edges, BoundaryEdge};
 use super::continental_collision;
 use super::oceanic_crust_generation;
 use super::plate_rifting;
@@ -13,6 +13,7 @@ use super::plates::{CrustType, OrogenyType, Plate};
 use super::resample;
 use super::spherical_delaunay_triangulation::SphericalDelaunay;
 use super::subduction;
+use super::util::plate_centroid;
 
 /// Timestep δt in Myr.
 const DT: f64 = 2.0;
@@ -42,6 +43,15 @@ const EROSION_NOISE_FREQUENCY: f64 = 1.5;
 const EROSION_NOISE_OCTAVES: usize = 3;
 /// Noise seed for erosion spatial variation.
 const EROSION_NOISE_SEED: u32 = 7;
+/// Angular speed below which plate rotation is skipped (effectively zero).
+const MIN_ANGULAR_SPEED: f64 = 1e-15;
+/// Floor for noise-modulated erosion multiplier. Prevents sign flip.
+const EROSION_NOISE_FLOOR: f64 = 0.1;
+
+/// Number of latitude bands for subduction source clustering.
+const CLUSTER_LAT_BINS: usize = 64;
+/// Number of longitude bands for subduction source clustering.
+const CLUSTER_LON_BINS: usize = 128;
 
 /// Full simulation state.
 pub struct Simulation {
@@ -73,76 +83,25 @@ impl Simulation {
 
     /// Advance the simulation by one timestep.
     pub fn step(&mut self) {
-        let step_start = Instant::now();
-        let mut log = std::fs::OpenOptions::new()
-            .create(true).append(true)
-            .open("sim_profile.log").ok();
-
-        let t0 = Instant::now();
         self.move_plates();
-        let move_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
-        let t0 = Instant::now();
         let boundary = find_boundary_edges(&self.plates, &self.points, &self.adjacency);
-        let boundary_ms = t0.elapsed().as_secs_f64() * 1000.0;
-
-        let t0 = Instant::now();
         self.process_subduction(&boundary);
-        let subduction_ms = t0.elapsed().as_secs_f64() * 1000.0;
-
-        let t0 = Instant::now();
         self.process_collisions(&boundary);
-        let collision_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
-        self.steps_since_rift_check += 1;
-        let t0 = Instant::now();
-        let rifted = if self.steps_since_rift_check >= plate_rifting::RIFT_CHECK_INTERVAL {
-            self.steps_since_rift_check = 0;
-            self.process_rifting()
-        } else {
-            false
-        };
-        let rift_ms = t0.elapsed().as_secs_f64() * 1000.0;
-
-        let t0 = Instant::now();
-        let boundary = if rifted {
-            find_boundary_edges(&self.plates, &self.points, &self.adjacency)
-        } else {
-            boundary
-        };
-        let rift_boundary_ms = t0.elapsed().as_secs_f64() * 1000.0;
-
-        self.steps_since_crust_generation += 1;
-        let t0 = Instant::now();
-        if self.steps_since_crust_generation
-            >= oceanic_crust_generation::generation_interval(&self.plates)
-        {
-            self.generate_oceanic_crust(&boundary);
-            self.steps_since_crust_generation = 0;
-        }
-        let oceanic_ms = t0.elapsed().as_secs_f64() * 1000.0;
-
-        let t0 = Instant::now();
+        let boundary = self.maybe_rift(boundary);
+        self.maybe_generate_oceanic_crust(&boundary);
         self.apply_erosion_and_damping();
-        let erosion_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
         self.time += DT;
         self.steps_since_resample += 1;
+        self.maybe_resample();
+    }
 
-        let t0 = Instant::now();
-        if self.steps_since_resample >= resample::RESAMPLE_INTERVAL {
-            resample::resample(self, self.point_count);
-            self.steps_since_resample = 0;
-        }
-        let resample_ms = t0.elapsed().as_secs_f64() * 1000.0;
-
-        let total_ms = step_start.elapsed().as_secs_f64() * 1000.0;
-        if let Some(ref mut f) = log {
-            let _ = writeln!(f,
-                "step={:.0} pts={} plates={} total={:.1}ms | move={:.1} boundary={:.1} subduction={:.1} collision={:.1} rift={:.1} rift_bnd={:.1} oceanic={:.1} erosion={:.1} resample={:.1}",
-                self.time, self.points.len(), self.plates.len(), total_ms,
-                move_ms, boundary_ms, subduction_ms, collision_ms, rift_ms, rift_boundary_ms, oceanic_ms, erosion_ms, resample_ms
-            );
+    /// Run the simulation for a number of timesteps.
+    pub fn run(&mut self, steps: usize) {
+        for _ in 0..steps {
+            self.step();
         }
     }
 
@@ -150,7 +109,7 @@ impl Simulation {
     fn move_plates(&mut self) {
         for plate in &self.plates {
             let angle = plate.angular_speed * DT;
-            if angle.abs() < 1e-15 {
+            if angle.abs() < MIN_ANGULAR_SPEED {
                 continue;
             }
             let rotation = DQuat::from_axis_angle(plate.rotation_axis, angle);
@@ -161,18 +120,20 @@ impl Simulation {
         }
     }
 
-    /// Run the simulation for a number of timesteps.
-    pub fn run(&mut self, steps: usize) {
-        for _ in 0..steps {
-            self.step();
-        }
-    }
-
     fn process_subduction(&mut self, boundary: &[BoundaryEdge]) {
         let mut slab_pull_points: Vec<Vec<DVec3>> = vec![Vec::new(); self.plates.len()];
+        let sources = self.collect_subduction_sources(boundary, &mut slab_pull_points);
+        let clustered = cluster_sources(&sources);
+        self.apply_uplift(&clustered);
+        self.apply_slab_pull(&slab_pull_points);
+    }
 
-        // Collect raw uplift sources per overriding plate.
-        let mut raw_sources: Vec<Vec<(DVec3, DVec3, DVec3)>> = vec![Vec::new(); self.plates.len()];
+    fn collect_subduction_sources(
+        &self,
+        boundary: &[BoundaryEdge],
+        slab_pull_points: &mut [Vec<DVec3>],
+    ) -> Vec<Vec<(DVec3, DVec3, DVec3)>> {
+        let mut sources: Vec<Vec<(DVec3, DVec3, DVec3)>> = vec![Vec::new(); self.plates.len()];
 
         for edge in boundary {
             let result = subduction::resolve_subduction(
@@ -194,36 +155,15 @@ impl Simulation {
 
             let vel_sub = self.plates[subducting_idx as usize].surface_velocity(boundary_pos);
             let vel_over = self.plates[overriding_idx as usize].surface_velocity(boundary_pos);
-            raw_sources[overriding_idx as usize].push((boundary_pos, vel_sub, vel_over));
+            sources[overriding_idx as usize].push((boundary_pos, vel_sub, vel_over));
         }
 
-        // Cluster boundary sources by grid cell to reduce per-point work.
-        // Many boundary edges are geographically adjacent — averaging them per cell
-        // preserves physical accuracy while dramatically cutting source count.
-        let mut clustered_sources: Vec<Vec<(DVec3, DVec3, DVec3)>> = vec![Vec::new(); self.plates.len()];
-        for plate_idx in 0..self.plates.len() {
-            if raw_sources[plate_idx].is_empty() {
-                continue;
-            }
-            let mut grid: SphereGrid<(DVec3, DVec3, DVec3)> = SphereGrid::new();
-            for &src in &raw_sources[plate_idx] {
-                grid.insert(src.0, src);
-            }
-            for cell in &grid.cells {
-                if cell.is_empty() {
-                    continue;
-                }
-                let n = cell.len() as f64;
-                let avg_pos: DVec3 = cell.iter().map(|s| s.0).sum::<DVec3>() / n;
-                let avg_vel_sub: DVec3 = cell.iter().map(|s| s.1).sum::<DVec3>() / n;
-                let avg_vel_over: DVec3 = cell.iter().map(|s| s.2).sum::<DVec3>() / n;
-                clustered_sources[plate_idx].push((avg_pos.normalize(), avg_vel_sub, avg_vel_over));
-            }
-        }
+        sources
+    }
 
-        // Single pass per plate: each point checks clustered boundary sources.
+    fn apply_uplift(&mut self, clustered: &[Vec<(DVec3, DVec3, DVec3)>]) {
         for plate_idx in 0..self.plates.len() {
-            let sources = &clustered_sources[plate_idx];
+            let sources = &clustered[plate_idx];
             if sources.is_empty() {
                 continue;
             }
@@ -252,7 +192,9 @@ impl Simulation {
                 }
             }
         }
+    }
 
+    fn apply_slab_pull(&mut self, slab_pull_points: &[Vec<DVec3>]) {
         for (plate_idx, pull_points) in slab_pull_points.iter().enumerate() {
             if pull_points.is_empty() {
                 continue;
@@ -268,7 +210,6 @@ impl Simulation {
     }
 
     fn process_collisions(&mut self, boundary: &[BoundaryEdge]) {
-        // Find continental-continental boundary pairs with enough interpenetration.
         let mut collision_pairs: HashSet<(u32, u32)> = HashSet::new();
         for edge in boundary {
             if edge.crust_a != CrustType::Continental || edge.crust_b != CrustType::Continental {
@@ -278,7 +219,6 @@ impl Simulation {
                 .surface_velocity(self.points[edge.point as usize]);
             let vel_b = self.plates[edge.plate_b as usize]
                 .surface_velocity(self.points[edge.point as usize]);
-            // Only converging plates.
             let relative = vel_a - vel_b;
             let toward = self.points[edge.point as usize];
             if relative.dot(toward) >= 0.0 {
@@ -303,7 +243,6 @@ impl Simulation {
 
         let center_b = plate_centroid(&self.plates[plate_b as usize], &self.points);
 
-        // Pick the terrane closest to plate_b.
         let nearest = terranes_a.iter().min_by(|a, b| {
             let da = arc_distance(a.centroid, center_b);
             let db = arc_distance(b.centroid, center_b);
@@ -324,7 +263,6 @@ impl Simulation {
             relative_speed, terrane_area, self.plates.len(),
         );
 
-        // Apply elevation surge to points within influence radius on plate_b.
         let dot_threshold = (radius / PLANET_RADIUS).cos();
         let plate_b_ref = &mut self.plates[plate_b as usize];
         for (local, &global) in plate_b_ref.point_indices.iter().enumerate() {
@@ -343,9 +281,22 @@ impl Simulation {
             plate_b_ref.crust[local].orogeny_type = Some(OrogenyType::Himalayan);
         }
 
-        // Transfer the terrane from plate_a to plate_b.
         let (src, dst) = borrow_two_mut(&mut self.plates, plate_a as usize, plate_b as usize);
         continental_collision::transfer_terrane(nearest, src, dst);
+    }
+
+    fn maybe_rift(&mut self, boundary: Vec<BoundaryEdge>) -> Vec<BoundaryEdge> {
+        self.steps_since_rift_check += 1;
+        if self.steps_since_rift_check < plate_rifting::RIFT_CHECK_INTERVAL {
+            return boundary;
+        }
+        self.steps_since_rift_check = 0;
+
+        if self.process_rifting() {
+            find_boundary_edges(&self.plates, &self.points, &self.adjacency)
+        } else {
+            boundary
+        }
     }
 
     fn process_rifting(&mut self) -> bool {
@@ -357,22 +308,9 @@ impl Simulation {
         let plate_count = self.plates.len();
 
         for i in 0..plate_count {
-            let p = &self.plates[i];
-            let cont = p.crust.iter().filter(|c| c.crust_type == CrustType::Continental).count();
-            let frac = cont as f64 / p.point_count() as f64;
-            let eligible = p.point_count() >= 50 && frac >= 0.3;
-            if eligible {
-                let avg = total_points as f64 / plate_count as f64;
-                let area_ratio = p.point_count() as f64 / avg;
-                let lambda = 0.02 * frac * area_ratio;
-                let prob = lambda * (-lambda).exp();
-                eprintln!("[RIFT] t={:.0} plate[{i}]: {} pts, cont={:.0}%, area_ratio={:.2}, λ={:.4}, P={:.4}",
-                    self.time, p.point_count(), frac*100.0, area_ratio, lambda, prob);
-            }
             if !plate_rifting::should_rift(&self.plates[i], i, total_points, plate_count, self.time, self.rift_seed) {
                 continue;
             }
-            eprintln!("[RIFT] >>> RIFTED plate[{i}]!");
             let sub_plates =
                 plate_rifting::rift_plate(&self.plates[i], &self.points, &self.adjacency, self.rift_seed);
             if sub_plates.len() < 2 {
@@ -388,7 +326,6 @@ impl Simulation {
             return false;
         }
 
-        // Remove emptied plates in reverse order to preserve indices.
         emptied.sort_unstable();
         for &i in emptied.iter().rev() {
             self.plates.swap_remove(i);
@@ -401,6 +338,17 @@ impl Simulation {
         true
     }
 
+    fn maybe_generate_oceanic_crust(&mut self, boundary: &[BoundaryEdge]) {
+        self.steps_since_crust_generation += 1;
+        if self.steps_since_crust_generation
+            < oceanic_crust_generation::generation_interval(&self.plates)
+        {
+            return;
+        }
+        self.generate_oceanic_crust(boundary);
+        self.steps_since_crust_generation = 0;
+    }
+
     fn generate_oceanic_crust(&mut self, boundary: &[BoundaryEdge]) {
         let divergent = oceanic_crust_generation::find_divergent_edges(
             boundary, &self.plates, &self.points,
@@ -409,9 +357,8 @@ impl Simulation {
             return;
         }
 
-        let dt_since = self.steps_since_crust_generation as f64 * DT;
         let new_points = oceanic_crust_generation::generate_ridge_points(
-            &divergent, &self.plates, &self.points, dt_since,
+            &divergent, &self.plates, &self.points,
         );
         if new_points.is_empty() {
             return;
@@ -428,6 +375,14 @@ impl Simulation {
         self.adjacency = Adjacency::from_delaunay(self.points.len(), &delaunay);
     }
 
+    fn maybe_resample(&mut self) {
+        if self.steps_since_resample < resample::RESAMPLE_INTERVAL {
+            return;
+        }
+        resample::resample(self, self.point_count);
+        self.steps_since_resample = 0;
+    }
+
     fn apply_erosion_and_damping(&mut self) {
         let fbm: Fbm<Perlin> = Fbm::new(EROSION_NOISE_SEED)
             .set_octaves(EROSION_NOISE_OCTAVES)
@@ -437,25 +392,21 @@ impl Simulation {
             for (local, &global) in plate.point_indices.iter().enumerate() {
                 let p = self.points[global as usize];
                 let noise = 1.0 + EROSION_NOISE_AMPLITUDE * fbm.get([p.x, p.y, p.z]);
-                let scale = noise.max(0.1);
+                let scale = noise.max(EROSION_NOISE_FLOOR);
                 let crust = &mut plate.crust[local];
                 match crust.crust_type {
                     CrustType::Continental => {
-                        // z(t+dt) = z(t) - (z/zc) * εc * δt, modulated by spatial noise.
                         crust.elevation -= (crust.elevation / MAX_CONTINENTAL_ALTITUDE)
                             * CONTINENTAL_EROSION
                             * scale
                             * DT;
                     }
                     CrustType::Oceanic => {
-                        // z(t+dt) = z(t) - (1 - z/zt) * εo * δt, modulated by spatial noise.
                         crust.elevation -= (1.0 - crust.elevation / OCEANIC_TRENCH_DEPTH)
                             * OCEANIC_DAMPING
                             * scale
                             * DT;
-                        // Trench sediment fill.
                         crust.elevation += SEDIMENT_ACCRETION * DT;
-                        // Age oceanic crust.
                         crust.age += DT;
                     }
                 }
@@ -464,178 +415,53 @@ impl Simulation {
     }
 }
 
-/// Spatial hash grid on the unit sphere for O(1) proximity lookups.
-///
-/// Discretizes the sphere into latitude/longitude bins. Queries expand to
-/// neighboring bins that could overlap the angular search radius.
-struct SphereGrid<T> {
-    /// Bins indexed by `lat_bin * LON_BINS + lon_bin`.
-    cells: Vec<Vec<T>>,
-}
+/// Cluster boundary sources by grid cell to reduce per-point work.
+/// Many boundary edges are geographically adjacent — averaging them per cell
+/// preserves physical accuracy while dramatically cutting source count.
+fn cluster_sources(
+    raw_sources: &[Vec<(DVec3, DVec3, DVec3)>],
+) -> Vec<Vec<(DVec3, DVec3, DVec3)>> {
+    let bin_count = CLUSTER_LAT_BINS * CLUSTER_LON_BINS;
+    let mut clustered = Vec::with_capacity(raw_sources.len());
 
-/// Number of latitude bands.
-const LAT_BINS: usize = 64;
-/// Number of longitude bands.
-const LON_BINS: usize = 128;
-
-impl<T> SphereGrid<T> {
-    fn new() -> Self {
-        let cells: Vec<Vec<T>> = (0..LAT_BINS * LON_BINS).map(|_| Vec::new()).collect();
-        Self { cells }
-    }
-
-    fn bin(p: DVec3) -> (usize, usize) {
-        let lat = p.y.clamp(-1.0, 1.0).asin(); // -π/2..π/2
-        let lon = p.z.atan2(p.x);               // -π..π
-        let lat_bin = ((lat / std::f64::consts::PI + 0.5) * LAT_BINS as f64)
-            .max(0.0).min(LAT_BINS as f64 - 1.0) as usize;
-        let lon_bin = ((lon / std::f64::consts::TAU + 0.5) * LON_BINS as f64)
-            .max(0.0).min(LON_BINS as f64 - 1.0) as usize;
-        (lat_bin, lon_bin)
-    }
-
-    fn insert(&mut self, p: DVec3, item: T) {
-        let (lat, lon) = Self::bin(p);
-        self.cells[lat * LON_BINS + lon].push(item);
-    }
-
-    /// Iterate all items in bins that could contain points within `dot_threshold`
-    /// of `p`. The angular radius is `acos(dot_threshold)`.
-    fn query(&self, p: DVec3, dot_threshold: f64) -> SphereGridIter<'_, T> {
-        let radius = dot_threshold.clamp(-1.0, 1.0).acos();
-        // Add one bin width as margin.
-        let margin = radius + std::f64::consts::PI / LAT_BINS as f64;
-
-        let lat = p.y.clamp(-1.0, 1.0).asin();
-        let lon = p.z.atan2(p.x);
-
-        let lat_half = margin / (std::f64::consts::PI / LAT_BINS as f64);
-        let (plat, _) = Self::bin(p);
-        let lat_lo = (plat as isize - lat_half.ceil() as isize).max(0) as usize;
-        let lat_hi = ((plat as isize + lat_half.ceil() as isize) as usize).min(LAT_BINS - 1);
-
-        // Longitude range expands near poles due to convergence.
-        let cos_lat = lat.cos().max(0.01);
-        let lon_half = (margin / cos_lat) / (std::f64::consts::TAU / LON_BINS as f64);
-        let (_, plon) = Self::bin(p);
-        let lon_span = lon_half.ceil() as usize;
-
-        SphereGridIter {
-            cells: &self.cells,
-            lat: lat_lo,
-            lat_hi,
-            lon_center: plon,
-            lon_span,
-            lon_offset: 0,
-            item_idx: 0,
+    for sources in raw_sources {
+        if sources.is_empty() {
+            clustered.push(Vec::new());
+            continue;
         }
-    }
-}
-
-struct SphereGridIter<'a, T> {
-    cells: &'a [Vec<T>],
-    lat: usize,
-    lat_hi: usize,
-    lon_center: usize,
-    lon_span: usize,
-    lon_offset: usize,  // 0..=2*lon_span
-    item_idx: usize,
-}
-
-impl<'a, T> Iterator for SphereGridIter<'a, T> {
-    type Item = &'a T;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            if self.lat > self.lat_hi {
-                return None;
-            }
-            let lon_count = 2 * self.lon_span + 1;
-            if self.lon_offset >= lon_count {
-                self.lat += 1;
-                self.lon_offset = 0;
-                self.item_idx = 0;
-                continue;
-            }
-            let lon = (self.lon_center + LON_BINS + self.lon_offset - self.lon_span) % LON_BINS;
-            let cell = &self.cells[self.lat * LON_BINS + lon];
-            if self.item_idx < cell.len() {
-                let item = &cell[self.item_idx];
-                self.item_idx += 1;
-                return Some(item);
-            }
-            self.lon_offset += 1;
-            self.item_idx = 0;
+        let mut grid: HashMap<usize, Vec<&(DVec3, DVec3, DVec3)>> = HashMap::new();
+        for src in sources {
+            let bin = cluster_bin(src.0, bin_count);
+            grid.entry(bin).or_default().push(src);
         }
+        let mut plate_clustered = Vec::with_capacity(grid.len());
+        for (_, cell) in &grid {
+            let n = cell.len() as f64;
+            let avg_pos: DVec3 = cell.iter().map(|s| s.0).sum::<DVec3>() / n;
+            let avg_vel_sub: DVec3 = cell.iter().map(|s| s.1).sum::<DVec3>() / n;
+            let avg_vel_over: DVec3 = cell.iter().map(|s| s.2).sum::<DVec3>() / n;
+            plate_clustered.push((avg_pos.normalize(), avg_vel_sub, avg_vel_over));
+        }
+        clustered.push(plate_clustered);
     }
+
+    clustered
 }
 
-/// A boundary edge: a point where two plates meet.
-pub(super) struct BoundaryEdge {
-    pub(super) point: u32,
-    pub(super) neighbor: u32,
-    pub(super) plate_a: u32,
-    pub(super) plate_b: u32,
-    pub(super) crust_a: CrustType,
-    pub(super) crust_b: CrustType,
-    pub(super) age_a: f64,
-    pub(super) age_b: f64,
-}
-
-/// Scan the adjacency graph for edges that cross plate boundaries.
-fn find_boundary_edges(
-    plates: &[Plate],
-    points: &[DVec3],
-    adjacency: &Adjacency,
-) -> Vec<BoundaryEdge> {
-    let mut point_to_plate = vec![0u32; points.len()];
-    let mut point_to_local = vec![0usize; points.len()];
-    for (plate_idx, plate) in plates.iter().enumerate() {
-        for (local, &global) in plate.point_indices.iter().enumerate() {
-            point_to_plate[global as usize] = plate_idx as u32;
-            point_to_local[global as usize] = local;
-        }
-    }
-
-    let mut edges = Vec::new();
-    let mut seen: HashSet<(u32, u32)> = HashSet::new();
-
-    for point in 0..points.len() as u32 {
-        let plate_a = point_to_plate[point as usize];
-        for &neighbor in adjacency.neighbors_of(point) {
-            let plate_b = point_to_plate[neighbor as usize];
-            if plate_a == plate_b {
-                continue;
-            }
-            let pair = (point.min(neighbor), point.max(neighbor));
-            if !seen.insert(pair) {
-                continue;
-            }
-            let local_a = point_to_local[point as usize];
-            let local_b = point_to_local[neighbor as usize];
-            edges.push(BoundaryEdge {
-                point,
-                neighbor,
-                plate_a,
-                plate_b,
-                crust_a: plates[plate_a as usize].crust[local_a].crust_type,
-                crust_b: plates[plate_b as usize].crust[local_b].crust_type,
-                age_a: plates[plate_a as usize].crust[local_a].age,
-                age_b: plates[plate_b as usize].crust[local_b].age,
-            });
-        }
-    }
-
-    edges
+fn cluster_bin(p: DVec3, _bin_count: usize) -> usize {
+    let lat = p.y.clamp(-1.0, 1.0).asin();
+    let lon = p.z.atan2(p.x);
+    let lat_bin = ((lat / std::f64::consts::PI + 0.5) * CLUSTER_LAT_BINS as f64)
+        .max(0.0)
+        .min(CLUSTER_LAT_BINS as f64 - 1.0) as usize;
+    let lon_bin = ((lon / std::f64::consts::TAU + 0.5) * CLUSTER_LON_BINS as f64)
+        .max(0.0)
+        .min(CLUSTER_LON_BINS as f64 - 1.0) as usize;
+    lat_bin * CLUSTER_LON_BINS + lon_bin
 }
 
 fn arc_distance(a: DVec3, b: DVec3) -> f64 {
     a.normalize().dot(b.normalize()).clamp(-1.0, 1.0).acos() * PLANET_RADIUS
-}
-
-fn plate_centroid(plate: &Plate, points: &[DVec3]) -> DVec3 {
-    let sum: DVec3 = plate.point_indices.iter().map(|&i| points[i as usize]).sum();
-    sum.normalize_or_zero()
 }
 
 /// Rough terrane area estimate from point count, assuming uniform density.
@@ -695,7 +521,6 @@ mod tests {
     fn erosion_reduces_average_continental_elevation() {
         let mut sim = setup(500, 8);
         let avg_before = avg_continental_elevation(&sim);
-        // Disable plate motion so only erosion/damping acts.
         for plate in &mut sim.plates {
             plate.angular_speed = 0.0;
         }

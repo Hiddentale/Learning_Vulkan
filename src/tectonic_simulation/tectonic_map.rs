@@ -12,6 +12,8 @@ const IDW_K: usize = 6;
 const IDW_POWER: f64 = 2.0;
 /// Blocks per km of tectonic elevation.
 pub const ELEVATION_SCALE: f64 = 50.0;
+/// Distance below which a query point is treated as coincident with a data point.
+const COINCIDENT_THRESHOLD: f64 = 1e-10;
 
 const MAGIC: [u8; 4] = *b"TECT";
 const VERSION: u32 = 5;
@@ -26,6 +28,13 @@ pub struct CrustPoint {
     pub age: f32,
     pub local_direction: [f32; 3],
     pub orogeny_type: Option<OrogenyType>,
+}
+
+impl CrustPoint {
+    pub fn direction(&self) -> DVec3 {
+        let ld = self.local_direction;
+        DVec3::new(ld[0] as f64, ld[1] as f64, ld[2] as f64)
+    }
 }
 
 /// IDW-interpolated result at an arbitrary sphere direction.
@@ -75,48 +84,45 @@ impl TectonicMap {
             return default_crust();
         }
 
-        // If coincident with a point, return it directly.
-        if neighbors[0].1 < 1e-10 {
+        if neighbors[0].1 < COINCIDENT_THRESHOLD {
             return interpolated_from(&self.points[neighbors[0].0 as usize]);
         }
 
+        let nearest = &self.points[neighbors[0].0 as usize];
+        let (elevation, thickness, age, direction) = self.accumulate_idw(&neighbors);
+        let local_direction = direction
+            .try_normalize()
+            .unwrap_or_else(|| nearest.direction().normalize_or(DVec3::X));
+
+        InterpolatedCrust {
+            elevation: elevation * ELEVATION_SCALE,
+            thickness,
+            age,
+            local_direction,
+            crust_type: nearest.crust_type,
+            orogeny_type: nearest.orogeny_type,
+        }
+    }
+
+    fn accumulate_idw(&self, neighbors: &[(u32, f64)]) -> (f64, f64, f64, DVec3) {
         let mut total_weight = 0.0;
         let mut elevation = 0.0;
         let mut thickness = 0.0;
         let mut age = 0.0;
         let mut direction = DVec3::ZERO;
 
-        for &(idx, dist) in &neighbors {
+        for &(idx, dist) in neighbors {
             let w = 1.0 / dist.powf(IDW_POWER);
             let pt = &self.points[idx as usize];
             total_weight += w;
             elevation += pt.elevation as f64 * w;
             thickness += pt.thickness as f64 * w;
             age += pt.age as f64 * w;
-            let ld = pt.local_direction;
-            direction += DVec3::new(ld[0] as f64, ld[1] as f64, ld[2] as f64) * w;
+            direction += pt.direction() * w;
         }
 
         let inv_w = 1.0 / total_weight;
-        let nearest = &self.points[neighbors[0].0 as usize];
-
-        let local_direction = direction * inv_w;
-        let local_direction = local_direction
-            .try_normalize()
-            .unwrap_or_else(|| {
-                let ld = nearest.local_direction;
-                DVec3::new(ld[0] as f64, ld[1] as f64, ld[2] as f64)
-                    .normalize_or(DVec3::X)
-            });
-
-        InterpolatedCrust {
-            elevation: elevation * inv_w * ELEVATION_SCALE,
-            thickness: thickness * inv_w,
-            age: age * inv_w,
-            local_direction,
-            crust_type: nearest.crust_type,
-            orogeny_type: nearest.orogeny_type,
-        }
+        (elevation * inv_w, thickness * inv_w, age * inv_w, direction * inv_w)
     }
 
     /// Nearest-point lookup for discrete properties.
@@ -229,13 +235,11 @@ fn crust_point_from(pos: DVec3, crust: &CrustData) -> CrustPoint {
 }
 
 fn interpolated_from(pt: &CrustPoint) -> InterpolatedCrust {
-    let ld = pt.local_direction;
     InterpolatedCrust {
         elevation: pt.elevation as f64 * ELEVATION_SCALE,
         thickness: pt.thickness as f64,
         age: pt.age as f64,
-        local_direction: DVec3::new(ld[0] as f64, ld[1] as f64, ld[2] as f64)
-            .normalize_or(DVec3::X),
+        local_direction: pt.direction().normalize_or(DVec3::X),
         crust_type: pt.crust_type,
         orogeny_type: pt.orogeny_type,
     }
@@ -290,21 +294,18 @@ fn write_f32(w: &mut impl Write, v: f32) -> io::Result<()> {
     w.write_all(&v.to_le_bytes())
 }
 
-#[allow(dead_code)]
 fn read_u32(r: &mut &[u8]) -> io::Result<u32> {
     let mut buf = [0u8; 4];
     r.read_exact(&mut buf)?;
     Ok(u32::from_le_bytes(buf))
 }
 
-#[allow(dead_code)]
 fn read_f64(r: &mut &[u8]) -> io::Result<f64> {
     let mut buf = [0u8; 8];
     r.read_exact(&mut buf)?;
     Ok(f64::from_le_bytes(buf))
 }
 
-#[allow(dead_code)]
 fn read_f32(r: &mut &[u8]) -> io::Result<f32> {
     let mut buf = [0u8; 4];
     r.read_exact(&mut buf)?;

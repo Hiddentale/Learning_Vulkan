@@ -19,6 +19,8 @@ const FOLD_DIRECTION_WEIGHT: f64 = 0.3;
 /// Slab pull scaling factor ε. Small so each boundary point has limited individual influence,
 /// but long subduction fronts with many samples accumulate a noticeable effect.
 const SLAB_PULL_EPSILON: f64 = 1e-4;
+/// Minimum cross-product magnitude to consider a slab-pull direction meaningful.
+const CROSS_PRODUCT_EPSILON: f64 = 1e-12;
 
 /// Which plate subducts beneath the other at a converging boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -161,7 +163,7 @@ pub fn apply_slab_pull(
     for &q in boundary_points {
         let cross = plate_center.cross(q);
         let len = cross.length();
-        if len > 1e-12 {
+        if len > CROSS_PRODUCT_EPSILON {
             pull += cross / len;
         }
     }

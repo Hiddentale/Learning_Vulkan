@@ -1,6 +1,9 @@
+mod adjacency_lists;
+mod boundary;
 pub mod continental_collision;
 pub mod fibonnaci_spiral;
 pub mod oceanic_crust_generation;
+pub mod orient3d;
 pub mod plate_initializer;
 pub mod plate_rifting;
 pub mod plate_seed_placement;
@@ -12,3 +15,4 @@ pub mod sphere_grid;
 pub mod spherical_delaunay_triangulation;
 pub mod subduction;
 pub mod tectonic_map;
+mod util;

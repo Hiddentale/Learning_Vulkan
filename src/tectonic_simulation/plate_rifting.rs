@@ -1,11 +1,11 @@
-use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
 use glam::DVec3;
 use noise::{Fbm, MultiFractal, NoiseFn, Perlin};
 
-use super::plate_seed_placement::Adjacency;
+use super::plate_seed_placement::{warped_edge_cost, Adjacency, WARP_COST_FLOOR};
 use super::plates::Plate;
+use super::util::{splitmix64, MinHeapEntry};
 
 /// Base Poisson rate λ_0 for rifting probability per check.
 /// With RIFT_CHECK_INTERVAL=20 and area scaling, a 2x-average fully-continental
@@ -26,6 +26,16 @@ const RIFT_WARP_AMPLITUDE: f64 = 0.7;
 const RIFT_WARP_FREQUENCY: f64 = 3.0;
 /// FBM octaves for fracture warp.
 const RIFT_WARP_OCTAVES: usize = 3;
+/// Minimum points for a plate to split into more than 2 sub-plates.
+const MIN_POINTS_FOR_MULTI_SPLIT: usize = 100;
+/// Minimum points per sub-plate when choosing sub-plate count.
+const POINTS_PER_SUB_PLATE: usize = 25;
+/// Dot product threshold for choosing a stable cross-product axis.
+/// Avoids near-parallel vectors when building a tangent frame.
+const TANGENT_AXIS_THRESHOLD: f64 = 0.9;
+/// Speed factor range for sub-plate speed variation: [min, max] = [0.8, 1.2].
+const SPEED_FACTOR_BASE: f64 = 0.8;
+const SPEED_FACTOR_RANGE: f64 = 0.4;
 
 /// Check whether a plate should rift this timestep.
 ///
@@ -50,7 +60,6 @@ pub(super) fn should_rift(
         return false;
     }
 
-    // Area ratio: plate size relative to the average plate size.
     let avg_plate_size = total_points as f64 / plate_count.max(1) as f64;
     let area_ratio = plate.point_count() as f64 / avg_plate_size;
 
@@ -92,7 +101,6 @@ pub(super) fn rift_plate(
 
     for (local, &global) in plate.point_indices.iter().enumerate() {
         let mut sub = partition[local];
-        // Fallback: if flood fill didn't reach this point, assign to nearest seed.
         if sub == u32::MAX {
             let p = points[global as usize];
             sub = seeds
@@ -110,7 +118,6 @@ pub(super) fn rift_plate(
         sub_plates[sub as usize].crust.push(plate.crust[local].clone());
     }
 
-    // Filter out empty sub-plates (shouldn't happen but be safe).
     sub_plates.retain(|p| !p.point_indices.is_empty());
     sub_plates
 }
@@ -124,15 +131,13 @@ fn continental_fraction(plate: &Plate) -> f64 {
     continental as f64 / plate.point_count() as f64
 }
 
-/// Choose 2–4 sub-plates based on plate size.
 fn sub_plate_count(point_count: usize, seed: u64) -> usize {
     let hash = splitmix64(seed ^ 0xCAFE);
-    let base = 2 + (hash % 3) as usize; // 2, 3, or 4
-    // Large plates can support more sub-plates; small plates cap at 2.
-    if point_count < 100 {
+    let base = 2 + (hash % 3) as usize;
+    if point_count < MIN_POINTS_FOR_MULTI_SPLIT {
         2
     } else {
-        base.min(point_count / 25)
+        base.min(point_count / POINTS_PER_SUB_PLATE)
     }
 }
 
@@ -148,7 +153,6 @@ fn pick_rift_seeds(
     let mut seeds = vec![first];
     let mut min_dot = vec![f64::NEG_INFINITY; n];
 
-    // Initialize distances from first seed.
     let first_pos = points[plate.point_indices[first] as usize];
     for (i, dot) in min_dot.iter_mut().enumerate() {
         *dot = points[plate.point_indices[i] as usize].dot(first_pos);
@@ -160,7 +164,7 @@ fn pick_rift_seeds(
             .min_by(|&a, &b| {
                 min_dot[a]
                     .partial_cmp(&min_dot[b])
-                    .unwrap_or(Ordering::Equal)
+                    .unwrap_or(std::cmp::Ordering::Equal)
             })
             .unwrap();
         seeds.push(farthest);
@@ -177,7 +181,6 @@ fn pick_rift_seeds(
 }
 
 /// Dijkstra flood-fill restricted to the plate's points with noise-warped costs.
-/// Returns a partition vector: `partition[local_index] = sub_plate_id`.
 fn partition_plate(
     plate: &Plate,
     points: &[DVec3],
@@ -190,7 +193,6 @@ fn partition_plate(
         .set_octaves(RIFT_WARP_OCTAVES)
         .set_frequency(RIFT_WARP_FREQUENCY);
 
-    // Map global index → local index for fast lookup.
     let mut global_to_local = vec![u32::MAX; points.len()];
     for (local, &global) in plate.point_indices.iter().enumerate() {
         global_to_local[global as usize] = local as u32;
@@ -203,10 +205,10 @@ fn partition_plate(
     for (sub_id, &local_seed) in seeds.iter().enumerate() {
         partition[local_seed] = sub_id as u32;
         costs[local_seed] = 0.0;
-        heap.push(Entry { cost: 0.0, index: local_seed as u32 });
+        heap.push(MinHeapEntry { cost: 0.0, index: local_seed as u32 });
     }
 
-    while let Some(Entry { cost, index }) = heap.pop() {
+    while let Some(MinHeapEntry { cost, index }) = heap.pop() {
         let local = index as usize;
         if cost > costs[local] {
             continue;
@@ -218,21 +220,18 @@ fn partition_plate(
         for &neighbor_global in adjacency.neighbors_of(global) {
             let neighbor_local = global_to_local[neighbor_global as usize];
             if neighbor_local == u32::MAX {
-                continue; // Neighbor belongs to a different plate.
+                continue;
             }
             let nl = neighbor_local as usize;
             let q = points[neighbor_global as usize];
 
-            let arc = p.dot(q).clamp(-1.0, 1.0).acos();
-            let mid = (p + q).normalize();
-            let warp = 1.0 + RIFT_WARP_AMPLITUDE * fbm.get([mid.x, mid.y, mid.z]);
-            let edge_cost = arc * warp.max(0.1);
+            let edge_cost = warped_edge_cost(p, q, RIFT_WARP_AMPLITUDE, &fbm);
             let new_cost = cost + edge_cost;
 
             if new_cost < costs[nl] {
                 costs[nl] = new_cost;
                 partition[nl] = partition[local];
-                heap.push(Entry { cost: new_cost, index: neighbor_local });
+                heap.push(MinHeapEntry { cost: new_cost, index: neighbor_local });
             }
         }
     }
@@ -241,73 +240,31 @@ fn partition_plate(
 }
 
 /// Generate diverging rotation axes for sub-plates.
-///
-/// Evenly spaces perturbation directions around the parent axis so sub-plates
-/// are guaranteed to move apart from each other.
 fn perturb_axes(
     parent_axis: DVec3,
     parent_speed: f64,
     count: usize,
     seed: u64,
 ) -> Vec<(DVec3, f64)> {
-    // Build a tangent frame around the parent axis.
-    let up = if parent_axis.y.abs() < 0.9 { DVec3::Y } else { DVec3::X };
+    let up = if parent_axis.y.abs() < TANGENT_AXIS_THRESHOLD { DVec3::Y } else { DVec3::X };
     let tangent_u = parent_axis.cross(up).normalize();
     let tangent_v = parent_axis.cross(tangent_u).normalize();
 
-    // Random phase offset so rifts don't always align the same way.
     let mut rng = seed ^ 0xD1CE;
     rng = splitmix64(rng);
     let phase = (rng as f64 / u64::MAX as f64) * std::f64::consts::TAU;
 
     (0..count)
         .map(|i| {
-            // Evenly spaced angles around the parent axis.
             let angle = phase + (i as f64 / count as f64) * std::f64::consts::TAU;
             let direction = tangent_u * angle.cos() + tangent_v * angle.sin();
             let new_axis = (parent_axis + AXIS_PERTURBATION * direction).normalize();
 
-            // Speed variation.
             rng = splitmix64(rng);
-            let speed_factor = 0.8 + 0.4 * (rng as f64 / u64::MAX as f64);
+            let speed_factor = SPEED_FACTOR_BASE + SPEED_FACTOR_RANGE * (rng as f64 / u64::MAX as f64);
             (new_axis, parent_speed * speed_factor)
         })
         .collect()
-}
-
-struct Entry {
-    cost: f64,
-    index: u32,
-}
-
-impl PartialEq for Entry {
-    fn eq(&self, other: &Self) -> bool {
-        self.cost == other.cost
-    }
-}
-
-impl Eq for Entry {}
-
-impl Ord for Entry {
-    fn cmp(&self, other: &Self) -> Ordering {
-        other
-            .cost
-            .partial_cmp(&self.cost)
-            .unwrap_or(Ordering::Equal)
-    }
-}
-
-impl PartialOrd for Entry {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-fn splitmix64(mut x: u64) -> u64 {
-    x = x.wrapping_add(0x9e3779b97f4a7c15);
-    x = (x ^ (x >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
-    x = (x ^ (x >> 27)).wrapping_mul(0x94d049bb133111eb);
-    x ^ (x >> 31)
 }
 
 #[cfg(test)]
@@ -408,7 +365,6 @@ mod tests {
     #[test]
     fn rift_preserves_total_points() {
         let (points, plates, adjacency) = setup(500, 8);
-        // Find a plate large enough to rift.
         let plate = plates
             .iter()
             .max_by_key(|p| p.point_count())

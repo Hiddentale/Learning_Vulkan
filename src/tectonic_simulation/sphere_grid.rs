@@ -3,6 +3,12 @@ use glam::DVec3;
 const LAT_BINS: usize = 64;
 const LON_BINS: usize = 128;
 const BIN_COUNT: usize = LAT_BINS * LON_BINS;
+/// Initial search radius as a multiple of average angular spacing between points.
+/// 3x covers the expected local neighborhood with margin for non-uniform density.
+const INITIAL_RADIUS_MULTIPLIER: f64 = 3.0;
+/// Minimum cosine of latitude used when computing longitude bin span.
+/// Prevents division by near-zero at the poles where meridians converge.
+const MIN_COS_LAT: f64 = 0.01;
 
 /// Lat/lon bin grid on the unit sphere for spatial nearest-neighbor queries.
 /// Stores point indices (u32) into an external positions array.
@@ -36,7 +42,7 @@ impl SphereGrid {
         // Average angular spacing for N points on a unit sphere: sqrt(4π/N).
         // Start with 3× that as the search radius.
         let avg_spacing = (4.0 * std::f64::consts::PI / positions.len() as f64).sqrt();
-        let mut radius = avg_spacing * 3.0;
+        let mut radius = avg_spacing * INITIAL_RADIUS_MULTIPLIER;
 
         loop {
             let candidates = self.candidates_within(dir, radius, positions);
@@ -53,17 +59,7 @@ impl SphereGrid {
         radius: f64,
         positions: &[DVec3],
     ) -> Vec<(u32, f64)> {
-        let (plat, plon) = bin_of(dir);
-        let lat_width = std::f64::consts::PI / LAT_BINS as f64;
-        let lon_width = std::f64::consts::TAU / LON_BINS as f64;
-        let lat_span = (radius / lat_width).ceil() as usize + 1;
-        let lat = dir.y.clamp(-1.0, 1.0).asin();
-        let cos_lat = lat.cos().max(0.01);
-        let lon_span = (radius / (cos_lat * lon_width)).ceil() as usize + 1;
-
-        let lat_lo = plat.saturating_sub(lat_span);
-        let lat_hi = (plat + lat_span).min(LAT_BINS - 1);
-
+        let (lat_lo, lat_hi, plon, lon_span) = bin_range(dir, radius);
         let cos_radius = radius.cos();
         let mut result = Vec::new();
 
@@ -82,6 +78,23 @@ impl SphereGrid {
 
         result
     }
+}
+
+/// Compute the range of lat/lon bins that could overlap a spherical cap of `radius`.
+/// Returns `(lat_lo, lat_hi, center_lon_bin, lon_span)`.
+fn bin_range(dir: DVec3, radius: f64) -> (usize, usize, usize, usize) {
+    let (plat, plon) = bin_of(dir);
+    let lat_width = std::f64::consts::PI / LAT_BINS as f64;
+    let lon_width = std::f64::consts::TAU / LON_BINS as f64;
+    let lat_span = (radius / lat_width).ceil() as usize + 1;
+    let lat = dir.y.clamp(-1.0, 1.0).asin();
+    let cos_lat = lat.cos().max(MIN_COS_LAT);
+    let lon_span = (radius / (cos_lat * lon_width)).ceil() as usize + 1;
+
+    let lat_lo = plat.saturating_sub(lat_span);
+    let lat_hi = (plat + lat_span).min(LAT_BINS - 1);
+
+    (lat_lo, lat_hi, plon, lon_span)
 }
 
 fn bin_of(p: DVec3) -> (usize, usize) {

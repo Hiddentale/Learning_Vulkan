@@ -1,4 +1,3 @@
-use std::cmp::Ordering;
 use std::collections::{BinaryHeap, VecDeque};
 
 use glam::DVec3;
@@ -6,6 +5,7 @@ use noise::{Fbm, MultiFractal, NoiseFn, Perlin};
 
 use super::fibonnaci_spiral::SphericalFibonacci;
 use super::spherical_delaunay_triangulation::SphericalDelaunay;
+use super::util::{splitmix64, MinHeapEntry};
 
 /// Point-level adjacency graph extracted from a Delaunay triangulation.
 pub struct Adjacency {
@@ -84,6 +84,9 @@ impl Default for WarpParams {
 }
 
 const UNASSIGNED: u32 = u32::MAX;
+/// Floor for noise-warped edge cost. Prevents negative or near-zero costs
+/// when noise dips below -1/amplitude.
+pub(super) const WARP_COST_FLOOR: f64 = 0.1;
 
 /// Picks `plate_count` seed indices spread across the sphere via farthest-point sampling,
 /// then Dijkstra flood-fills with noise-warped edge weights to assign every point to a plate.
@@ -159,42 +162,17 @@ fn update_distances(points: &[DVec3], new_seed: u32, min_dot: &mut [f64]) {
     }
 }
 
-struct Entry {
-    cost: f64,
-    point: u32,
-}
-
-impl PartialEq for Entry {
-    fn eq(&self, other: &Self) -> bool {
-        self.cost == other.cost
-    }
-}
-
-impl Eq for Entry {}
-
-impl Ord for Entry {
-    fn cmp(&self, other: &Self) -> Ordering {
-        // Reverse for min-heap (BinaryHeap is max-heap by default).
-        other.cost.partial_cmp(&self.cost).unwrap_or(Ordering::Equal)
-    }
-}
-
-impl PartialOrd for Entry {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-/// Dijkstra flood-fill from all seeds with noise-warped edge weights.
-/// Edge cost = `arc_distance(a, b) * speed[plate] * (1 + amplitude * noise(midpoint))`.
-/// Each plate's speed is drawn from `warp.speed_range` — low speed = fast growth = large plate.
-fn flood_fill(points: &[DVec3], adjacency: &Adjacency, seeds: &[u32], warp: &WarpParams) -> Vec<u32> {
-    let fbm: Fbm<Perlin> = Fbm::new(warp.noise_seed)
-        .set_octaves(warp.octaves)
-        .set_frequency(warp.frequency);
-
-    let plate_speeds = generate_plate_speeds(seeds.len(), warp);
-
+/// Dijkstra flood-fill from all seeds simultaneously.
+///
+/// `edge_cost_fn(p, q, plate_index)` returns the traversal cost for the edge from `p` to `q`
+/// when expanding plate `plate_index`. This single implementation covers all flood-fill
+/// variants: uniform arc-distance, noise-warped, and noise-warped with per-plate speed.
+fn dijkstra_flood_fill(
+    points: &[DVec3],
+    adjacency: &Adjacency,
+    seeds: &[u32],
+    edge_cost_fn: impl Fn(DVec3, DVec3, u32) -> f64,
+) -> Vec<u32> {
     let mut plate_ids = vec![UNASSIGNED; points.len()];
     let mut costs = vec![f64::INFINITY; points.len()];
     let mut heap = BinaryHeap::with_capacity(points.len());
@@ -202,27 +180,25 @@ fn flood_fill(points: &[DVec3], adjacency: &Adjacency, seeds: &[u32], warp: &War
     for (plate, &seed) in seeds.iter().enumerate() {
         plate_ids[seed as usize] = plate as u32;
         costs[seed as usize] = 0.0;
-        heap.push(Entry { cost: 0.0, point: seed });
+        heap.push(MinHeapEntry { cost: 0.0, index: seed });
     }
 
-    while let Some(Entry { cost, point }) = heap.pop() {
+    while let Some(MinHeapEntry { cost, index: point }) = heap.pop() {
         if cost > costs[point as usize] {
             continue;
         }
 
         let plate = plate_ids[point as usize];
-        let speed = plate_speeds[plate as usize];
         let p = points[point as usize];
 
         for &neighbor in adjacency.neighbors_of(point) {
             let q = points[neighbor as usize];
-            let edge_cost = speed * warped_edge_cost(p, q, warp.amplitude, &fbm);
-            let new_cost = cost + edge_cost;
+            let new_cost = cost + edge_cost_fn(p, q, plate);
 
             if new_cost < costs[neighbor as usize] {
                 costs[neighbor as usize] = new_cost;
                 plate_ids[neighbor as usize] = plate;
-                heap.push(Entry { cost: new_cost, point: neighbor });
+                heap.push(MinHeapEntry { cost: new_cost, index: neighbor });
             }
         }
     }
@@ -230,84 +206,37 @@ fn flood_fill(points: &[DVec3], adjacency: &Adjacency, seeds: &[u32], warp: &War
     plate_ids
 }
 
-/// Simple Dijkstra flood-fill with uniform arc-distance edge costs.
+/// Noise-warped flood-fill with per-plate speed variation.
+/// Used by `assign_plates` for initial plate partitioning.
+fn flood_fill(points: &[DVec3], adjacency: &Adjacency, seeds: &[u32], warp: &WarpParams) -> Vec<u32> {
+    let fbm: Fbm<Perlin> = Fbm::new(warp.noise_seed)
+        .set_octaves(warp.octaves)
+        .set_frequency(warp.frequency);
+    let amplitude = warp.amplitude;
+    let plate_speeds = generate_plate_speeds(seeds.len(), warp);
+
+    dijkstra_flood_fill(points, adjacency, seeds, |p, q, plate| {
+        plate_speeds[plate as usize] * warped_edge_cost(p, q, amplitude, &fbm)
+    })
+}
+
+/// Noise-warped flood-fill with uniform plate speed for organic boundaries.
 /// Used during resampling to reassign plate ownership from centroids.
-pub fn flood_fill_from_seeds(points: &[DVec3], adjacency: &Adjacency, seeds: &[u32]) -> Vec<u32> {
-    let mut plate_ids = vec![UNASSIGNED; points.len()];
-    let mut costs = vec![f64::INFINITY; points.len()];
-    let mut heap = BinaryHeap::with_capacity(points.len());
-
-    for (plate, &seed) in seeds.iter().enumerate() {
-        plate_ids[seed as usize] = plate as u32;
-        costs[seed as usize] = 0.0;
-        heap.push(Entry { cost: 0.0, point: seed });
-    }
-
-    while let Some(Entry { cost, point }) = heap.pop() {
-        if cost > costs[point as usize] { continue; }
-
-        let plate = plate_ids[point as usize];
-        let p = points[point as usize];
-
-        for &neighbor in adjacency.neighbors_of(point) {
-            let q = points[neighbor as usize];
-            let edge_cost = p.dot(q).clamp(-1.0, 1.0).acos();
-            let new_cost = cost + edge_cost;
-
-            if new_cost < costs[neighbor as usize] {
-                costs[neighbor as usize] = new_cost;
-                plate_ids[neighbor as usize] = plate;
-                heap.push(Entry { cost: new_cost, point: neighbor });
-            }
-        }
-    }
-
-    plate_ids
-}
-
-/// Dijkstra flood-fill with noise-warped edge costs for organic boundaries.
-/// Same as `flood_fill_from_seeds` but edge costs are modulated by FBM noise,
-/// producing irregular plate boundaries instead of geometric Voronoi cells.
 pub fn flood_fill_from_seeds_warped(
     points: &[DVec3],
     adjacency: &Adjacency,
     seeds: &[u32],
     noise_seed: u32,
 ) -> Vec<u32> {
-    let fbm: Fbm<Perlin> = Fbm::new(noise_seed)
-        .set_octaves(4)
-        .set_frequency(2.0);
-    let amplitude = 0.7;
+    let warp = WarpParams { noise_seed, ..WarpParams::default() };
+    let fbm: Fbm<Perlin> = Fbm::new(warp.noise_seed)
+        .set_octaves(warp.octaves)
+        .set_frequency(warp.frequency);
+    let amplitude = warp.amplitude;
 
-    let mut plate_ids = vec![UNASSIGNED; points.len()];
-    let mut costs = vec![f64::INFINITY; points.len()];
-    let mut heap = BinaryHeap::with_capacity(points.len());
-
-    for (plate, &seed) in seeds.iter().enumerate() {
-        plate_ids[seed as usize] = plate as u32;
-        costs[seed as usize] = 0.0;
-        heap.push(Entry { cost: 0.0, point: seed });
-    }
-
-    while let Some(Entry { cost, point }) = heap.pop() {
-        if cost > costs[point as usize] { continue; }
-
-        let p = points[point as usize];
-
-        for &neighbor in adjacency.neighbors_of(point) {
-            let q = points[neighbor as usize];
-            let edge_cost = warped_edge_cost(p, q, amplitude, &fbm);
-            let new_cost = cost + edge_cost;
-
-            if new_cost < costs[neighbor as usize] {
-                costs[neighbor as usize] = new_cost;
-                plate_ids[neighbor as usize] = plate_ids[point as usize];
-                heap.push(Entry { cost: new_cost, point: neighbor });
-            }
-        }
-    }
-
-    plate_ids
+    dijkstra_flood_fill(points, adjacency, seeds, |p, q, _plate| {
+        warped_edge_cost(p, q, amplitude, &fbm)
+    })
 }
 
 fn generate_plate_speeds(plate_count: usize, warp: &WarpParams) -> Vec<f64> {
@@ -322,19 +251,13 @@ fn generate_plate_speeds(plate_count: usize, warp: &WarpParams) -> Vec<f64> {
         .collect()
 }
 
-fn warped_edge_cost(a: DVec3, b: DVec3, amplitude: f64, fbm: &Fbm<Perlin>) -> f64 {
+pub(super) fn warped_edge_cost(a: DVec3, b: DVec3, amplitude: f64, fbm: &Fbm<Perlin>) -> f64 {
     let arc = a.dot(b).clamp(-1.0, 1.0).acos();
     let mid = (a + b).normalize();
     let warp = 1.0 + amplitude * fbm.get([mid.x, mid.y, mid.z]);
-    arc * warp.max(0.1)
+    arc * warp.max(WARP_COST_FLOOR)
 }
 
-fn splitmix64(mut x: u64) -> u64 {
-    x = x.wrapping_add(0x9e3779b97f4a7c15);
-    x = (x ^ (x >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
-    x = (x ^ (x >> 27)).wrapping_mul(0x94d049bb133111eb);
-    x ^ (x >> 31)
-}
 
 #[cfg(test)]
 mod tests {

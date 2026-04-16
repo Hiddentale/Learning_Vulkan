@@ -1216,3 +1216,220 @@ step=116 pts=1012 plates=10 total=0.8ms | move=0.0 boundary=0.1 subduction=0.4 c
 step=118 pts=1012 plates=10 total=0.8ms | move=0.0 boundary=0.1 subduction=0.3 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
   RESAMPLE: total=10ms | plate_del=4 new_del=3 adj=0 flood=2 interp=1
 step=120 pts=1000 plates=11 total=14.5ms | move=0.0 boundary=0.1 subduction=0.4 collision=0.1 rift=3.8 rift_bnd=0.1 oceanic=0.0 erosion=0.2 resample=9.9
+step=2 pts=500 plates=8 total=0.8ms | move=0.0 boundary=0.0 subduction=0.3 collision=0.2 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.1 resample=0.0
+step=2 pts=1000 plates=8 total=1.1ms | move=0.0 boundary=0.1 subduction=0.5 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.3 resample=0.0
+step=4 pts=500 plates=8 total=0.9ms | move=0.0 boundary=0.1 subduction=0.4 collision=0.2 rift=0.0step=2 pts=500 plates=8 total=1.3ms | move=0.0 boundary=0.0 subduction=0.9 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.1 resample=0.0
+ rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=step=2 pts=1000 plates=step=844 pts= total= pts=50011000 plates=. plates=818 total=ms | move= total=0.0.19step=0ms | move=.2 boundary=0.1 pts=0.0ms | move=5001 boundary=0. plates= subduction=0.080.0 boundary=4step= total= collision=20.step=0. subduction= pts=860.5003ms | move= pts=4 plates= rift=0.500 collision=80.0 plates=0. total=0 boundary=821 rift_bnd=0. total= rift=.0.010.00 subduction=.0ms | move= oceanic=0.0 rift_bnd=0.0.5ms | move=0.00 collision=0.0 boundary= erosion=0.0 oceanic=0.0.1 boundary=0.12 rift=0.0 subduction= resample=0.0 erosion=0.0.0 subduction=0.50 rift_bnd=0.1 collision=
+0.6 resample=0.0 collision=0.1 oceanic=0.step=0 rift=0.0.12
+0.20 subduction= pts=0 rift= erosion=0.1000 rift_bnd=0.0 rift_bnd=0.0 oceanic=0.0.0 erosion=10. resample=10. resample=00.
+0
+30. plates=012 collision= oceanic=0.0 erosion=0.1 resample=0.0
+0. total=2 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+1.6ms | move=0.0 boundary=0.2 subduction=0.7 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=4step= pts=41000 pts= plates=5008 plates= total=81 total=.step=0.269ms | move= pts=ms | move=0.5000.0 plates=0 boundary=8 boundary=0. total=0.110 subduction=. subduction=0.10.5ms | move=4 collision=0. collision=0.00.2 boundary=1 rift=0. rift=0.00.0 subduction=0 rift_bnd=0. rift_bnd=0.5step=0.0 collision=80 oceanic=0. pts= oceanic=0.2step=0.5000 rift=20 plates= erosion=0. pts= erosion=80.0step=5000. total=2 rift_bnd=4 plates=21 resample=0. pts=8 resample=.0.0500 total=0.70 oceanic= plates=10ms | move=
+0.8.
+0.0 total=70 erosion=1ms | move=step=step=6.0. boundary=40.1 resample=0.0
+ pts=50. pts=0ms | move=100001000 boundary=0. plates= subduction= plates=0.081120 boundary= total=. total= subduction=0.1314.0. collision=. subduction=790.90.ms | move= collision=1ms | move=30.0. rift=0. collision=010.00. boundary= rift=040. boundary=0. rift_bnd= rift=10.00.0. subduction=9 rift_bnd=000. subduction=0. oceanic= rift_bnd=80.0.00. collision=60 oceanic=00. collision= erosion=0. oceanic=10.0.00. rift=11 erosion=00. rift= resample=0. erosion=00.0.50. rift_bnd=00 resample=10. rift_bnd=
+0. resample=00.step=00. oceanic=0step=00.
+06 erosion=0. pts=51000 resample=6 plates=step=
+ oceanic=8 pts=0. total=8500010. pts=
+ plates=.0ms | move=5000.0 plates=8 boundary=8 total=0 total=0.0.0.9ms | move=0.0 boundary=0.0 subduction=0.5 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=10. subduction=00.9 erosion=3 erosion=ms | move=0. collision=0.0.10.20step= resample=2 resample= boundary=60. rift=0.0. pts=00.005000
+
+ subduction= plates= rift_bnd=0.80.4step=step=10 total=04 collision= pts=0.500 pts= oceanic=7 plates=5000.ms | move=0.8 plates=10.0 rift=08 total= erosion=0. boundary= total=0.0.00.0.72 rift_bnd=08ms | move= resample=0. subduction=ms | move=0.0.00.0.00 oceanic=30 boundary=
+0. collision= boundary=0.0 subduction=0.00.0.02 erosion=2step=8 pts= rift=0. subduction= collision=10000.10.0. plates=0 resample=328 rift_bnd=0. collision= rift= total=0.00.0.10
+10. oceanic= rift= rift_bnd=30.0.0 rift_bnd=0.00. oceanic=00.step=ms | move= oceanic=00100.0. erosion= erosion= pts=000.0.500 boundary= erosion=11 plates=0.0. resample= resample=8110.0. total= subduction= resample=000.0.0.
+
+480ms | move= collision=
+0.0.step=01 rift= boundary=60.0. pts=001000 rift_bnd= subduction= plates=0.0.1203 total= oceanic= collision=10.0..022 erosion= rift=ms | move=0.0.0.200 resample= rift_bnd= boundary=0.0.0.001
+ oceanic= subduction=step=0.0.807 erosion= collision=0.0.1 pts=1 resample=1000 rift=0. plates=0.0step=80
+8 total= rift_bnd= pts=10.500.2ms | move=0.0 boundary=0.1 subduction=0.5 collision=0.2 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 plates= resample=800. total= oceanic=00.step=0.
+960ms | move= pts= erosion=0.step=0.500028 plates= boundary= resample= pts=80.0.500 total=00 plates=0. subduction=
+80.7 total=5ms | move=0. collision=0.0 boundary=0.0 subduction=0.4 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.1 resample=90.0.step=ms | move=1020. rift=
+ pts=00.2000 boundary=0 plates=0.12 rift_bnd= total=00.2 subduction=0.0. oceanic=150.ms | move= collision=00.step=0. erosion=01010. boundary= pts= rift=10.10000. resample=2 plates=00. subduction=8 rift_bnd=01 total=0.
+.0.009 oceanic= collision=0.ms | move=50. rift=00. boundary=00. rift_bnd=10.0 subduction= oceanic=0.0.0.040 erosion= collision= erosion=0.0.0.113 resample= rift= resample=0.0.0.step=0008
+step= rift_bnd=
+ pts=100.500 pts=0 oceanic=0.0 erosion=0.2 plates=10008 total=0.7ms | move=0.0 boundary=0.0 subduction= resample= plates=0.0.830 total= collision=
+0.step=0.9101ms | move= pts= rift=0.0.step=08 rift_bnd= pts=50000.1000 plates= boundary=0 plates=80. oceanic=12 total=10. total=0. subduction=0170. erosion=.ms | move=30.30. collision=2ms | move=00. resample=0. boundary=20.00. rift=0 boundary=00.
+0. subduction=010. rift_bnd= subduction=40.0 oceanic=0.0 erosion=0.2 resample=0.0
+ collision=0.8step= collision=100. pts=2500 rift= plates=0.80 total= rift_bnd=0.0.80ms | move= oceanic=0.0.000. boundary= erosion=10.0. rift=020. subduction= resample=00.0. rift_bnd=300. collision=
+00. oceanic=20. rift=00.0 rift_bnd=0. erosion=00. oceanic=10. resample=00. erosion=00.
+1 resample=0.0
+step=step=212 pts= pts=5001000 plates= plates=88 total= total=0.18.ms | move=10.ms | move=00. boundary=00. boundary=00. subduction=10. subduction=50. collision=50. collision=  RESAMPLE: total=0.041 rift=ms | plate_del= rift=0.10.step=0 new_del=010 rift_bnd=1 rift_bnd= pts=0. adj=0.50000  RESAMPLE: total=0 plates= oceanic= flood=3 oceanic=80.1ms | plate_del=0. total=0 interp=100. erosion=0 new_del= erosion=90.
+10.ms | move=1 adj=20. resample=0 resample= flood=00.0.1 boundary=00 interp=0.
+
+0step=1
+12step= subduction=0. pts=4 pts=10004 collision= plates=20000.8 plates=1 total=12 rift=1 total=0..step=20210. rift_bnd=ms | move= pts=00.0.1000ms | move=00 plates=0. oceanic= boundary=1200.0. total= boundary=0110. erosion= subduction=.10.0.2 subduction=17ms | move=0. resample= collision=0.80.0.0 collision=02 boundary=0.
+ rift=0.60.1 rift=0step= rift_bnd= subduction=0.0.0.4006 pts= rift_bnd= oceanic= collision=5000.0.0. plates=0018 oceanic= erosion= rift= total=0.0.0.0.0205 erosion= resample= rift_bnd=ms | move=0.0.0.0.3000 resample=
+ oceanic= boundary=0.0.0.000
+ erosion= subduction=0.0.2 resample=0.20step= collision=
+140. pts=01000 plates= rift=80. total=01 rift_bnd=.0.00ms | move= oceanic=0.0.00 boundary= erosion=0.0.11 subduction= resample=0.0.50 collision=
+0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=6 pts=500 plates=8 total=0.7ms | move=0.0 boundary=0.1 subduction=0.5 collision=0.0 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.1 resample=0.0
+step=14 pts=1000 plates=8 total=1.2ms | move=0.0 boundary=0.2 subduction=0.4 collision=0.2 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+  RESAMPLE: total=3ms | plate_del=1 new_del=1 adj=0  RESAMPLE: total= flood=31ms | plate_del= interp=10 new_del=
+1 adj=0 flood=1 interp=0
+step=16 pts=1000 plates=8 total=1.2ms | move=0.0step= boundary=120. pts=11000 subduction= plates=0.127 total= collision=10..17 rift=ms | move=0.0.00 rift_bnd= boundary=0.0.01 oceanic= subduction=0.10. erosion=10. collision=20. resample=10. rift=00.
+0 rift_bnd=0.0 oceanic=0.0step= erosion=0.62 pts= resample=step=2000step=0.2 plates=20 pts=12 pts=
+500 total=500 plates=2 plates=8.step= total=11ms | move=.0.108ms | move= boundary= pts=0.0.50002 plates= boundary= subduction=80.18 total=0. total=1 subduction=01.0.step= collision=.36160.1ms | move= collision= pts=40.ms | move=0.1000 rift=00.2 plates=0. boundary=0 rift=800. boundary=0. total= rift_bnd=10.010. subduction=2 rift_bnd=.00. subduction=0.4 oceanic=0.90ms | move=0.5 collision= oceanic=0.0 collision=0.0.0 erosion=0.00 boundary=0.1 rift= erosion=0.3 rift=0.0.1 resample=0.01 subduction=0.0 rift_bnd= resample=0.0 rift_bnd=0.0.8
+0.00  RESAMPLE: total= collision=0 oceanic=
+40. oceanic=step=0.ms | plate_del=0.01218 new_del=1 adj=0 flood=1 interp=0
+0 erosion= rift= pts=step=14 erosion=0. pts=10000.0.11000 plates=01 resample= plates=8 rift_bnd= resample=0.12 total=0.0.0 total=0.00
+19 oceanic=
+.ms | move=0.1ms | move=00. erosion=0.0.02 boundary=0 resample=0. boundary=0.10.0 subduction=1
+0. subduction=60.step= collision=44 collision= pts=0.0.50021 plates= rift= rift=80.0. total=001 rift_bnd= rift_bnd=.0.0.000ms | move= oceanic= oceanic=0.0.0.000 boundary= erosion=0.0. erosion=220. subduction= resample=20.0. resample=300.step= collision=
+0100.
+ pts=2500 rift= plates=8 total=0.90.ms | move=00. rift_bnd=00. boundary=00. oceanic=00. subduction=00. erosion=50. collision=10.step= resample=080. rift= pts=00.2000
+0 plates= rift_bnd=120. total=0 oceanic=step=0.0 erosion=0.1 resample=0.0
+2.3step=ms | move=2 pts=0.185000 pts= plates= boundary=100080. plates= total=28step=1 subduction= total=20.11 pts=1..1000ms | move=12 plates=0. collision=ms | move=80step=0.0. total= boundary=164010. pts= rift= boundary=0.10000.0. subduction=0 plates=010.ms | move=12 rift_bnd= subduction=60. total=0.0. collision=0160step=0. boundary=. collision= oceanic=610.40.0. pts= rift=2ms | move=205000. subduction=0. rift= erosion= plates=00.00.0.8 rift_bnd=4 boundary=03 total=0. collision=0. rift_bnd= resample=0.00.20.0.8 oceanic=1 subduction=00ms | move=0. rift=0. oceanic=
+0.00.70.0 erosion=0 collision=0 boundary=step=step=120. rift_bnd=0. erosion=0.2 pts=10.10.0 pts=500 rift=0 resample=2 subduction=500 plates=0. oceanic=0. resample=0. plates=800.00.38 total= rift_bnd=0
+0 collision= total=0.0. erosion=
+0.0.900.3step=2 oceanic=6ms | move= rift=2 pts= resample=0.10000.0.0 plates=00 boundary=12 rift_bnd=
+0. total=0.ms | move=0.00.00.0 subduction=9 erosion=0. oceanic=ms | move=00.30.0. boundary=2 collision=000. resample=0. erosion= boundary=00.00.0. subduction=0 rift=100.
+0. resample= subduction=300.0. collision= rift_bnd=00.4
+0 collision= rift=0.0.0.100 rift= rift_bnd= oceanic=0.0.0.000 rift_bnd= oceanic= erosion=0.0.0.001 oceanic= erosion= resample=0.0.0.010 erosion= resample=
+0.0.20
+ resample=0.0
+step=20 pts=1000 plates=8 total=1.0ms | move=0.0 boundary=0.1 subduction=0.4 collision=0.2 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.step=22 pts=1000 plates=8 total=0.9ms | move=0.0 boundary=0.1 subduction=0.4 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=28 resample= pts=step=500 plates=108 pts= total=0.20000.0 plates=6
+12ms | move= total=0.10.7ms | move=0.0 boundary=0.1 subduction=0.7 collision=0.4 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.3 resample=0.0
+step=14 pts= boundary=0.5000 plates= subduction=8 total=0.6ms | move=0.0 boundary=0.0 subduction=0.4 collision=0.0 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.1 resample=0.0
+step=0.42 pts= collision=0.5001 plates= rift=80. total=00. rift_bnd=80.ms | move=00. oceanic=00. boundary=00. erosion=0.01 resample=0.0
+ subduction=step=4 pts=1000 plates=12 total=1.1ms | move=0.0 boundary=0.1 subduction=0.6 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=0.18 pts=step=100024 pts= plates=100012 plates= total=81 total=.145.ms | move= collision=00.0.ms | move=000.step= boundary= rift=0160.0. boundary= pts=100. subduction= rift_bnd=10.0.500 subduction=60 plates=0. collision= oceanic=840.0. total= collision=300.0. rift= erosion=610.0.ms | move= rift=010.0. rift_bnd= resample=000.step=0. boundary= rift_bnd=01000.0. oceanic= pts=
+000.500 subduction= oceanic=0 plates=0.0. erosion=83 total=0.0 collision=0.3 erosion=0.8 resample=0.0ms | move=0.2 rift=0.0 resample=0.0
+0.0step= boundary=0 rift_bnd=120.
+0. pts=002000 subduction= oceanic=0. plates=124 total=0. collision=100..step= erosion=1660. rift=ms | move= pts=20.0.1000 resample=00 plates=0. rift_bnd= boundary=1200.0. total=
+021 oceanic= subduction=.0.0.06 collision=0.3 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.3 resample=0.0
+0ms | move= erosion=step=6 pts=500 plates=8 total=0.7ms | move=0.0 boundary=0.1 subduction=0.3 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.1 resample=0.0.00.0 boundary=1
+0. resample=10. subduction=00.5
+ collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=18 pts=500 plates=8 total=0.7ms | move=0.0 boundary=0.0 subduction=0.4 collision=0.0 rift=0.step=026 rift_bnd= pts=0.10000 plates= oceanic=80. total=0 erosion=10..11 resample=ms | move=0.0.00
+ boundary=0.1 subduction=step=0.step=6208 collision= pts= pts=0.10005001 plates= plates= rift=1280. total= total=010. rift_bnd=.60.3ms | move=0ms | move=0. oceanic=0.00.step=0020 boundary= pts= erosion=0.500 boundary=0.1 plates=0.2 subduction=81 resample=0. total= subduction=0.30.0.0 collision=57
+0.ms | move= collision=0.0.02 boundary= rift=0.0.0step=0 subduction=18 rift_bnd=0. rift= pts=0.1000 plates=312 collision= total=0.10. rift=10.ms | move=00. rift_bnd=00. boundary=00.00. oceanic=0 oceanic=10. rift_bnd=0. subduction=00.00. erosion=0 erosion=60. oceanic=0. collision=10.20. resample=0 resample=20. erosion=0. rift=00.00.
+1
+0step= resample= rift_bnd=140. pts=00.20000 plates= oceanic=0.12
+0 total= erosion=10..2 resample=0.0
+9ms | move=0.0 boundary=0.2 subduction=0.8 collision=0.4 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.3 resample=0.0
+step=28 pts=1000 plates=8 total=0.9ms | move=0.0 boundary=0.1 subduction=0.4 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=10 pts=500 plates=8 total=0.8ms | move=0.0 boundary=0.2 subduction=0.4 collision=0.0 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.1 resample=0.0
+step=22 pts=1000 plates=12 total=1.2ms | move=0.0 boundary=0.1 subduction=0.7 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=10 pts=1000 plates=12 total=1.2ms | move=0.0 boundary=0.1 subduction=0.7 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=30 pts=1000 plates=8 total=1.0ms | move=0.0 boundary=0.2 subduction=0.4 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=12 pts=500 plates=8 total=0.7ms | move=0.0 boundary=0.0 subduction=0.4 collision=0.0 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.1 resample=0.0
+step=16 pts=2000 plates=12 total=1.8ms | move=0.0 boundary=0.1 subduction=0.9 collision=0.4 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.3 resample=0.0
+step=24 pts=1000 plates=12 total=1.0ms | move=0.0 boundary=0.1 subduction=0.4 collision=0.2 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=12 pts=1000 plates=12 total=1.3ms | move=0.0 boundary=0.1 subduction=0.8 collision=0.2 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=32 pts=1000 plates=8 total=1.4ms | move=0.0 boundary=0.1 subduction=0.9 collision=0.2 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=26 pts=1000 plates=12 total=1.0ms | move=0.0 boundary=0.1 subduction=0.5 collision=0.2 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=step=34 pts=100018 plates= pts=82000 plates=12 total= total=10..98ms | move=ms | move=0.0.00 boundary= boundary=0.0.11 subduction= subduction=0.0.49step= collision= collision=140.0. pts=141000 rift= rift= plates=0.0.1200 total= rift_bnd=1 rift_bnd=0..0.040 oceanic=ms | move= oceanic=0.0.0.000 erosion= boundary= erosion=0.0.0.412 resample= subduction= resample=0.0.0.080
+ collision=
+0.2step=28 rift= pts=1000 plates=12 total=1.1ms | move=0.0.00 boundary= rift_bnd=0.0.10 subduction= oceanic=0.0.60 collision= erosion=0.0.22 rift= resample=0.0.00
+ rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=30 pts=1000 plates=12 total=1.3ms | move=0.0 boundary=0.1 subduction=0.8 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=16 pts=1000 plates=12 total=1.4ms | move=0.0 boundary=0.1 subduction=0.9 collision=0.2 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=20 pts=2000 plates=12 total=2.3ms | move=0.0 boundary=0.3 subduction=1.0 collision=0.4 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.4 resample=0.0
+step=32 pts=1000 plates=12 total=0.9ms | move=0.0 boundary=0.1 subduction=0.5 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=18 pts=1000 plates=12 total=1.1ms | move=0.0 boundary=0.1 subduction=0.4 collision=0.2 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=36 pts=1010 plates=8 total=3.5ms | move=0.0 boundary=0.1 subduction=1.3 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=1.7 erosion=0.2 resample=0.0
+step=34 pts=1000 plates=12 total=1.2ms | move=0.0 boundary=0.1 subduction=0.7 collision=0.2 rift=0.0 rift_bnd=0.0 oceanic=0.step=022 erosion= pts=0.20002 plates= resample=0.0
+12 total=1.6ms | move=0.0 boundary=0.1 subduction=0.8 collision=0.4 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.3 resample=0.0
+step=20 pts=1000 plates=12 total=1.2ms | move=0.0 boundary=0.1 subduction=0.5 collision=0.3 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=38 pts=1010 plates=8 total=1.5ms | move=0.0 boundary=0.3 subduction=0.8 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.3 resample=0.0
+step=24 pts=2000 plates=12 total=2.8ms | move=0.0 boundary=0.1 subduction=1.8 collision=0.4 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.3 resample=0.0
+step=36 pts=1004 plates=12 total=3.4ms | move=0.0 boundary=0.2 subduction=0.8 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=1.7 erosion=0.3 resample=0.0
+step=38 pts=1004 plates=12 total=1.2ms | move=0.0 boundary=0.1 subduction=0.6 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.step=26 pts=2000 plates=12 total=1.6ms | move=0.0 boundary=0.1 subduction=0.7 collision=0.4 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.3 resample=0.0
+0
+step=28 pts=2000 plates=12 total=1.7ms | move=0.0 boundary=0.1 subduction=0.7 collision=0.4 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.3 resample=0.0
+step=30 pts=2000 plates=12 total=2.0ms | move=0.0 boundary=0.1 subduction=1.0 collision=0.4 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.3 resample=0.0
+  RESAMPLE: total=8ms | plate_del=1 new_del=1 adj=1 flood=3 interp=2
+step=40 pts=1000 plates=8 total=9.6ms | move=0.0 boundary=0.1 subduction=0.4 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=8.6
+step=32 pts=2000 plates=12 total=1.8ms | move=0.0 boundary=0.1 subduction=0.9 collision=0.4 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.3 resample=0.0
+step=42 pts=1000 plates=8 total=0.9ms | move=0.0 boundary=0.1 subduction=0.4 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=44 pts=1000 plates=8 total=0.9ms | move=0.0 boundary=0.1 subduction=0.4 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=34 pts=2000 plates=12 total=1.7ms | move=0.0 boundary=0.1 subduction=0.7 collision=0.4 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.3 resample=0.0
+step=46 pts=1000 plates=8 total=1.0ms | move=0.0 boundary=0.1 subduction=0.5 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=48 pts=1000 plates=8 total=0.9ms | move=0.0 boundary=0.1 subduction=0.4 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.3 resample=0.0
+step=50 pts=1000 plates=8 total=0.8ms | move=0.0 boundary=0.1 subduction=0.4 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+  RESAMPLE: total=7ms | plate_del=2 new_del=2 adj=0 flood=2 interp=1
+step=40 pts=1000 plates=13 total=10.5ms | move=0.0 boundary=0.1 subduction=0.6 collision=0.3 rift=1.6 rift_bnd=0.2 oceanic=0.0 erosion=0.2 resample=7.4
+step=52 pts=1000 plates=8 total=1.4ms | move=0.0 boundary=0.1 subduction=0.7 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.4 resample=0.0
+step=54 pts=1000 plates=8 total=1.5ms | move=0.0 boundary=0.3 subduction=0.7 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.3 resample=0.0
+step=36 pts=2013 plates=12 total=6.4ms | move=0.0 boundary=0.1 subduction=0.9 collision=0.4 rift=0.0 rift_bnd=0.0 oceanic=4.5 erosion=0.4 resample=0.0
+step=56 pts=1000 plates=8 total=0.8ms | move=0.0 boundary=0.1 subduction=0.3 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=58 pts=1000 plates=8 total=0.9ms | move=0.0 boundary=0.1 subduction=0.3 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=60 pts=1000 plates=8 total=1.1ms | move=0.0 boundary=0.1 subduction=0.6 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=step=6238 pts= pts=10002013 plates= plates=812 total= total=0.38.ms | move=60.ms | move=00. boundary=00. boundary=10. subduction=7 subduction=20..40 collision= collision=0.0.16 rift= rift=0.0.00 rift_bnd= rift_bnd=0.0 oceanic=0.0 erosion=0.3 resample=0.0
+0.0 oceanic=0.0 erosion=0.2 resample=0.0
+  RESAMPLE: total=7ms | plate_del=2 new_del=1 adj=0 flood=2 interp=1
+step=42 pts=1000 plates=13 total=1.2ms | move=0.0 boundary=0.1 subduction=0.6 collision=0.2 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=64 pts=1000 plates=8 total=1.1ms | move=0.0 boundary=0.1 subduction=0.5 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=66 pts=1000 plates=8 total=1.0ms | move=0.0 boundary=0.step=144 subduction= pts=0.10005 collision= plates=0.131 total= rift=10..03 rift_bnd=ms | move=0.0.00 oceanic= boundary=0.0.02 erosion= subduction=0.0.27 resample= collision=0.0.01
+ rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=68 pts=1000 plates=8 total=1.1ms | move=0.0 boundary=0.1 subduction=0.5 collision=0.2 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=46 pts=1000 plates=13 total=1.3ms | move=0.0 boundary=0.1 subduction=0.8 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=70 pts=1000 plates=8 total=0.9ms | move=0.0 boundary=0.1 subduction=0.4 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=48 pts=1000 plates=13 total=1.4ms | move=0.0 boundary=0.1 subduction=0.8 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=72 pts=1000 plates=8 total=1.0ms | move=0.0 boundary=0.1 subduction=0.5 collision=0.2 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=50 pts=1000 plates=13 total=1.3ms | move=0.0 boundary=0.1 subduction=0.8 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=74 pts=1000 plates=8 total=1.2ms | move=0.0 boundary=0.2 subduction=0.6 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=76 pts=1000 plates=8 total=1.0ms | move=0.0 boundary=0.1 subduction=0.4 collision=0.2 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.3 resample=0.0
+step=78 pts=1000 plates=8 total=0.9ms | move=0.0 boundary=0.1 subduction=0.4 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+  RESAMPLE: total=5ms | plate_del=1 new_del=1 adj=0 flood=2 interp=1
+step=80 pts=1000 plates=8 total=6.5ms | move=0.0 boundary=0.1 subduction=0.4 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=5.6
+step=82 pts=1000 plates=8 total=0.8ms | move=0.0 boundary=0.1 subduction=0.3 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=84 pts=1000 plates=8 total=0.8ms | move=0.0 boundary=0.1 subduction=0.3 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=86 pts=1000 plates=8 total=0.8ms | move=0.0 boundary=0.1 subduction=0.4 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=88 pts=1000 plates=8 total=0.9ms | move=0.0 boundary=0.1 subduction=0.4 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+  RESAMPLE: total=13ms | plate_del=3 new_del=3 adj=0step= flood=903 pts= interp=10003 plates=
+8 total=0.8ms | move=0.0 boundary=0.1 subduction=0.3 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=40 pts=2000 plates=14 total=21.9ms | move=0.0 boundary=0.4 subduction=1.6 collision=0.6 rift=4.6 rift_bnd=0.4 oceanic=0.0 erosion=0.3 resample=13.7
+step=92 pts=1000 plates=8 total=0.9ms | move=0.0 boundary=0.1 subduction=0.5 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=94 pts=1000 plates=8 total=0.7ms | move=0.0 boundary=0.1 subduction=0.3 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=96 pts=1000 plates=8 total=0.8ms | move=0.0 boundary=0.1 subduction=0.4 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=98 pts=1000 plates=8 total=0.8ms | move=0.0 boundary=0.1 subduction=0.3 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=100 pts=1000 plates=8 total=0.8ms | move=0.0 boundary=0.1 subduction=0.4 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=102 pts=1000 plates=8 total=0.8ms | move=0.0 boundary=0.1 subduction=0.4 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=104 pts=1000 plates=8 total=0.8ms | move=0.0 boundary=0.1 subduction=0.4 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=106 pts=1000 plates=8 total=0.8ms | move=0.0 boundary=0.1 subduction=0.4 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=108 pts=1000 plates=8 total=0.8ms | move=0.0 boundary=0.1 subduction=0.3 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=110 pts=1000 plates=8 total=0.8ms | move=0.0 boundary=0.1 subduction=0.3 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=112 pts=1000 plates=8 total=0.8ms | move=0.0 boundary=0.1 subduction=0.3 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=114 pts=1000 plates=8 total=0.8ms | move=0.0 boundary=0.1 subduction=0.3 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=116 pts=1000 plates=8 total=0.9ms | move=0.0 boundary=0.1 subduction=0.4 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+step=118 pts=1000 plates=8 total=0.8ms | move=0.0 boundary=0.1 subduction=0.3 collision=0.1 rift=0.0 rift_bnd=0.0 oceanic=0.0 erosion=0.2 resample=0.0
+  RESAMPLE: total=7ms | plate_del=2 new_del=1 adj=0 flood=2 interp=2
+step=120 pts=1000 plates=9 total=10.5ms | move=0.0 boundary=0.1 subduction=0.4 collision=0.1 rift=1.9 rift_bnd=0.2 oceanic=0.0 erosion=0.2 resample=7.7
+  RESAMPLE: total=3ms | plate_del=1 new_del=1 adj=0 flood=1 interp=0
+  RESAMPLE: total=3ms | plate_del=1 new_del=1 adj=0 flood=1 interp=0
+  RESAMPLE: total=3ms | plate_del=1 new_del=1 adj=0 flood=1 interp=0
+  RESAMPLE: total=4ms | plate_del=1 new_del=1 adj=0 flood=1 interp=0
+  RESAMPLE: total=3ms | plate_del=1 new_del=1 adj=0 flood=1 interp=0
+  RESAMPLE: total=6ms | plate_del=1 new_del=1 adj=0 flood=2 interp=1
+  RESAMPLE: total=7ms | plate_del=2 new_del=1 adj=0 flood=2 interp=1
+  RESAMPLE: total=6ms | plate_del=2 new_del=2 adj=0 flood=2 interp=1
+  RESAMPLE: total=6ms | plate_del=1 new_del=2 adj=0 flood=2 interp=1
+  RESAMPLE: total=13ms | plate_del=3 new_del=3 adj=0 flood=3 interp=2
+  RESAMPLE: total=7ms | plate_del=2 new_del=1 adj=0 flood=2 interp=2
+  RESAMPLE: total=3ms | plate_del=1 new_del=1 adj=0 flood=1 interp=1
+  RESAMPLE: total=3ms | plate_del=1 new_del=1 adj=0 flood=1 interp=0
+  RESAMPLE: total=3ms | plate_del=1 new_del=1 adj=0 flood=1 interp=0
+  RESAMPLE: total=3ms | plate_del=1 new_del=1 adj=0 flood=1 interp=0
+  RESAMPLE: total=4ms | plate_del=1 new_del=1 adj=0 flood=1 interp=1
+  RESAMPLE: total=7ms | plate_del=2 new_del=1 adj=0 flood=2 interp=1
+  RESAMPLE: total=6ms | plate_del=1 new_del=1 adj=0 flood=2 interp=1
+  RESAMPLE: total=7ms | plate_del=2 new_del=2 adj=0 flood=2 interp=2
+  RESAMPLE: total=6ms | plate_del=1 new_del=1 adj=0 flood=2 interp=1
+  RESAMPLE: total=14ms | plate_del=4 new_del=3 adj=1 flood=4 interp=3
+  RESAMPLE: total=7ms | plate_del=2 new_del=1 adj=0 flood=2 interp=1
+  RESAMPLE: total=3ms | plate_del=1 new_del=1 adj=0 flood=1 interp=1
+  RESAMPLE: total=3ms | plate_del=1 new_del=1 adj=0 flood=1 interp=0
+  RESAMPLE: total=3ms | plate_del=1 new_del=1 adj=0 flood=1 interp=0
+  RESAMPLE: total=3ms | plate_del=1 new_del=1 adj=0 flood=1 interp=0
+  RESAMPLE: total=3ms | plate_del=1 new_del=1 adj=0 flood=1 interp=0
+  RESAMPLE: total=6ms | plate_del=1 new_del=1 adj=0 flood=2 interp=1
+  RESAMPLE: total=7ms | plate_del=2 new_del=1 adj=0 flood=2 interp=1
+  RESAMPLE: total=6ms | plate_del=2 new_del=1 adj=0 flood=2 interp=1
+  RESAMPLE: total=6ms | plate_del=1 new_del=2 adj=0 flood=2 interp=1
+  RESAMPLE: total=13ms | plate_del=3 new_del=3 adj=0 flood=3 interp=2
+  RESAMPLE: total=7ms | plate_del=2 new_del=1 adj=0 flood=2 interp=2

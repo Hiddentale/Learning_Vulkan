@@ -13,8 +13,25 @@ use super::spherical_delaunay_triangulation::SphericalDelaunay;
 
 const IMAGE_WIDTH: u32 = 2048;
 const IMAGE_HEIGHT: u32 = 1024;
-const POINT_COUNT: u32 = 250_000;
+const POINT_COUNT: u32 = 50_000;
 const PLATE_COUNT: u32 = 20;
+
+/// Velocity magnitudes below this are treated as stationary (no arrow drawn).
+const MIN_VELOCITY: f64 = 1e-12;
+/// Line thickness in pixels for velocity arrows.
+const LINE_THICKNESS: u32 = 2;
+/// Half-size of the seed marker dot in pixels.
+const SEED_DOT_RADIUS: i32 = 2;
+/// Offset to sample at pixel centers rather than pixel edges.
+const PIXEL_CENTER: f64 = 0.5;
+
+const CONTINENTAL_COLOR: [u8; 3] = [255, 255, 255];
+const OCEANIC_COLOR: [u8; 3] = [160, 200, 240];
+const BORDER_COLOR: [u8; 3] = [0, 0, 0];
+const ARROW_COLOR: [u8; 3] = [0, 0, 0];
+const ARROW_LENGTH: f64 = 40.0;
+const ARROW_HEAD_LENGTH: f64 = 10.0;
+const ARROW_HEAD_HALF_WIDTH: f64 = 5.0;
 
 /// Distinct, saturated colors for up to 40 plates.
 const PALETTE: [[u8; 3]; 40] = [
@@ -60,9 +77,40 @@ const PALETTE: [[u8; 3]; 40] = [
     [100, 100, 100],
 ];
 
+/// Convert lat/lon to a unit direction vector.
+/// Uses visualizer convention: X = east, Y = north (up in lat), Z = toward viewer.
+/// This differs from the simulation convention (Y = up) because the equirectangular
+/// projection maps latitude to the Z-component of atan2-based lookups.
 fn latlon_to_direction(lat: f64, lon: f64) -> DVec3 {
     let cos_lat = lat.cos();
     DVec3::new(cos_lat * lon.cos(), cos_lat * lon.sin(), lat.sin())
+}
+
+/// Convert a pixel coordinate to a sphere direction.
+fn pixel_to_direction(px: u32, py: u32) -> DVec3 {
+    let lat = PI / 2.0 - (py as f64 + PIXEL_CENTER) / IMAGE_HEIGHT as f64 * PI;
+    let lon = (px as f64 + PIXEL_CENTER) / IMAGE_WIDTH as f64 * 2.0 * PI - PI;
+    latlon_to_direction(lat, lon)
+}
+
+/// Draw plate borders: any pixel whose right or bottom neighbor belongs to a different plate.
+fn draw_borders(img: &mut RgbImage, pixel_plate: &[u32]) {
+    let color = Rgb(BORDER_COLOR);
+    for py in 0..IMAGE_HEIGHT {
+        for px in 0..IMAGE_WIDTH {
+            let idx = (py * IMAGE_WIDTH + px) as usize;
+            let plate = pixel_plate[idx];
+            let on_border = [(1i32, 0i32), (0, 1)].iter().any(|&(dx, dy)| {
+                let nx = (px as i32 + dx).rem_euclid(IMAGE_WIDTH as i32) as u32;
+                let ny = (py as i32 + dy).clamp(0, IMAGE_HEIGHT as i32 - 1) as u32;
+                let ni = (ny * IMAGE_WIDTH + nx) as usize;
+                pixel_plate[ni] != plate
+            });
+            if on_border {
+                img.put_pixel(px, py, color);
+            }
+        }
+    }
 }
 
 /// Renders an equirectangular plate map to an RGB image.
@@ -70,10 +118,8 @@ pub fn render_plate_map(fibonacci: &SphericalFibonacci, assignment: &PlateAssign
     let mut img = RgbImage::new(IMAGE_WIDTH, IMAGE_HEIGHT);
 
     for py in 0..IMAGE_HEIGHT {
-        let lat = PI / 2.0 - (py as f64 + 0.5) / IMAGE_HEIGHT as f64 * PI;
         for px in 0..IMAGE_WIDTH {
-            let lon = (px as f64 + 0.5) / IMAGE_WIDTH as f64 * 2.0 * PI - PI;
-            let dir = latlon_to_direction(lat, lon);
+            let dir = pixel_to_direction(px, py);
             let nearest = fibonacci.nearest_index(dir);
             let plate = assignment.plate_ids[nearest as usize];
             let color = PALETTE[plate as usize % PALETTE.len()];
@@ -81,15 +127,14 @@ pub fn render_plate_map(fibonacci: &SphericalFibonacci, assignment: &PlateAssign
         }
     }
 
-    // Draw seed points as white dots.
     for &seed_idx in &assignment.seeds {
         let p = fibonacci.index_to_point(seed_idx);
         let lat = p.z.asin();
         let lon = p.y.atan2(p.x);
         let px = ((lon + PI) / (2.0 * PI) * IMAGE_WIDTH as f64) as i32;
         let py = ((PI / 2.0 - lat) / PI * IMAGE_HEIGHT as f64) as i32;
-        for dy in -2..=2i32 {
-            for dx in -2..=2i32 {
+        for dy in -SEED_DOT_RADIUS..=SEED_DOT_RADIUS {
+            for dx in -SEED_DOT_RADIUS..=SEED_DOT_RADIUS {
                 let x = (px + dx).rem_euclid(IMAGE_WIDTH as i32) as u32;
                 let y = (py + dy).clamp(0, IMAGE_HEIGHT as i32 - 1) as u32;
                 img.put_pixel(x, y, Rgb([255, 255, 255]));
@@ -113,18 +158,10 @@ pub fn generate_and_save(seed: u64, output: &Path) {
     println!("  {} points, {} plates, seed {seed}", POINT_COUNT, PLATE_COUNT);
 }
 
-const CONTINENTAL_COLOR: [u8; 3] = [255, 255, 255];
-const OCEANIC_COLOR: [u8; 3] = [160, 200, 240];
-const ARROW_COLOR: [u8; 3] = [0, 0, 0];
-const ARROW_LENGTH: f64 = 40.0;
-const ARROW_HEAD_LENGTH: f64 = 10.0;
-const ARROW_HEAD_HALF_WIDTH: f64 = 5.0;
-
 /// Renders plates colored by crust type with velocity arrows at each plate center.
 pub fn render_initialized_plates(fibonacci: &SphericalFibonacci, assignment: &PlateAssignment, plates: &[Plate]) -> RgbImage {
     let mut img = RgbImage::new(IMAGE_WIDTH, IMAGE_HEIGHT);
 
-    // Build point -> plate lookup for crust type coloring.
     let mut point_crust = vec![CrustType::Oceanic; fibonacci.point_count() as usize];
     for plate in plates {
         for (i, &pi) in plate.point_indices.iter().enumerate() {
@@ -132,13 +169,10 @@ pub fn render_initialized_plates(fibonacci: &SphericalFibonacci, assignment: &Pl
         }
     }
 
-    // Pre-compute plate ID per pixel for border detection.
     let mut pixel_plate = vec![0u32; (IMAGE_WIDTH * IMAGE_HEIGHT) as usize];
     for py in 0..IMAGE_HEIGHT {
-        let lat = PI / 2.0 - (py as f64 + 0.5) / IMAGE_HEIGHT as f64 * PI;
         for px in 0..IMAGE_WIDTH {
-            let lon = (px as f64 + 0.5) / IMAGE_WIDTH as f64 * 2.0 * PI - PI;
-            let dir = latlon_to_direction(lat, lon);
+            let dir = pixel_to_direction(px, py);
             let nearest = fibonacci.nearest_index(dir);
             let idx = (py * IMAGE_WIDTH + px) as usize;
             pixel_plate[idx] = assignment.plate_ids[nearest as usize];
@@ -151,29 +185,12 @@ pub fn render_initialized_plates(fibonacci: &SphericalFibonacci, assignment: &Pl
         }
     }
 
-    // Draw plate borders: any pixel whose neighbor belongs to a different plate.
-    let border_color = Rgb([0u8, 0, 0]);
-    for py in 0..IMAGE_HEIGHT {
-        for px in 0..IMAGE_WIDTH {
-            let idx = (py * IMAGE_WIDTH + px) as usize;
-            let plate = pixel_plate[idx];
-            let on_border = [(1i32, 0i32), (0, 1)].iter().any(|&(dx, dy)| {
-                let nx = (px as i32 + dx).rem_euclid(IMAGE_WIDTH as i32) as u32;
-                let ny = (py as i32 + dy).clamp(0, IMAGE_HEIGHT as i32 - 1) as u32;
-                let ni = (ny * IMAGE_WIDTH + nx) as usize;
-                pixel_plate[ni] != plate
-            });
-            if on_border {
-                img.put_pixel(px, py, border_color);
-            }
-        }
-    }
+    draw_borders(&mut img, &pixel_plate);
 
-    // Draw velocity arrows at each plate's seed point.
     for (plate_idx, plate) in plates.iter().enumerate() {
         let seed_3d = fibonacci.index_to_point(assignment.seeds[plate_idx]);
         let velocity = plate.surface_velocity(seed_3d);
-        if velocity.length() < 1e-12 {
+        if velocity.length() < MIN_VELOCITY {
             continue;
         }
         draw_velocity_arrow(&mut img, seed_3d, velocity);
@@ -190,13 +207,12 @@ fn draw_velocity_arrow(img: &mut RgbImage, origin: DVec3, velocity: DVec3) {
     let cx = (lon + PI) / (2.0 * PI) * IMAGE_WIDTH as f64;
     let cy = (PI / 2.0 - lat) / PI * IMAGE_HEIGHT as f64;
 
-    // Local east and north tangent vectors.
     let east = DVec3::new(-origin.y, origin.x, 0.0).normalize_or_zero();
     let north = origin.cross(east);
     let ve = velocity.dot(east);
     let vn = velocity.dot(north);
     let mag = (ve * ve + vn * vn).sqrt();
-    if mag < 1e-12 {
+    if mag < MIN_VELOCITY {
         return;
     }
 
@@ -209,7 +225,6 @@ fn draw_velocity_arrow(img: &mut RgbImage, origin: DVec3, velocity: DVec3) {
 
     draw_line(img, cx, cy, tip_x, tip_y, ARROW_COLOR);
 
-    // Arrowhead: two lines from tip angled back.
     let back_x = -dx;
     let back_y = -dy;
     let perp_x = -dy;
@@ -235,8 +250,7 @@ fn draw_line(img: &mut RgbImage, x0: f64, y0: f64, x1: f64, y1: f64, color: [u8;
         let y = (y0 + sy * i as f64).round() as i32;
         let px = x.rem_euclid(IMAGE_WIDTH as i32) as u32;
         if y >= 0 && y < IMAGE_HEIGHT as i32 {
-            // Thicken line to 2px for visibility.
-            for oy in 0..2i32 {
+            for oy in 0..LINE_THICKNESS as i32 {
                 let py = (y + oy).clamp(0, IMAGE_HEIGHT as i32 - 1) as u32;
                 img.put_pixel(px, py, Rgb(color));
             }
@@ -251,7 +265,6 @@ pub fn render_simulation(sim: &Simulation) -> RgbImage {
 
     let delaunay = SphericalDelaunay::from_points(&sim.points);
 
-    // Build per-point lookups from current plate state.
     let n = sim.points.len();
     let mut point_plate = vec![0u32; n];
     let mut point_crust = vec![CrustType::Oceanic; n];
@@ -262,17 +275,13 @@ pub fn render_simulation(sim: &Simulation) -> RgbImage {
         }
     }
 
-    // Color pixels using Delaunay locate + dominant barycentric vertex.
-    SphericalDelaunay::reset_locate_stats();
     let mut pixel_plate = vec![0u32; (IMAGE_WIDTH * IMAGE_HEIGHT) as usize];
     let mut last_tri = 0;
     for py in 0..IMAGE_HEIGHT {
-        let lat = PI / 2.0 - (py as f64 + 0.5) / IMAGE_HEIGHT as f64 * PI;
         for px in 0..IMAGE_WIDTH {
-            let lon = (px as f64 + 0.5) / IMAGE_WIDTH as f64 * 2.0 * PI - PI;
-            let dir = latlon_to_direction(lat, lon);
+            let dir = pixel_to_direction(px, py);
 
-            let (tri, b1, b2, b3) = delaunay.locate(dir, &sim.points, last_tri);
+            let (tri, _b1, _b2, _b3) = delaunay.locate(dir, &sim.points, last_tri);
             last_tri = tri;
 
             let base = tri * 3;
@@ -281,7 +290,6 @@ pub fn render_simulation(sim: &Simulation) -> RgbImage {
                 delaunay.triangles[base + 1] as usize,
                 delaunay.triangles[base + 2] as usize,
             ];
-            // Pick nearest vertex by sphere distance, not barycentric weight.
             let nearest = *vi
                 .iter()
                 .max_by(|&&a, &&b| dir.dot(sim.points[a]).partial_cmp(&dir.dot(sim.points[b])).unwrap())
@@ -297,32 +305,9 @@ pub fn render_simulation(sim: &Simulation) -> RgbImage {
             img.put_pixel(px, py, Rgb(color));
         }
     }
-    let brute = SphericalDelaunay::brute_force_count();
-    let total_pixels = IMAGE_WIDTH as u64 * IMAGE_HEIGHT as u64;
-    eprintln!(
-        "[RENDER] locate brute-force fallbacks: {brute}/{total_pixels} ({:.2}%)",
-        brute as f64 / total_pixels as f64 * 100.0
-    );
 
-    // Draw plate borders.
-    let border_color = Rgb([0u8, 0, 0]);
-    for py in 0..IMAGE_HEIGHT {
-        for px in 0..IMAGE_WIDTH {
-            let idx = (py * IMAGE_WIDTH + px) as usize;
-            let plate = pixel_plate[idx];
-            let on_border = [(1i32, 0i32), (0, 1)].iter().any(|&(dx, dy)| {
-                let nx = (px as i32 + dx).rem_euclid(IMAGE_WIDTH as i32) as u32;
-                let ny = (py as i32 + dy).clamp(0, IMAGE_HEIGHT as i32 - 1) as u32;
-                let ni = (ny * IMAGE_WIDTH + nx) as usize;
-                pixel_plate[ni] != plate
-            });
-            if on_border {
-                img.put_pixel(px, py, border_color);
-            }
-        }
-    }
+    draw_borders(&mut img, &pixel_plate);
 
-    // Draw velocity arrows at each plate centroid.
     for plate in &sim.plates {
         if plate.point_indices.is_empty() {
             continue;
@@ -334,7 +319,7 @@ pub fn render_simulation(sim: &Simulation) -> RgbImage {
             .sum::<DVec3>()
             .normalize_or_zero();
         let velocity = plate.surface_velocity(centroid);
-        if velocity.length() < 1e-12 {
+        if velocity.length() < MIN_VELOCITY {
             continue;
         }
         draw_velocity_arrow(&mut img, centroid, velocity);
@@ -379,7 +364,6 @@ mod tests {
         let total_frames = TIMELAPSE_STEPS / steps_per_frame + 1;
         let mut frame = 0;
 
-        // Frame 0: initial state (points are a clean Fibonacci grid).
         frame += 1;
         print!(
             "\r[{:>3}%] Frame {}/{} (t=0 Myr)        ",
@@ -392,7 +376,6 @@ mod tests {
 
         for step in 1..=TIMELAPSE_STEPS {
             sim.step();
-            // Render right after resample (points are clean Fibonacci grid).
             if step % steps_per_frame == 0 {
                 frame += 1;
                 let pct = (frame * 100).min(100 * total_frames) / total_frames;

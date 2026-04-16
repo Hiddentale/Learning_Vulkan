@@ -1,7 +1,8 @@
 use glam::DVec3;
 
+use super::boundary::BoundaryEdge;
 use super::plates::{CrustData, Plate};
-use super::simulate::BoundaryEdge;
+use super::util::{arbitrary_tangent, plate_centroid};
 
 /// Planet radius in km.
 const PLANET_RADIUS: f64 = 6370.0;
@@ -26,6 +27,12 @@ const FAST_ANGULAR_SPEED: f64 = 0.02;
 const SLOW_ANGULAR_SPEED: f64 = 0.005;
 /// Minimum angular separation between new ridge points (radians, ~2°).
 const MIN_POINT_SEPARATION: f64 = 0.035;
+/// Squared length below which a vector is treated as degenerate (effectively zero).
+const DEGENERATE_LENGTH_SQ: f64 = 1e-20;
+/// Value below which a scalar denominator is treated as zero.
+const ZERO_THRESHOLD: f64 = 1e-10;
+/// Each plate receives half the total spreading rate.
+const HALF_SPREADING: f64 = 0.5;
 
 pub(super) struct DivergentEdge {
     pub point_a: u32,
@@ -71,60 +78,72 @@ pub(super) fn find_divergent_edges(
     plates: &[Plate],
     points: &[DVec3],
 ) -> Vec<DivergentEdge> {
-    let mut point_to_local = vec![0usize; points.len()];
-    for plate in plates {
-        for (local, &global) in plate.point_indices.iter().enumerate() {
-            point_to_local[global as usize] = local;
-        }
-    }
-
+    let point_to_local = build_local_index_map(plates, points.len());
     let mut edges = Vec::new();
+
     for edge in boundary {
-        let p = points[edge.point as usize];
-        let vel_a = plates[edge.plate_a as usize].surface_velocity(p);
-        let vel_b = plates[edge.plate_b as usize].surface_velocity(p);
-        let relative = vel_a - vel_b;
-
-        // Direction from point (plate_a) toward neighbor (plate_b), projected onto tangent plane.
-        let neighbor_pos = points[edge.neighbor as usize];
-        let edge_dir = neighbor_pos - p;
-        let tangent = (edge_dir - p * edge_dir.dot(p)).normalize_or_zero();
-        if tangent.length_squared() < 1e-20 {
-            continue;
+        if let Some(div) = classify_edge(edge, plates, points, &point_to_local) {
+            edges.push(div);
         }
-
-        // Positive = plates pulling apart along this direction.
-        let divergence = relative.dot(tangent) * PLANET_RADIUS;
-        if divergence < MIN_DIVERGENCE_SPEED {
-            continue;
-        }
-
-        let local_a = point_to_local[edge.point as usize];
-        let local_b = point_to_local[edge.neighbor as usize];
-
-        // After collision transfers or rifting, a boundary edge may reference
-        // a stale local index. Skip these safely.
-        let plate_a_len = plates[edge.plate_a as usize].crust.len();
-        let plate_b_len = plates[edge.plate_b as usize].crust.len();
-        if local_a >= plate_a_len || local_b >= plate_b_len {
-            continue;
-        }
-
-        let ridge_pos = (p + neighbor_pos).normalize();
-
-        edges.push(DivergentEdge {
-            point_a: edge.point,
-            point_b: edge.neighbor,
-            plate_a: edge.plate_a,
-            plate_b: edge.plate_b,
-            ridge_pos,
-            divergence_speed: divergence,
-            elevation_a: plates[edge.plate_a as usize].crust[local_a].elevation,
-            elevation_b: plates[edge.plate_b as usize].crust[local_b].elevation,
-        });
     }
 
     edges
+}
+
+fn build_local_index_map(plates: &[Plate], point_count: usize) -> Vec<usize> {
+    let mut map = vec![0usize; point_count];
+    for plate in plates {
+        for (local, &global) in plate.point_indices.iter().enumerate() {
+            map[global as usize] = local;
+        }
+    }
+    map
+}
+
+fn classify_edge(
+    edge: &BoundaryEdge,
+    plates: &[Plate],
+    points: &[DVec3],
+    point_to_local: &[usize],
+) -> Option<DivergentEdge> {
+    let p = points[edge.point as usize];
+    let vel_a = plates[edge.plate_a as usize].surface_velocity(p);
+    let vel_b = plates[edge.plate_b as usize].surface_velocity(p);
+    let relative = vel_a - vel_b;
+
+    let neighbor_pos = points[edge.neighbor as usize];
+    let edge_dir = neighbor_pos - p;
+    let tangent = (edge_dir - p * edge_dir.dot(p)).normalize_or_zero();
+    if tangent.length_squared() < DEGENERATE_LENGTH_SQ {
+        return None;
+    }
+
+    let divergence = relative.dot(tangent) * PLANET_RADIUS;
+    if divergence < MIN_DIVERGENCE_SPEED {
+        return None;
+    }
+
+    let local_a = point_to_local[edge.point as usize];
+    let local_b = point_to_local[edge.neighbor as usize];
+
+    // After collision transfers or rifting, a boundary edge may reference
+    // a stale local index. Skip these safely.
+    let plate_a_len = plates[edge.plate_a as usize].crust.len();
+    let plate_b_len = plates[edge.plate_b as usize].crust.len();
+    if local_a >= plate_a_len || local_b >= plate_b_len {
+        return None;
+    }
+
+    Some(DivergentEdge {
+        point_a: edge.point,
+        point_b: edge.neighbor,
+        plate_a: edge.plate_a,
+        plate_b: edge.plate_b,
+        ridge_pos: (p + neighbor_pos).normalize(),
+        divergence_speed: divergence,
+        elevation_a: plates[edge.plate_a as usize].crust[local_a].elevation,
+        elevation_b: plates[edge.plate_b as usize].crust[local_b].elevation,
+    })
 }
 
 /// Generate new sample points along divergent ridges.
@@ -132,16 +151,13 @@ pub(super) fn generate_ridge_points(
     divergent_edges: &[DivergentEdge],
     plates: &[Plate],
     points: &[DVec3],
-    _dt_since: f64,
 ) -> Vec<NewRidgePoint> {
     let centroids: Vec<DVec3> = plates.iter().map(|p| plate_centroid(p, points)).collect();
-
     let mut new_points: Vec<NewRidgePoint> = Vec::new();
 
     for edge in divergent_edges {
         let ridge_pos = edge.ridge_pos;
 
-        // Deduplicate: skip if too close to an already-generated point.
         let too_close = new_points.iter().any(|np| {
             let dot = np.position.dot(ridge_pos).clamp(-1.0, 1.0);
             dot.acos() < MIN_POINT_SEPARATION
@@ -150,38 +166,18 @@ pub(super) fn generate_ridge_points(
             continue;
         }
 
-        // Distances for blending.
         let pa = points[edge.point_a as usize];
         let pb = points[edge.point_b as usize];
-        let d_ridge = 0.0; // new point is at the ridge midpoint
+        let d_ridge = 0.0;
         let d_plate = ridge_pos.dot(pa).clamp(-1.0, 1.0).acos() * PLANET_RADIUS;
 
-        // Interpolated border elevation z̄.
-        let z_bar = 0.5 * (edge.elevation_a + edge.elevation_b);
-
-        // Ridge template elevation z_Γ.
-        let spreading_rate = edge.divergence_speed * 0.5; // half-rate per plate
+        let z_bar = HALF_SPREADING * (edge.elevation_a + edge.elevation_b);
+        let spreading_rate = edge.divergence_speed * HALF_SPREADING;
         let z_gamma = ridge_profile(d_ridge, spreading_rate);
-
-        // Blend: at the ridge midpoint, α=0 so z = z_Γ.
         let elevation = blend_elevation(d_ridge, d_plate, z_bar, z_gamma);
 
-        // Ridge direction: r = (p - q) × p.
-        let ridge_dir = ridge_direction(ridge_pos, ridge_pos);
-        // At the exact ridge midpoint, p ≈ q so direction degenerates.
-        // Fall back to cross product of the two plate edge points.
-        let ridge_dir = if ridge_dir.length_squared() < 1e-20 {
-            let fallback = (pb - pa).cross(ridge_pos).normalize_or_zero();
-            if fallback.length_squared() < 1e-20 {
-                arbitrary_tangent(ridge_pos)
-            } else {
-                fallback
-            }
-        } else {
-            ridge_dir
-        };
+        let ridge_dir = compute_ridge_direction(ridge_pos, pa, pb);
 
-        // Assign to the closer plate.
         let dot_a = ridge_pos.dot(centroids[edge.plate_a as usize]);
         let dot_b = ridge_pos.dot(centroids[edge.plate_b as usize]);
         let plate_index = if dot_a >= dot_b { edge.plate_a } else { edge.plate_b };
@@ -196,10 +192,24 @@ pub(super) fn generate_ridge_points(
     new_points
 }
 
+fn compute_ridge_direction(ridge_pos: DVec3, pa: DVec3, pb: DVec3) -> DVec3 {
+    let dir = ridge_direction(ridge_pos, ridge_pos);
+    if dir.length_squared() < DEGENERATE_LENGTH_SQ {
+        let fallback = (pb - pa).cross(ridge_pos).normalize_or_zero();
+        if fallback.length_squared() < DEGENERATE_LENGTH_SQ {
+            arbitrary_tangent(ridge_pos)
+        } else {
+            fallback
+        }
+    } else {
+        dir
+    }
+}
+
 /// Template ridge profile: elevation as a function of distance from ridge axis.
 /// Uses the half-space cooling model.
 fn ridge_profile(distance_from_ridge: f64, spreading_rate: f64) -> f64 {
-    if spreading_rate < 1e-10 || distance_from_ridge < 1e-10 {
+    if spreading_rate < ZERO_THRESHOLD || distance_from_ridge < ZERO_THRESHOLD {
         return RIDGE_AXIS_DEPTH;
     }
     let age = distance_from_ridge / spreading_rate;
@@ -212,7 +222,7 @@ fn ridge_profile(distance_from_ridge: f64, spreading_rate: f64) -> f64 {
 /// z = α·z̄ + (1-α)·z_Γ
 fn blend_elevation(d_ridge: f64, d_plate_edge: f64, z_bar: f64, z_gamma: f64) -> f64 {
     let denom = d_ridge + d_plate_edge;
-    if denom < 1e-10 {
+    if denom < ZERO_THRESHOLD {
         return z_gamma;
     }
     let alpha = d_ridge / denom;
@@ -220,19 +230,8 @@ fn blend_elevation(d_ridge: f64, d_plate_edge: f64, z_bar: f64, z_gamma: f64) ->
 }
 
 /// Ridge direction perpendicular to the ridge line and tangent to the sphere.
-/// r(p) = (p - q) × p, where q is the projection of p onto the ridge.
 fn ridge_direction(point: DVec3, ridge_projection: DVec3) -> DVec3 {
     (point - ridge_projection).cross(point).normalize_or_zero()
-}
-
-fn plate_centroid(plate: &Plate, points: &[DVec3]) -> DVec3 {
-    let sum: DVec3 = plate.point_indices.iter().map(|&i| points[i as usize]).sum();
-    sum.normalize_or_zero()
-}
-
-fn arbitrary_tangent(normal: DVec3) -> DVec3 {
-    let up = if normal.x.abs() < 0.9 { DVec3::X } else { DVec3::Y };
-    normal.cross(up).normalize()
 }
 
 #[cfg(test)]
