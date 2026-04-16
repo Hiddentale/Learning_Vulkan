@@ -22,7 +22,6 @@ const FLOOD_FILL_SEED: u32 = 42;
 /// contamination).
 pub fn resample(sim: &mut Simulation, point_count: u32) {
     let global_crust = build_global_crust_lookup(sim);
-    let point_to_plate = build_point_to_plate(sim);
     let global_delaunay = build_global_delaunay(sim);
 
     let fib = SphericalFibonacci::new(point_count);
@@ -32,7 +31,7 @@ pub fn resample(sim: &mut Simulation, point_count: u32) {
 
     let new_plate_ids = assign_plates_by_flood_fill(sim, &fib, &new_points, &new_adjacency);
     let (new_plate_points, new_plate_crust) = interpolate_crust(
-        sim, &new_points, &new_plate_ids, &global_delaunay, &global_crust, &point_to_plate,
+        sim, &new_points, &new_plate_ids, &global_delaunay, &global_crust,
     );
 
     for (plate_idx, plate) in sim.plates.iter_mut().enumerate() {
@@ -53,17 +52,6 @@ fn build_global_crust_lookup(sim: &Simulation) -> Vec<CrustData> {
         }
     }
     crust
-}
-
-/// Map global point index -> plate index.
-fn build_point_to_plate(sim: &Simulation) -> Vec<u32> {
-    let mut mapping = vec![u32::MAX; sim.points.len()];
-    for (plate_idx, plate) in sim.plates.iter().enumerate() {
-        for &global in &plate.point_indices {
-            mapping[global as usize] = plate_idx as u32;
-        }
-    }
-    mapping
 }
 
 /// Build one Delaunay from all old simulation points.
@@ -97,7 +85,6 @@ fn interpolate_crust(
     new_plate_ids: &[u32],
     global_delaunay: &Option<SphericalDelaunay>,
     global_crust: &[CrustData],
-    point_to_plate: &[u32],
 ) -> (Vec<Vec<u32>>, Vec<Vec<CrustData>>) {
     let plate_count = sim.plates.len();
     let mut new_plate_points: Vec<Vec<u32>> = vec![Vec::new(); plate_count];
@@ -108,12 +95,11 @@ fn interpolate_crust(
         let owner = new_plate_ids[new_idx] as usize;
 
         let crust = if let Some(del) = global_delaunay {
-            interpolate_same_plate(
-                del, new_p, owner as u32, &sim.points,
-                global_crust, point_to_plate, &mut last_tri,
+            interpolate_from_global(
+                del, new_p, &sim.points, global_crust, &mut last_tri,
             )
         } else {
-            nearest_crust_for_plate(new_p, owner as u32, &sim.points, global_crust, point_to_plate)
+            nearest_crust_global(new_p, &sim.points, global_crust)
         };
 
         new_plate_points[owner].push(new_idx as u32);
@@ -123,16 +109,14 @@ fn interpolate_crust(
     (new_plate_points, new_plate_crust)
 }
 
-/// Locate the triangle in the global Delaunay, then interpolate only from vertices
-/// belonging to the same plate as the query point. Falls back to nearest same-plate
-/// point when no matching vertex is found.
-fn interpolate_same_plate(
+/// Interpolate crust data from a global Delaunay triangle.
+/// All three vertices are spatially nearby — no back-side triangle problem.
+/// Cross-plate blending at boundaries creates organic coastline irregularity.
+fn interpolate_from_global(
     del: &SphericalDelaunay,
     point: DVec3,
-    owner_plate: u32,
     old_points: &[DVec3],
     global_crust: &[CrustData],
-    point_to_plate: &[u32],
     last_tri: &mut usize,
 ) -> CrustData {
     let (tri, b1, b2, b3) = del.locate(point, old_points, *last_tri);
@@ -144,74 +128,45 @@ fn interpolate_same_plate(
         del.triangles[base + 1] as usize,
         del.triangles[base + 2] as usize,
     ];
-    let raw_w = [b1.max(0.0), b2.max(0.0), b3.max(0.0)];
 
-    // Filter to same-plate vertices only.
-    let same_plate: Vec<usize> = (0..3)
-        .filter(|&i| point_to_plate[gi[i]] == owner_plate)
-        .collect();
-
-    if same_plate.is_empty() {
-        return nearest_crust_for_plate(point, owner_plate, old_points, global_crust, point_to_plate);
-    }
-
-    // Re-normalize weights over same-plate vertices.
-    let total_w: f64 = same_plate.iter().map(|&i| raw_w[i]).sum();
-    let w: Vec<f64> = if total_w > MIN_BARYCENTRIC_WEIGHT {
-        same_plate.iter().map(|&i| raw_w[i] / total_w).collect()
+    let total_w = b1.max(0.0) + b2.max(0.0) + b3.max(0.0);
+    let w = if total_w > MIN_BARYCENTRIC_WEIGHT {
+        [b1.max(0.0) / total_w, b2.max(0.0) / total_w, b3.max(0.0) / total_w]
     } else {
-        vec![1.0 / same_plate.len() as f64; same_plate.len()]
+        [1.0 / 3.0; 3]
     };
 
-    let dom = same_plate[w.iter().enumerate()
-        .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
-        .map(|(i, _)| i)
-        .unwrap_or(0)];
+    let dom = if w[0] >= w[1] && w[0] >= w[2] { 0 }
+              else if w[1] >= w[2] { 1 }
+              else { 2 };
+
+    let crusts: [&CrustData; 3] = std::array::from_fn(|i| &global_crust[gi[i]]);
 
     let mut thickness = 0.0;
     let mut elevation = 0.0;
     let mut age = 0.0;
     let mut direction = DVec3::ZERO;
-    for (wi, &vi) in w.iter().zip(&same_plate) {
-        let c = &global_crust[gi[vi]];
-        thickness += c.thickness * wi;
-        elevation += c.elevation * wi;
-        age += c.age * wi;
-        direction += c.local_direction * wi;
+    for i in 0..3 {
+        thickness += crusts[i].thickness * w[i];
+        elevation += crusts[i].elevation * w[i];
+        age += crusts[i].age * w[i];
+        direction += crusts[i].local_direction * w[i];
     }
 
     CrustData {
-        crust_type: global_crust[gi[dom]].crust_type,
+        crust_type: crusts[dom].crust_type,
         thickness, elevation, age,
         local_direction: direction.normalize_or_zero(),
-        orogeny_type: global_crust[gi[dom]].orogeny_type,
+        orogeny_type: crusts[dom].orogeny_type,
     }
 }
 
-/// Nearest old point belonging to the given plate.
-fn nearest_crust_for_plate(
-    point: DVec3,
-    owner_plate: u32,
-    old_points: &[DVec3],
-    global_crust: &[CrustData],
-    point_to_plate: &[u32],
-) -> CrustData {
+fn nearest_crust_global(point: DVec3, old_points: &[DVec3], global_crust: &[CrustData]) -> CrustData {
     let nearest = old_points.iter().enumerate()
-        .filter(|(i, _)| point_to_plate[*i] == owner_plate)
         .max_by(|(_, a), (_, b)| point.dot(**a).partial_cmp(&point.dot(**b)).unwrap())
-        .map(|(i, _)| i);
-
-    match nearest {
-        Some(i) => global_crust[i].clone(),
-        None => {
-            // No old points for this plate — use nearest overall.
-            let i = old_points.iter().enumerate()
-                .max_by(|(_, a), (_, b)| point.dot(**a).partial_cmp(&point.dot(**b)).unwrap())
-                .map(|(i, _)| i)
-                .unwrap_or(0);
-            global_crust[i].clone()
-        }
-    }
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+    global_crust[nearest].clone()
 }
 
 #[cfg(test)]
