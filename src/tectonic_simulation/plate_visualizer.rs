@@ -339,7 +339,7 @@ mod tests {
         generate_and_save(42, output);
     }
 
-    const TIMELAPSE_POINTS: u32 = 500_000;
+    const TIMELAPSE_POINTS: u32 = 100_000;
     const TIMELAPSE_STEPS: usize = 200;
     /// Render every N resample cycles. Each cycle = RESAMPLE_INTERVAL steps.
     const TIMELAPSE_RENDER_EVERY_N_RESAMPLES: usize = 1;
@@ -350,7 +350,15 @@ mod tests {
         use super::super::resample;
         use std::io::Write;
 
-        let output_dir = Path::new("src/tectonic_simulation/timelapse");
+        let suffix = if TIMELAPSE_POINTS >= 1_000_000 {
+            format!("{}m", TIMELAPSE_POINTS / 1_000_000)
+        } else if TIMELAPSE_POINTS >= 1_000 {
+            format!("{}", TIMELAPSE_POINTS / 1_000)
+        } else {
+            format!("{}", TIMELAPSE_POINTS)
+        };
+        let dir_name = format!("src/tectonic_simulation/timelapse_{suffix}");
+        let output_dir = Path::new(&dir_name);
         std::fs::create_dir_all(output_dir).expect("failed to create timelapse dir");
 
         let fibonacci = SphericalFibonacci::new(TIMELAPSE_POINTS);
@@ -360,8 +368,8 @@ mod tests {
         let plates = initialize_plates(&points, &delaunay, &assignment, &InitParams::default());
         let mut sim = Simulation::new(points, plates, &delaunay);
 
-        let log_path = std::path::Path::new("src/tectonic_simulation/timelapse/tectonic_debug.log");
-        sim.enable_diagnostics(log_path, 0, usize::MAX);
+        let log_path = output_dir.join("tectonic_debug.log");
+        sim.enable_diagnostics(&log_path, 0, usize::MAX);
 
         let steps_per_frame = resample::RESAMPLE_INTERVAL * TIMELAPSE_RENDER_EVERY_N_RESAMPLES;
         let total_frames = TIMELAPSE_STEPS / steps_per_frame + 1;

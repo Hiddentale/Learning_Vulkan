@@ -57,6 +57,16 @@ const CLUSTER_LAT_BINS: usize = 64;
 /// Number of longitude bands for subduction source clustering.
 const CLUSTER_LON_BINS: usize = 128;
 
+/// A subduction source on the overriding plate's boundary.
+#[derive(Clone)]
+struct SubductionSource {
+    boundary_pos: DVec3,
+    vel_sub: DVec3,
+    vel_over: DVec3,
+    /// Elevation of the subducting plate at the boundary (for height transfer h(z̃_i)).
+    subducting_elevation: f64,
+}
+
 /// Step-range diagnostic logger. Writes per-phase crust statistics to a file.
 pub struct DiagnosticLog {
     file: std::io::BufWriter<std::fs::File>,
@@ -109,6 +119,17 @@ impl Simulation {
 
     pub fn enable_diagnostics(&mut self, path: &std::path::Path, start_step: usize, end_step: usize) {
         self.diagnostics = Some(DiagnosticLog::new(path, start_step, end_step));
+    }
+
+    /// Look up the elevation of a global point within a plate (by plate index).
+    fn elevation_at_point(&self, plate_idx: u32, global_point: u32) -> f64 {
+        let plate = &self.plates[plate_idx as usize];
+        for (local, &global) in plate.point_indices.iter().enumerate() {
+            if global == global_point {
+                return plate.crust[local].elevation;
+            }
+        }
+        0.0
     }
 
     /// Advance the simulation by one timestep.
@@ -207,8 +228,8 @@ impl Simulation {
         &self,
         boundary: &[BoundaryEdge],
         slab_pull_points: &mut [Vec<DVec3>],
-    ) -> Vec<Vec<(DVec3, DVec3, DVec3)>> {
-        let mut sources: Vec<Vec<(DVec3, DVec3, DVec3)>> = vec![Vec::new(); self.plates.len()];
+    ) -> Vec<Vec<SubductionSource>> {
+        let mut sources: Vec<Vec<SubductionSource>> = vec![Vec::new(); self.plates.len()];
 
         for edge in boundary {
             let result = subduction::resolve_subduction(
@@ -226,17 +247,39 @@ impl Simulation {
             };
 
             let boundary_pos = self.points[edge.point as usize];
-            slab_pull_points[subducting_idx as usize].push(boundary_pos);
 
+            // Only process convergent boundaries: plates must be closing.
             let vel_sub = self.plates[subducting_idx as usize].surface_velocity(boundary_pos);
             let vel_over = self.plates[overriding_idx as usize].surface_velocity(boundary_pos);
-            sources[overriding_idx as usize].push((boundary_pos, vel_sub, vel_over));
+            let neighbor_pos = self.points[edge.neighbor as usize];
+            let edge_dir = (neighbor_pos - boundary_pos).normalize_or_zero();
+            let relative = vel_sub - vel_over;
+            // Negative component along edge direction means plates are closing.
+            if relative.dot(edge_dir) >= 0.0 {
+                continue;
+            }
+
+            slab_pull_points[subducting_idx as usize].push(boundary_pos);
+
+            // Look up the subducting plate's elevation at the boundary for h(z̃_i).
+            let subducting_elevation = if subducting_idx == edge.plate_a {
+                self.elevation_at_point(edge.plate_a, edge.point)
+            } else {
+                self.elevation_at_point(edge.plate_b, edge.neighbor)
+            };
+
+            sources[overriding_idx as usize].push(SubductionSource {
+                boundary_pos,
+                vel_sub,
+                vel_over,
+                subducting_elevation,
+            });
         }
 
         sources
     }
 
-    fn apply_uplift(&mut self, clustered: &[Vec<(DVec3, DVec3, DVec3)>]) {
+    fn apply_uplift(&mut self, clustered: &[Vec<SubductionSource>]) {
         for plate_idx in 0..self.plates.len() {
             let sources = &clustered[plate_idx];
             if sources.is_empty() {
@@ -245,18 +288,19 @@ impl Simulation {
             let plate = &mut self.plates[plate_idx];
             for (local, &global) in plate.point_indices.iter().enumerate() {
                 let p = self.points[global as usize];
-                for &(boundary_pos, vel_sub, vel_over) in sources {
-                    if p.dot(boundary_pos) < SUBDUCTION_DOT_THRESHOLD {
+                for src in sources {
+                    if p.dot(src.boundary_pos) < SUBDUCTION_DOT_THRESHOLD {
                         continue;
                     }
-                    let d = p.dot(boundary_pos).clamp(-1.0, 1.0).acos() * PLANET_RADIUS;
+                    let d = p.dot(src.boundary_pos).clamp(-1.0, 1.0).acos() * PLANET_RADIUS;
 
                     let crust = &plate.crust[local];
-                    let relative_speed = (vel_sub - vel_over).length();
-                    let uplift = subduction::subduction_uplift(d, relative_speed, crust.elevation);
+                    let relative_speed = (src.vel_sub - src.vel_over).length();
+                    // Paper: h(z̃_i) uses the subducting plate's elevation, not the overriding plate's.
+                    let uplift = subduction::subduction_uplift(d, relative_speed, src.subducting_elevation);
                     let (new_z, new_fold, new_age) = subduction::apply_subduction_step(
                         crust.elevation, crust.local_direction, crust.age,
-                        d, vel_sub, vel_over, DT,
+                        d, src.vel_sub, src.vel_over, src.subducting_elevation, DT,
                     );
                     let crust = &mut plate.crust[local];
                     crust.elevation = new_z;
@@ -296,17 +340,19 @@ impl Simulation {
             if edge.crust_a != CrustType::Continental || edge.crust_b != CrustType::Continental {
                 continue;
             }
-            let vel_a = self.plates[edge.plate_a as usize]
-                .surface_velocity(self.points[edge.point as usize]);
-            let vel_b = self.plates[edge.plate_b as usize]
-                .surface_velocity(self.points[edge.point as usize]);
+            let boundary_pos = self.points[edge.point as usize];
+            let neighbor_pos = self.points[edge.neighbor as usize];
+            let vel_a = self.plates[edge.plate_a as usize].surface_velocity(boundary_pos);
+            let vel_b = self.plates[edge.plate_b as usize].surface_velocity(boundary_pos);
             let relative = vel_a - vel_b;
-            let toward = self.points[edge.point as usize];
-            if relative.dot(toward) >= 0.0 {
+            // Check convergence: relative velocity should close the gap across the boundary.
+            // edge_dir points from this plate's point toward the neighboring plate's point.
+            let edge_dir = (neighbor_pos - boundary_pos).normalize_or_zero();
+            if relative.dot(edge_dir) >= 0.0 {
                 continue;
             }
             let pair = (edge.plate_a.min(edge.plate_b), edge.plate_a.max(edge.plate_b));
-            collision_boundaries.entry(pair).or_default().push(self.points[edge.point as usize]);
+            collision_boundaries.entry(pair).or_default().push(boundary_pos);
         }
 
         for ((plate_a, plate_b), boundary_points) in collision_boundaries {
@@ -664,8 +710,8 @@ impl Simulation {
 /// Many boundary edges are geographically adjacent — averaging them per cell
 /// preserves physical accuracy while dramatically cutting source count.
 fn cluster_sources(
-    raw_sources: &[Vec<(DVec3, DVec3, DVec3)>],
-) -> Vec<Vec<(DVec3, DVec3, DVec3)>> {
+    raw_sources: &[Vec<SubductionSource>],
+) -> Vec<Vec<SubductionSource>> {
     let bin_count = CLUSTER_LAT_BINS * CLUSTER_LON_BINS;
     let mut clustered = Vec::with_capacity(raw_sources.len());
 
@@ -674,18 +720,24 @@ fn cluster_sources(
             clustered.push(Vec::new());
             continue;
         }
-        let mut grid: HashMap<usize, Vec<&(DVec3, DVec3, DVec3)>> = HashMap::new();
+        let mut grid: HashMap<usize, Vec<&SubductionSource>> = HashMap::new();
         for src in sources {
-            let bin = cluster_bin(src.0, bin_count);
+            let bin = cluster_bin(src.boundary_pos, bin_count);
             grid.entry(bin).or_default().push(src);
         }
         let mut plate_clustered = Vec::with_capacity(grid.len());
         for (_, cell) in &grid {
             let n = cell.len() as f64;
-            let avg_pos: DVec3 = cell.iter().map(|s| s.0).sum::<DVec3>() / n;
-            let avg_vel_sub: DVec3 = cell.iter().map(|s| s.1).sum::<DVec3>() / n;
-            let avg_vel_over: DVec3 = cell.iter().map(|s| s.2).sum::<DVec3>() / n;
-            plate_clustered.push((avg_pos.normalize(), avg_vel_sub, avg_vel_over));
+            let avg_pos: DVec3 = cell.iter().map(|s| s.boundary_pos).sum::<DVec3>() / n;
+            let avg_vel_sub: DVec3 = cell.iter().map(|s| s.vel_sub).sum::<DVec3>() / n;
+            let avg_vel_over: DVec3 = cell.iter().map(|s| s.vel_over).sum::<DVec3>() / n;
+            let avg_elev: f64 = cell.iter().map(|s| s.subducting_elevation).sum::<f64>() / n;
+            plate_clustered.push(SubductionSource {
+                boundary_pos: avg_pos.normalize(),
+                vel_sub: avg_vel_sub,
+                vel_over: avg_vel_over,
+                subducting_elevation: avg_elev,
+            });
         }
         clustered.push(plate_clustered);
     }

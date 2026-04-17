@@ -193,16 +193,15 @@ pub(super) fn generate_ridge_points(
 }
 
 fn compute_ridge_direction(ridge_pos: DVec3, pa: DVec3, pb: DVec3) -> DVec3 {
-    let dir = ridge_direction(ridge_pos, ridge_pos);
-    if dir.length_squared() < DEGENERATE_LENGTH_SQ {
-        let fallback = (pb - pa).cross(ridge_pos).normalize_or_zero();
-        if fallback.length_squared() < DEGENERATE_LENGTH_SQ {
-            arbitrary_tangent(ridge_pos)
-        } else {
-            fallback
-        }
+    // The paper defines r(p) = (p - q) × p where q is the ridge projection.
+    // For points born on the ridge axis, p ≈ q so (p - q) ≈ 0. Instead compute
+    // the direction perpendicular to the ridge line on the sphere surface:
+    // the ridge runs roughly pa→pb, so cross with the surface normal.
+    let ridge_perp = (pb - pa).cross(ridge_pos).normalize_or_zero();
+    if ridge_perp.length_squared() < DEGENERATE_LENGTH_SQ {
+        arbitrary_tangent(ridge_pos)
     } else {
-        dir
+        ridge_perp
     }
 }
 

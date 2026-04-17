@@ -88,11 +88,13 @@ pub fn apply_subduction_step(
     d: f64,
     velocity_i: DVec3,
     velocity_j: DVec3,
+    subducting_elevation: f64,
     dt: f64,
 ) -> (f64, DVec3, f64) {
     let relative = velocity_i - velocity_j;
     let relative_speed = relative.length();
-    let uplift = subduction_uplift(d, relative_speed, elevation);
+    // Paper: h(z̃_i) uses the subducting plate's elevation for the height transfer.
+    let uplift = subduction_uplift(d, relative_speed, subducting_elevation);
 
     let new_elevation = elevation + uplift * dt;
     let new_fold = (fold_direction + FOLD_DIRECTION_WEIGHT * relative * dt).normalize_or_zero();
@@ -342,6 +344,7 @@ mod tests {
             600.0,
             DVec3::new(50.0, 0.0, 0.0),
             DVec3::new(-20.0, 0.0, 0.0),
+            -4.0, // subducting plate elevation
             2.0,
         );
         assert!(new_z > -4.0, "elevation should increase from uplift");
@@ -357,6 +360,7 @@ mod tests {
             600.0,
             DVec3::new(0.0, 50.0, 0.0),
             DVec3::ZERO,
+            0.0, // subducting plate elevation
             2.0,
         );
         // Fold should pick up a Y component from the relative velocity.
@@ -373,6 +377,7 @@ mod tests {
             600.0,
             DVec3::new(80.0, 0.0, 0.0),
             DVec3::ZERO,
+            -0.001, // subducting plate elevation
             100.0,
         );
         assert!(new_z > 0.0, "should have emerged");
@@ -434,6 +439,7 @@ mod tests {
             600.0,
             DVec3::new(50.0, 0.0, 0.0),
             DVec3::ZERO,
+            5.0, // subducting plate elevation
             2.0,
         );
         assert_eq!(new_age, 250.0, "age should not reset when already above sea level");
