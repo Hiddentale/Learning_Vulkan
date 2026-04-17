@@ -1,9 +1,7 @@
 use std::io::{self, Write};
 use std::path::Path;
 
-use glam::DVec3;
-
-use super::plates::{CrustType, OrogenyType, Plate};
+use super::plates::{CrustType, OrogenyType};
 use super::simulate::Simulation;
 use super::spherical_delaunay_triangulation::SphericalDelaunay;
 
@@ -208,14 +206,14 @@ mod tests {
     use super::*;
     use crate::tectonic_simulation::fibonnaci_spiral::SphericalFibonacci;
     use crate::tectonic_simulation::plate_initializer::{initialize_plates, InitParams};
-    use crate::tectonic_simulation::plate_seed_placement::{assign_plates, WarpParams};
+    use crate::tectonic_simulation::plate_seed_placement::assign_plates;
 
     #[test]
     fn record_and_save_smoke_test() {
         let fib = SphericalFibonacci::new(5_000);
         let points = fib.all_points();
         let delaunay = SphericalDelaunay::from_points(&points);
-        let assignment = assign_plates(&points, &fib, &delaunay, 10, 42, &WarpParams::default());
+        let assignment = assign_plates(&points, &fib, &delaunay, 10, 42);
         let plates = initialize_plates(&points, &delaunay, &assignment, &InitParams::default());
         let sim = Simulation::new(points, plates, &delaunay);
 

@@ -173,14 +173,14 @@ fn random_rotation(rng: &mut u64) -> (DVec3, f64) {
 mod tests {
     use super::*;
     use crate::tectonic_simulation::fibonnaci_spiral::SphericalFibonacci;
-    use crate::tectonic_simulation::plate_seed_placement::{assign_plates, WarpParams};
+    use crate::tectonic_simulation::plate_seed_placement::assign_plates;
     use crate::tectonic_simulation::plates::CrustType;
 
     fn setup(point_count: u32, plate_count: u32) -> (Vec<DVec3>, SphericalDelaunay, PlateAssignment) {
         let fib = SphericalFibonacci::new(point_count);
         let points = fib.all_points();
         let del = SphericalDelaunay::from_points(&points);
-        let assignment = assign_plates(&points, &fib, &del, plate_count, 42, &WarpParams::default());
+        let assignment = assign_plates(&points, &fib, &del, plate_count, 42);
         (points, del, assignment)
     }
 

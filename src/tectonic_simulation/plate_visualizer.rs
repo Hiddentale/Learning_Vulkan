@@ -5,8 +5,7 @@ use glam::DVec3;
 use image::{Rgb, RgbImage};
 
 use super::fibonnaci_spiral::SphericalFibonacci;
-use super::plate_initializer::{initialize_plates, InitParams};
-use super::plate_seed_placement::{assign_plates, PlateAssignment, WarpParams};
+use super::plate_seed_placement::{assign_plates, PlateAssignment};
 use super::plates::{CrustType, Plate};
 use super::simulate::Simulation;
 use super::spherical_delaunay_triangulation::SphericalDelaunay;
@@ -150,7 +149,7 @@ pub fn generate_and_save(seed: u64, output: &Path) {
     let fibonacci = SphericalFibonacci::new(POINT_COUNT);
     let points = fibonacci.all_points();
     let delaunay = SphericalDelaunay::from_points(&points);
-    let assignment = assign_plates(&points, &fibonacci, &delaunay, PLATE_COUNT, seed, &WarpParams::default());
+    let assignment = assign_plates(&points, &fibonacci, &delaunay, PLATE_COUNT, seed);
 
     let img = render_plate_map(&fibonacci, &assignment);
     img.save(output).expect("failed to save plate map");
@@ -331,6 +330,7 @@ pub fn render_simulation(sim: &Simulation) -> RgbImage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::plate_initializer::{initialize_plates, InitParams};
 
     #[test]
     #[ignore] // Run with: cargo test --release plate_visualizer -- --ignored --nocapture
@@ -364,7 +364,7 @@ mod tests {
         let fibonacci = SphericalFibonacci::new(TIMELAPSE_POINTS);
         let points = fibonacci.all_points();
         let delaunay = SphericalDelaunay::from_points(&points);
-        let assignment = assign_plates(&points, &fibonacci, &delaunay, PLATE_COUNT, 42, &WarpParams::default());
+        let assignment = assign_plates(&points, &fibonacci, &delaunay, PLATE_COUNT, 42);
         let plates = initialize_plates(&points, &delaunay, &assignment, &InitParams::default());
         let mut sim = Simulation::new(points, plates, &delaunay);
 
@@ -412,7 +412,7 @@ mod tests {
         let fibonacci = SphericalFibonacci::new(DEBUG_EXPORT_POINTS);
         let points = fibonacci.all_points();
         let delaunay = SphericalDelaunay::from_points(&points);
-        let assignment = assign_plates(&points, &fibonacci, &delaunay, PLATE_COUNT, 42, &WarpParams::default());
+        let assignment = assign_plates(&points, &fibonacci, &delaunay, PLATE_COUNT, 42);
         let plates = initialize_plates(&points, &delaunay, &assignment, &InitParams::default());
         let mut sim = Simulation::new(points, plates, &delaunay);
 
@@ -450,7 +450,7 @@ mod tests {
         let fibonacci = SphericalFibonacci::new(POINT_COUNT);
         let points = fibonacci.all_points();
         let delaunay = SphericalDelaunay::from_points(&points);
-        let assignment = assign_plates(&points, &fibonacci, &delaunay, PLATE_COUNT, 42, &WarpParams::default());
+        let assignment = assign_plates(&points, &fibonacci, &delaunay, PLATE_COUNT, 42);
         let plates = initialize_plates(&points, &delaunay, &assignment, &InitParams::default());
 
         let img = render_initialized_plates(&fibonacci, &assignment, &plates);

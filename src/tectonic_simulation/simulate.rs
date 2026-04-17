@@ -790,13 +790,13 @@ mod tests {
     use super::*;
     use super::super::fibonnaci_spiral::SphericalFibonacci;
     use super::super::plate_initializer::{initialize_plates, InitParams};
-    use super::super::plate_seed_placement::{assign_plates, WarpParams};
+    use super::super::plate_seed_placement::assign_plates;
 
     fn setup(point_count: u32, plate_count: u32) -> Simulation {
         let fib = SphericalFibonacci::new(point_count);
         let points = fib.all_points();
         let del = SphericalDelaunay::from_points(&points);
-        let assignment = assign_plates(&points, &fib, &del, plate_count, 42, &WarpParams::default());
+        let assignment = assign_plates(&points, &fib, &del, plate_count, 42);
         let plates = initialize_plates(&points, &del, &assignment, &InitParams::default());
         Simulation::new(points, plates, &del)
     }

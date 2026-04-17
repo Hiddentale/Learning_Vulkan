@@ -1,11 +1,9 @@
-use std::collections::{BinaryHeap, VecDeque};
-
 use glam::DVec3;
-use noise::{Fbm, MultiFractal, NoiseFn, Perlin};
+use noise::{Fbm, NoiseFn, Perlin};
 
 use super::fibonnaci_spiral::SphericalFibonacci;
 use super::spherical_delaunay_triangulation::SphericalDelaunay;
-use super::util::{splitmix64, MinHeapEntry};
+use super::util::splitmix64;
 
 /// Point-level adjacency graph extracted from a Delaunay triangulation.
 pub struct Adjacency {
@@ -55,58 +53,52 @@ impl Adjacency {
     }
 }
 
-/// Controls how noise warps the flood-fill distances to produce irregular plate boundaries.
-pub struct WarpParams {
-    /// How strongly noise distorts the boundaries. 0 = uniform Voronoi, 1 = heavily warped.
-    pub amplitude: f64,
-    /// Base frequency of the noise field. Higher values produce smaller-scale irregularity.
-    pub frequency: f64,
-    /// Number of FBM octaves. More octaves add finer detail to boundary shapes.
-    pub octaves: usize,
-    /// Noise seed — independent of the plate seed placement seed.
-    pub noise_seed: u32,
-    /// Per-plate growth speed range [min, max]. Each plate gets a random multiplier in this
-    /// range — low values grow fast (large plates), high values grow slow (small plates).
-    /// Use [1.0, 1.0] for uniform growth.
-    pub speed_range: [f64; 2],
-}
-
-impl Default for WarpParams {
-    fn default() -> Self {
-        Self {
-            amplitude: 0.7,
-            frequency: 2.0,
-            octaves: 4,
-            noise_seed: 0,
-            speed_range: [0.3, 1.7],
-        }
-    }
-}
-
 const UNASSIGNED: u32 = u32::MAX;
-/// Floor for noise-warped edge cost. Prevents negative or near-zero costs
-/// when noise dips below -1/amplitude.
+
+/// Floor for noise-warped edge cost (used by plate rifting).
 pub(super) const WARP_COST_FLOOR: f64 = 0.1;
 
+// ── Directional growth constants ────────────────────────────────────────────
+
+/// Minimum per-plate growth rate (steps per round).
+const RATE_MIN: f64 = 0.7;
+/// Growth rate range added to RATE_MIN (rng² distribution for right-skew).
+const RATE_RANGE: f64 = 2.3;
+/// Base directional strength — how much alignment with growth dir matters.
+const DIR_BASE: f64 = 0.15;
+/// Extra directional strength inversely scaled by growth rate.
+const DIR_SCALE: f64 = 0.25;
+/// Maximum directional strength.
+const DIR_STRENGTH_CAP: f64 = 0.85;
+/// Compactness weight — penalizes frontier cells far from the seed.
+const COMPACT_WEIGHT: f64 = 0.3;
+/// How many expected-radii before the compactness penalty kicks in.
+const COMPACT_THRESHOLD_MULT: f64 = 1.8;
+/// Multiplier on the compactness penalty.
+const COMPACT_PENALTY_MULT: f64 = 4.0;
+/// Area governor: plates exceeding this many times the expected area grow slower.
+const AREA_GOVERNOR_MULT: f64 = 2.0;
+
+// ── Public API ──────────────────────────────────────────────────────────────
+
 /// Picks `plate_count` seed indices spread across the sphere via farthest-point sampling,
-/// then Dijkstra flood-fills with noise-warped edge weights to assign every point to a plate.
+/// then grows plates via round-robin directional expansion.
 ///
-/// The noise warp distorts effective distances so plate boundaries become irregular,
-/// producing organic continent-like shapes instead of uniform Voronoi cells.
+/// Each plate gets a random preferred growth direction and rate, producing
+/// elongated, peninsula-like shapes instead of uniform Voronoi cells.
 pub fn assign_plates(
     points: &[DVec3],
     fibonacci: &SphericalFibonacci,
     delaunay: &SphericalDelaunay,
     plate_count: u32,
     seed: u64,
-    warp: &WarpParams,
 ) -> PlateAssignment {
     assert!(plate_count >= 2, "need at least 2 plates");
     assert!((plate_count as usize) <= points.len(), "more plates than points");
 
     let adjacency = Adjacency::from_delaunay(points.len(), delaunay);
     let seeds = pick_seeds(points, fibonacci, plate_count, seed);
-    let plate_ids = flood_fill(points, &adjacency, &seeds, warp);
+    let plate_ids = directional_growth(points, &adjacency, &seeds, seed);
 
     PlateAssignment { plate_ids, seeds }
 }
@@ -162,43 +154,175 @@ fn update_distances(points: &[DVec3], new_seed: u32, min_dot: &mut [f64]) {
     }
 }
 
-/// Dijkstra flood-fill from all seeds simultaneously.
-///
-/// `edge_cost_fn(p, q, plate_index)` returns the traversal cost for the edge from `p` to `q`
-/// when expanding plate `plate_index`. This single implementation covers all flood-fill
-/// variants: uniform arc-distance, noise-warped, and noise-warped with per-plate speed.
-fn dijkstra_flood_fill(
+// ── Directional growth ─────────────────────────────────────────────────────
+
+/// Simple seeded RNG: returns a float in [0, 1) and advances the state.
+fn rng_f64(state: &mut u64) -> f64 {
+    *state = splitmix64(*state);
+    (*state as f64) / (u64::MAX as f64)
+}
+
+/// Returns a random integer in [0, n).
+fn rng_usize(state: &mut u64, n: usize) -> usize {
+    *state = splitmix64(*state);
+    (*state as usize) % n
+}
+
+/// Round-robin directional growth. Each plate has a preferred growth direction,
+/// growth rate, and compactness constraint. Produces elongated plate shapes.
+fn directional_growth(
     points: &[DVec3],
     adjacency: &Adjacency,
     seeds: &[u32],
-    edge_cost_fn: impl Fn(DVec3, DVec3, u32) -> f64,
+    seed: u64,
 ) -> Vec<u32> {
-    let mut plate_ids = vec![UNASSIGNED; points.len()];
-    let mut costs = vec![f64::INFINITY; points.len()];
-    let mut heap = BinaryHeap::with_capacity(points.len());
+    let n = points.len();
+    let num_plates = seeds.len();
+    let mut rng = splitmix64(seed ^ 0xCAFE_BABE);
 
-    for (plate, &seed) in seeds.iter().enumerate() {
-        plate_ids[seed as usize] = plate as u32;
-        costs[seed as usize] = 0.0;
-        heap.push(MinHeapEntry { cost: 0.0, index: seed });
+    // Per-plate properties.
+    let mut growth_rate = Vec::with_capacity(num_plates);
+    let mut growth_dir = Vec::with_capacity(num_plates);
+    let mut dir_strength = Vec::with_capacity(num_plates);
+
+    for &seed_idx in seeds {
+        let r1 = rng_f64(&mut rng);
+        let r2 = rng_f64(&mut rng);
+        let rate = RATE_MIN + r1 * r2 * RATE_RANGE;
+        growth_rate.push(rate);
+
+        // Random tangent direction at the seed point.
+        let normal = points[seed_idx as usize].normalize();
+        let rx = rng_f64(&mut rng) - 0.5;
+        let ry = rng_f64(&mut rng) - 0.5;
+        let rz = rng_f64(&mut rng) - 0.5;
+        let rand = DVec3::new(rx, ry, rz);
+        let tangent = (rand - normal * rand.dot(normal)).normalize_or_zero();
+        growth_dir.push(if tangent.length_squared() > 0.01 {
+            tangent
+        } else {
+            // Degenerate — pick any tangent.
+            let up = if normal.y.abs() < 0.9 { DVec3::Y } else { DVec3::X };
+            normal.cross(up).normalize()
+        });
+
+        let ds = (rng_f64(&mut rng) * (DIR_BASE + DIR_SCALE / rate)).min(DIR_STRENGTH_CAP);
+        dir_strength.push(ds);
     }
 
-    while let Some(MinHeapEntry { cost, index: point }) = heap.pop() {
-        if cost > costs[point as usize] {
-            continue;
+    // Initialize plate assignment and per-plate frontiers.
+    let mut plate_ids = vec![UNASSIGNED; n];
+    let mut frontiers: Vec<Vec<u32>> = Vec::with_capacity(num_plates);
+    let mut plate_area = vec![0usize; num_plates];
+
+    for (plate, &seed_idx) in seeds.iter().enumerate() {
+        plate_ids[seed_idx as usize] = plate as u32;
+        frontiers.push(vec![seed_idx]);
+        plate_area[plate] = 1;
+    }
+
+    let expected_area = (n - num_plates).max(1) / num_plates.max(1);
+    let inv_n = 1.0 / n as f64;
+    let mut remaining = n - num_plates;
+
+    while remaining > 0 {
+        let mut any_progress = false;
+
+        for plate in 0..num_plates {
+            let frontier = &mut frontiers[plate];
+            if frontier.is_empty() {
+                continue;
+            }
+
+            let rate = growth_rate[plate];
+            let dir = growth_dir[plate];
+            let ds = dir_strength[plate];
+            let ds_half = ds * 0.5;
+
+            let mut steps = (rate * (0.5 + rng_f64(&mut rng))).ceil() as usize;
+            steps = steps.max(1);
+
+            // Governor: halve steps for oversized plates.
+            if plate_area[plate] > expected_area * AREA_GOVERNOR_MULT as usize {
+                steps = (steps / 2).max(1);
+            }
+
+            // Compactness threshold: expected chord distance for a circular plate.
+            let compact_threshold =
+                (plate_area[plate].max(1) as f64 * inv_n / std::f64::consts::PI).sqrt()
+                    * 2.0
+                    * COMPACT_THRESHOLD_MULT;
+
+            let seed_pos = points[seeds[plate] as usize];
+
+            for _ in 0..steps {
+                if frontier.is_empty() {
+                    break;
+                }
+
+                // Sample a few frontier cells and pick the best-scoring one.
+                let samples = frontier.len().min(3 + (ds * 5.0) as usize);
+                let mut best_idx = 0;
+                let mut best_score = f64::NEG_INFINITY;
+
+                for _ in 0..samples {
+                    let idx = rng_usize(&mut rng, frontier.len());
+                    let cell = frontier[idx];
+                    let p = points[cell as usize];
+                    let diff = p - seed_pos;
+                    let dist_sq = diff.length_squared();
+                    let dist = dist_sq.sqrt().max(1e-12);
+                    let alignment = diff.dot(dir) / dist;
+
+                    let excess = (dist_sq * 0.5 - compact_threshold).max(0.0);
+                    let compact_penalty = excess * COMPACT_WEIGHT * COMPACT_PENALTY_MULT;
+
+                    let score =
+                        alignment * ds + rng_f64(&mut rng) * (1.0 - ds_half) - compact_penalty;
+                    if score > best_score {
+                        best_score = score;
+                        best_idx = idx;
+                    }
+                }
+
+                // Pop the chosen frontier cell (swap-remove).
+                let current = frontier[best_idx];
+                let last = frontier.len() - 1;
+                frontier.swap(best_idx, last);
+                frontier.pop();
+
+                // Expand to unclaimed neighbors.
+                for &nb in adjacency.neighbors_of(current) {
+                    if plate_ids[nb as usize] == UNASSIGNED {
+                        plate_ids[nb as usize] = plate as u32;
+                        frontier.push(nb);
+                        plate_area[plate] += 1;
+                        remaining -= 1;
+                        any_progress = true;
+                    }
+                }
+            }
         }
 
-        let plate = plate_ids[point as usize];
-        let p = points[point as usize];
+        if !any_progress {
+            break;
+        }
+    }
 
-        for &neighbor in adjacency.neighbors_of(point) {
-            let q = points[neighbor as usize];
-            let new_cost = cost + edge_cost_fn(p, q, plate);
-
-            if new_cost < costs[neighbor as usize] {
-                costs[neighbor as usize] = new_cost;
-                plate_ids[neighbor as usize] = plate;
-                heap.push(MinHeapEntry { cost: new_cost, index: neighbor });
+    // Assign orphaned regions to the nearest claimed neighbor.
+    let mut orphans = true;
+    while orphans {
+        orphans = false;
+        for r in 0..n {
+            if plate_ids[r] != UNASSIGNED {
+                continue;
+            }
+            for &nb in adjacency.neighbors_of(r as u32) {
+                if plate_ids[nb as usize] != UNASSIGNED {
+                    plate_ids[r] = plate_ids[nb as usize];
+                    orphans = true;
+                    break;
+                }
             }
         }
     }
@@ -206,50 +330,7 @@ fn dijkstra_flood_fill(
     plate_ids
 }
 
-/// Noise-warped flood-fill with per-plate speed variation.
-/// Used by `assign_plates` for initial plate partitioning.
-fn flood_fill(points: &[DVec3], adjacency: &Adjacency, seeds: &[u32], warp: &WarpParams) -> Vec<u32> {
-    let fbm: Fbm<Perlin> = Fbm::new(warp.noise_seed)
-        .set_octaves(warp.octaves)
-        .set_frequency(warp.frequency);
-    let amplitude = warp.amplitude;
-    let plate_speeds = generate_plate_speeds(seeds.len(), warp);
-
-    dijkstra_flood_fill(points, adjacency, seeds, |p, q, plate| {
-        plate_speeds[plate as usize] * warped_edge_cost(p, q, amplitude, &fbm)
-    })
-}
-
-/// Noise-warped flood-fill with uniform plate speed for organic boundaries.
-/// Used during resampling to reassign plate ownership from centroids.
-pub fn flood_fill_from_seeds_warped(
-    points: &[DVec3],
-    adjacency: &Adjacency,
-    seeds: &[u32],
-    noise_seed: u32,
-) -> Vec<u32> {
-    let warp = WarpParams { noise_seed, ..WarpParams::default() };
-    let fbm: Fbm<Perlin> = Fbm::new(warp.noise_seed)
-        .set_octaves(warp.octaves)
-        .set_frequency(warp.frequency);
-    let amplitude = warp.amplitude;
-
-    dijkstra_flood_fill(points, adjacency, seeds, |p, q, _plate| {
-        warped_edge_cost(p, q, amplitude, &fbm)
-    })
-}
-
-fn generate_plate_speeds(plate_count: usize, warp: &WarpParams) -> Vec<f64> {
-    let [lo, hi] = warp.speed_range;
-    let mut rng_state = splitmix64(warp.noise_seed as u64 ^ 0xDEAD_BEEF);
-    (0..plate_count)
-        .map(|_| {
-            rng_state = splitmix64(rng_state);
-            let t = (rng_state as f64) / (u64::MAX as f64);
-            lo + t * (hi - lo)
-        })
-        .collect()
-}
+// ── Noise-warped edge cost (used by plate rifting) ─────────────────────────
 
 pub(super) fn warped_edge_cost(a: DVec3, b: DVec3, amplitude: f64, fbm: &Fbm<Perlin>) -> f64 {
     let arc = a.dot(b).clamp(-1.0, 1.0).acos();
@@ -262,12 +343,13 @@ pub(super) fn warped_edge_cost(a: DVec3, b: DVec3, amplitude: f64, fbm: &Fbm<Per
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::VecDeque;
 
     fn make_test_assignment(point_count: u32, plate_count: u32) -> (Vec<DVec3>, PlateAssignment) {
         let fib = SphericalFibonacci::new(point_count);
         let points = fib.all_points();
         let del = SphericalDelaunay::from_points(&points);
-        let assignment = assign_plates(&points, &fib, &del, plate_count, 42, &WarpParams::default());
+        let assignment = assign_plates(&points, &fib, &del, plate_count, 42);
         (points, assignment)
     }
 
@@ -320,9 +402,8 @@ mod tests {
         let fib = SphericalFibonacci::new(200);
         let points = fib.all_points();
         let del = SphericalDelaunay::from_points(&points);
-        let warp = WarpParams::default();
-        let a = assign_plates(&points, &fib, &del, 6, 42, &warp);
-        let b = assign_plates(&points, &fib, &del, 6, 99, &warp);
+        let a = assign_plates(&points, &fib, &del, 6, 42);
+        let b = assign_plates(&points, &fib, &del, 6, 99);
         assert_ne!(a.seeds, b.seeds);
     }
 
@@ -381,12 +462,13 @@ mod tests {
     }
 
     #[test]
-    fn different_noise_seed_different_shapes() {
-        let fib = SphericalFibonacci::new(1000);
-        let points = fib.all_points();
-        let del = SphericalDelaunay::from_points(&points);
-        let a = assign_plates(&points, &fib, &del, 10, 42, &WarpParams { noise_seed: 1, ..Default::default() });
-        let b = assign_plates(&points, &fib, &del, 10, 42, &WarpParams { noise_seed: 2, ..Default::default() });
-        assert_ne!(a.plate_ids, b.plate_ids);
+    fn plates_have_size_variety() {
+        let (_, assignment) = make_test_assignment(5000, 12);
+        let mut sizes: Vec<usize> = (0..12)
+            .map(|p| assignment.plate_ids.iter().filter(|&&id| id == p).count())
+            .collect();
+        sizes.sort();
+        let ratio = *sizes.last().unwrap() as f64 / *sizes.first().unwrap() as f64;
+        assert!(ratio > 1.5, "expected size variety, got max/min ratio {ratio:.1}");
     }
 }

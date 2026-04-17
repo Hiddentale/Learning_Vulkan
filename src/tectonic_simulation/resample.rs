@@ -1,7 +1,7 @@
 use glam::DVec3;
 
 use super::fibonnaci_spiral::SphericalFibonacci;
-use super::plate_seed_placement::{Adjacency, flood_fill_from_seeds_warped};
+use super::plate_seed_placement::Adjacency;
 use super::plates::CrustData;
 use super::simulate::Simulation;
 use super::spherical_delaunay_triangulation::SphericalDelaunay;
@@ -11,17 +11,17 @@ pub const RESAMPLE_INTERVAL: usize = 20;
 /// Barycentric weight sum below which all three vertices are weighted equally.
 /// Guards against degenerate triangles where all coordinates are near zero.
 const MIN_BARYCENTRIC_WEIGHT: f64 = 1e-30;
-/// Noise seed for warped flood fill during plate reassignment.
-const FLOOD_FILL_SEED: u32 = 42;
 
 /// Resample the simulation onto a fresh Fibonacci grid.
 ///
-/// Plate assignment: noise-warped flood fill from plate centroids.
-/// Crust interpolation: global Delaunay for spatial location (avoids back-side
-/// triangles), but only interpolates from same-plate vertices (avoids cross-plate
-/// contamination).
+/// Plate assignment: each new point inherits the plate of the nearest old
+/// point (via the old Delaunay triangulation), preserving plate shapes
+/// through resamples instead of re-partitioning from centroids.
+///
+/// Crust interpolation: barycentric interpolation from the enclosing old
+/// triangle for smooth crust data transfer.
 pub fn resample(sim: &mut Simulation, point_count: u32) {
-    let global_crust = build_global_crust_lookup(sim);
+    let (global_crust, global_plate) = build_global_lookups(sim);
     let global_delaunay = build_global_delaunay(sim);
 
     let fib = SphericalFibonacci::new(point_count);
@@ -29,7 +29,9 @@ pub fn resample(sim: &mut Simulation, point_count: u32) {
     let new_delaunay = SphericalDelaunay::from_points(&new_points);
     let new_adjacency = Adjacency::from_delaunay(new_points.len(), &new_delaunay);
 
-    let new_plate_ids = assign_plates_by_flood_fill(sim, &fib, &new_points, &new_adjacency);
+    let new_plate_ids = assign_plates_by_nearest(
+        &new_points, &sim.points, &global_plate, &global_delaunay,
+    );
     let (new_plate_points, new_plate_crust) = interpolate_crust(
         sim, &new_points, &new_plate_ids, &global_delaunay, &global_crust,
     );
@@ -43,15 +45,17 @@ pub fn resample(sim: &mut Simulation, point_count: u32) {
     sim.points = new_points;
 }
 
-/// Map global point index -> CrustData.
-fn build_global_crust_lookup(sim: &Simulation) -> Vec<CrustData> {
+/// Map global point index -> (CrustData, plate_index).
+fn build_global_lookups(sim: &Simulation) -> (Vec<CrustData>, Vec<u32>) {
     let mut crust = vec![CrustData::oceanic(7.0, -4.0, 0.0, DVec3::X); sim.points.len()];
-    for plate in &sim.plates {
-        for (local, &global) in plate.point_indices.iter().enumerate() {
-            crust[global as usize] = plate.crust[local].clone();
+    let mut plate = vec![0u32; sim.points.len()];
+    for (plate_idx, p) in sim.plates.iter().enumerate() {
+        for (local, &global) in p.point_indices.iter().enumerate() {
+            crust[global as usize] = p.crust[local].clone();
+            plate[global as usize] = plate_idx as u32;
         }
     }
-    crust
+    (crust, plate)
 }
 
 /// Build one Delaunay from all old simulation points.
@@ -61,22 +65,45 @@ fn build_global_delaunay(sim: &Simulation) -> Option<SphericalDelaunay> {
     })).ok()
 }
 
-fn assign_plates_by_flood_fill(
-    sim: &Simulation,
-    fib: &SphericalFibonacci,
+/// Assign each new point to the plate of the nearest old point.
+/// Uses the old Delaunay to locate the enclosing triangle, then picks the
+/// nearest vertex — preserving plate shapes through resamples.
+fn assign_plates_by_nearest(
     new_points: &[DVec3],
-    new_adjacency: &Adjacency,
+    old_points: &[DVec3],
+    global_plate: &[u32],
+    global_delaunay: &Option<SphericalDelaunay>,
 ) -> Vec<u32> {
-    let centroids: Vec<DVec3> = sim.plates.iter().map(|plate| {
-        let sum: DVec3 = plate.point_indices.iter().map(|&gi| sim.points[gi as usize]).sum();
-        if plate.point_indices.is_empty() { DVec3::ZERO } else { sum.normalize() }
-    }).collect();
+    let mut plate_ids = vec![0u32; new_points.len()];
+    let mut last_tri = 0usize;
 
-    let seeds: Vec<u32> = centroids.iter()
-        .map(|&c| fib.nearest_index(c))
-        .collect();
+    for (i, &p) in new_points.iter().enumerate() {
+        plate_ids[i] = if let Some(del) = global_delaunay {
+            let (tri, b1, b2, b3) = del.locate(p, old_points, last_tri);
+            last_tri = tri;
+            let base = tri * 3;
+            let vi = [
+                del.triangles[base] as usize,
+                del.triangles[base + 1] as usize,
+                del.triangles[base + 2] as usize,
+            ];
+            // Pick the vertex with the largest barycentric coordinate (nearest).
+            let bary = [b1, b2, b3];
+            let best = if bary[0] >= bary[1] && bary[0] >= bary[2] { 0 }
+                       else if bary[1] >= bary[2] { 1 }
+                       else { 2 };
+            global_plate[vi[best]]
+        } else {
+            // Fallback: brute-force nearest.
+            let nearest = old_points.iter().enumerate()
+                .max_by(|(_, a), (_, b)| p.dot(**a).partial_cmp(&p.dot(**b)).unwrap())
+                .map(|(idx, _)| idx)
+                .unwrap_or(0);
+            global_plate[nearest]
+        };
+    }
 
-    flood_fill_from_seeds_warped(new_points, new_adjacency, &seeds, FLOOD_FILL_SEED)
+    plate_ids
 }
 
 fn interpolate_crust(
@@ -173,13 +200,13 @@ fn nearest_crust_global(point: DVec3, old_points: &[DVec3], global_crust: &[Crus
 mod tests {
     use super::*;
     use super::super::plate_initializer::{initialize_plates, InitParams};
-    use super::super::plate_seed_placement::{assign_plates, WarpParams};
+    use super::super::plate_seed_placement::assign_plates;
 
     fn setup(point_count: u32, plate_count: u32) -> Simulation {
         let fib = SphericalFibonacci::new(point_count);
         let points = fib.all_points();
         let del = SphericalDelaunay::from_points(&points);
-        let assignment = assign_plates(&points, &fib, &del, plate_count, 42, &WarpParams::default());
+        let assignment = assign_plates(&points, &fib, &del, plate_count, 42);
         let plates = initialize_plates(&points, &del, &assignment, &InitParams::default());
         Simulation::new(points, plates, &del)
     }

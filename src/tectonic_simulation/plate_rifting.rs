@@ -1,9 +1,9 @@
 use std::collections::BinaryHeap;
 
 use glam::DVec3;
-use noise::{Fbm, MultiFractal, NoiseFn, Perlin};
+use noise::{Fbm, MultiFractal, Perlin};
 
-use super::plate_seed_placement::{warped_edge_cost, Adjacency, WARP_COST_FLOOR};
+use super::plate_seed_placement::{warped_edge_cost, Adjacency};
 use super::plates::Plate;
 use super::util::{splitmix64, MinHeapEntry};
 
@@ -272,7 +272,7 @@ mod tests {
     use super::*;
     use crate::tectonic_simulation::fibonnaci_spiral::SphericalFibonacci;
     use crate::tectonic_simulation::plate_initializer::{initialize_plates, InitParams};
-    use crate::tectonic_simulation::plate_seed_placement::{assign_plates, WarpParams};
+    use crate::tectonic_simulation::plate_seed_placement::assign_plates;
     use crate::tectonic_simulation::plates::CrustData;
     use crate::tectonic_simulation::spherical_delaunay_triangulation::SphericalDelaunay;
 
@@ -314,7 +314,7 @@ mod tests {
         let points = fib.all_points();
         let del = SphericalDelaunay::from_points(&points);
         let assignment =
-            assign_plates(&points, &fib, &del, plate_count, 42, &WarpParams::default());
+            assign_plates(&points, &fib, &del, plate_count, 42);
         let plates = initialize_plates(&points, &del, &assignment, &InitParams::default());
         let adjacency = Adjacency::from_delaunay(points.len(), &del);
         (points, plates, adjacency)
