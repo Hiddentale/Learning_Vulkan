@@ -305,8 +305,6 @@ pub fn render_simulation(sim: &Simulation) -> RgbImage {
         }
     }
 
-    draw_borders(&mut img, &pixel_plate);
-
     for plate in &sim.plates {
         if plate.point_indices.is_empty() {
             continue;
@@ -329,8 +327,8 @@ pub fn render_simulation(sim: &Simulation) -> RgbImage {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::plate_initializer::{initialize_plates, InitParams};
+    use super::*;
 
     #[test]
     #[ignore] // Run with: cargo test --release plate_visualizer -- --ignored --nocapture
@@ -340,7 +338,7 @@ mod tests {
     }
 
     const TIMELAPSE_POINTS: u32 = 100_000;
-    const TIMELAPSE_STEPS: usize = 200;
+    const TIMELAPSE_STEPS: usize = 400;
     /// Render every N resample cycles. Each cycle = RESAMPLE_INTERVAL steps.
     const TIMELAPSE_RENDER_EVERY_N_RESAMPLES: usize = 1;
 
