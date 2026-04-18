@@ -577,16 +577,22 @@ impl Simulation {
     }
 
     fn maybe_rift(&mut self, boundary: Vec<BoundaryEdge>) -> Vec<BoundaryEdge> {
-        self.steps_since_rift_check += 1;
-        if self.steps_since_rift_check < plate_rifting::RIFT_CHECK_INTERVAL {
-            return boundary;
-        }
-        self.steps_since_rift_check = 0;
+        // TEMP: rifting disabled to isolate whether it causes runaway fragmentation.
+        return boundary;
 
-        if self.process_rifting() {
-            find_boundary_edges(&self.plates, &self.points, &self.adjacency)
-        } else {
-            boundary
+        #[allow(unreachable_code)]
+        {
+            self.steps_since_rift_check += 1;
+            if self.steps_since_rift_check < plate_rifting::RIFT_CHECK_INTERVAL {
+                return boundary;
+            }
+            self.steps_since_rift_check = 0;
+
+            if self.process_rifting() {
+                find_boundary_edges(&self.plates, &self.points, &self.adjacency)
+            } else {
+                boundary
+            }
         }
     }
 

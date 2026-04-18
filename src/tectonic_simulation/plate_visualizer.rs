@@ -305,6 +305,8 @@ pub fn render_simulation(sim: &Simulation) -> RgbImage {
         }
     }
 
+    draw_borders(&mut img, &pixel_plate);
+
     for plate in &sim.plates {
         if plate.point_indices.is_empty() {
             continue;
@@ -337,7 +339,7 @@ mod tests {
         generate_and_save(42, output);
     }
 
-    const TIMELAPSE_POINTS: u32 = 100_000;
+    const TIMELAPSE_POINTS: u32 = 50_000;
     const TIMELAPSE_STEPS: usize = 400;
     /// Render every N resample cycles. Each cycle = RESAMPLE_INTERVAL steps.
     const TIMELAPSE_RENDER_EVERY_N_RESAMPLES: usize = 1;
