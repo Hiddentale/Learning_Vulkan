@@ -170,6 +170,11 @@ impl Simulation {
 
         self.remove_empty_plates();
 
+        // `remove_empty_plates` can renumber plates when terrane transfer
+        // empties one. Rebuild boundary so downstream consumers (rifting,
+        // oceanic crust generation) see fresh indices.
+        let boundary = find_boundary_edges(&self.plates, &self.points, &self.adjacency);
+
         let snap_before_rift = if logging { Some(self.snapshot_crust()) } else { None };
         let boundary = self.maybe_rift(boundary);
         if let Some(before) = snap_before_rift {
@@ -271,13 +276,15 @@ impl Simulation {
 
             // Paper: d(p, t+δt) = d(p, t) + ||s_sub - s_over|| δt. Advance the
             // subducting vertex's distance-past-front so it can be removed once
-            // it has fully subducted.
+            // it has fully subducted. `relative` is in rad/Myr (angular_speed
+            // times a unit tangent), so scale by PLANET_RADIUS to get km/Myr
+            // before multiplying by DT.
             let subducting_vertex = if subducting_idx == edge.plate_a {
                 edge.point
             } else {
                 edge.neighbor
             };
-            let delta = relative.length() * DT;
+            let delta = relative.length() * PLANET_RADIUS * DT;
             advancements.push((subducting_idx, subducting_vertex, delta));
 
             // Look up the subducting plate's elevation at the boundary for h(z̃_i).
@@ -954,7 +961,9 @@ mod tests {
         let mut sim = setup(1000, 12);
         sim.run(10);
         let total: usize = sim.plates.iter().map(|p| p.point_count()).sum();
-        assert_eq!(total, 1000);
+        // Subduction consumption can remove vertices between resamples; count
+        // is bounded above by the initial population and must stay positive.
+        assert!(total > 0 && total <= 1000, "total out of expected range: {total}");
     }
 
     #[test]

@@ -463,9 +463,12 @@ mod tests {
         let mut sim = setup(1000, 12);
         sim.run(20);
         resample(&mut sim, 1000);
+        let after_resample: usize = sim.plates.iter().map(|p| p.point_count()).sum();
+        assert_eq!(after_resample, 1000, "resample should restore full point count");
         sim.run(5);
         let total: usize = sim.plates.iter().map(|p| p.point_count()).sum();
-        assert_eq!(total, 1000);
+        // Subduction consumption can remove vertices between resamples.
+        assert!(total > 0 && total <= 1000, "total out of expected range: {total}");
     }
 
     #[test]
