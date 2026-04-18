@@ -30,6 +30,11 @@ pub struct CrustData {
     pub local_direction: DVec3,
     /// Continental only — `None` for oceanic crust.
     pub orogeny_type: Option<OrogenyType>,
+    /// Accumulated travel past a convergent front for subducting vertices (km).
+    /// Advances per step as `relative_speed * dt` while the vertex is on the
+    /// subducting side of a convergent boundary. At `SUBDUCTION_DISTANCE` the
+    /// vertex is considered fully subducted and removed from the simulation.
+    pub subducted_distance: f64,
 }
 
 impl CrustData {
@@ -41,6 +46,7 @@ impl CrustData {
             age,
             local_direction: ridge_direction,
             orogeny_type: None,
+            subducted_distance: 0.0,
         }
     }
 
@@ -58,6 +64,7 @@ impl CrustData {
             age,
             local_direction: fold_direction,
             orogeny_type: Some(orogeny),
+            subducted_distance: 0.0,
         }
     }
 }

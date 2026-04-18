@@ -3,7 +3,7 @@ use glam::DVec3;
 use super::plates::CrustType;
 
 /// Maximum subduction distance r_s in km. Beyond this, f(d) = 0.
-const SUBDUCTION_DISTANCE: f64 = 1800.0;
+pub const SUBDUCTION_DISTANCE: f64 = 1800.0;
 /// Distance from boundary where f(d) peaks, approximately r_s / 3.
 const SUBDUCTION_PEAK_DISTANCE: f64 = 600.0;
 /// Base subduction uplift u_0 in mm/yr.

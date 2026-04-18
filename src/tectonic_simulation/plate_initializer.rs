@@ -75,6 +75,7 @@ fn build_crust(points: &[DVec3], point_indices: &[u32], continental: bool) -> Ve
                     age: 0.0,
                     local_direction: tangent,
                     orogeny_type: None,
+                    subducted_distance: 0.0,
                 }
             } else {
                 CrustData::oceanic(OCEANIC_THICKNESS, OCEANIC_ELEVATION, 0.0, tangent)

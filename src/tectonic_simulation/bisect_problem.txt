@@ -1,1 +1,35 @@
 Problem is confirmed to be in the simulation (maybe resample.rs)
+
+Subducting plates keep rotating. 
+Every timestep, their oceanic points slide further across the sphere.
+Physically, real crust would descend into the mantle and disappear. 
+But here the point just stays on the surface. 
+After enough steps, a subducting plate's "leading edge" has drifted past the 
+trench and now sits within the overriding plate's territory as ghost points.
+
+So at any active convergent boundary you end up with two layers of points 
+from different plates occupying nearly the same region of the sphere.
+
+At resample (resample.rs:71), each new Fibonacci point inherits 
+the plate of the nearest old point. 
+In the ghost-overlap zone, "nearest" is essentially noise.
+Sometimes the overriding plate's point wins, 
+sometimes the subducted ghost point wins.
+Depending on which happens to be microscopically closer. 
+Result: salt-and-pepper plate assignment exactly where you see fragmentation.
+
+And it snowballs: once a Fibonacci point gets mis-tagged 
+with the subducted plate's ID, that plate's rotation carries 
+it on the subducted plate's trajectory, widening the smear each cycle.
+
+=== RESAMPLE AMBIGUITY step=60 t=120 Myr new_points=50000 K=6 ===
+  distinct_plates_in_6nn=1: 25835 (51.67%)
+  distinct_plates_in_6nn=2: 16945 (33.89%)
+  distinct_plates_in_6nn=3: 6151 (12.30%)
+  distinct_plates_in_6nn=4: 1061 (2.12%)
+  distinct_plates_in_6nn=5: 8 (0.02%)
+  worst: 5 distinct plates at pos=(-0.337,-0.659,-0.672)
+
+  Solution: per-plate-mesh, point-in-polygon assignment
+  older plate is subducting → overriding plate wins.
+  oceanic is subducting → continental wins.

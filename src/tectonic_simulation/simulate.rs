@@ -69,7 +69,7 @@ struct SubductionSource {
 
 /// Step-range diagnostic logger. Writes per-phase crust statistics to a file.
 pub struct DiagnosticLog {
-    file: std::io::BufWriter<std::fs::File>,
+    pub(super) file: std::io::BufWriter<std::fs::File>,
     start_step: usize,
     end_step: usize,
 }
@@ -152,6 +152,11 @@ impl Simulation {
             self.log_crust_diff("  after subduction", &before);
         }
 
+        self.consume_subducted_vertices();
+
+        // Boundary list is indexed into self.points; rebuild after consumption.
+        let boundary = find_boundary_edges(&self.plates, &self.points, &self.adjacency);
+
         let snap_before_col = if logging { Some(self.snapshot_crust()) } else { None };
         let plates_before_col = if logging { self.plates.len() } else { 0 };
         self.process_collisions(&boundary);
@@ -218,16 +223,19 @@ impl Simulation {
 
     fn process_subduction(&mut self, boundary: &[BoundaryEdge]) {
         let mut slab_pull_points: Vec<Vec<DVec3>> = vec![Vec::new(); self.plates.len()];
-        let sources = self.collect_subduction_sources(boundary, &mut slab_pull_points);
+        let mut advancements: Vec<(u32, u32, f64)> = Vec::new();
+        let sources = self.collect_subduction_sources(boundary, &mut slab_pull_points, &mut advancements);
         let clustered = cluster_sources(&sources);
         self.apply_uplift(&clustered);
         self.apply_slab_pull(&slab_pull_points);
+        self.apply_subducted_advancements(&advancements);
     }
 
     fn collect_subduction_sources(
         &self,
         boundary: &[BoundaryEdge],
         slab_pull_points: &mut [Vec<DVec3>],
+        advancements: &mut Vec<(u32, u32, f64)>,
     ) -> Vec<Vec<SubductionSource>> {
         let mut sources: Vec<Vec<SubductionSource>> = vec![Vec::new(); self.plates.len()];
 
@@ -261,6 +269,17 @@ impl Simulation {
 
             slab_pull_points[subducting_idx as usize].push(boundary_pos);
 
+            // Paper: d(p, t+δt) = d(p, t) + ||s_sub - s_over|| δt. Advance the
+            // subducting vertex's distance-past-front so it can be removed once
+            // it has fully subducted.
+            let subducting_vertex = if subducting_idx == edge.plate_a {
+                edge.point
+            } else {
+                edge.neighbor
+            };
+            let delta = relative.length() * DT;
+            advancements.push((subducting_idx, subducting_vertex, delta));
+
             // Look up the subducting plate's elevation at the boundary for h(z̃_i).
             let subducting_elevation = if subducting_idx == edge.plate_a {
                 self.elevation_at_point(edge.plate_a, edge.point)
@@ -277,6 +296,16 @@ impl Simulation {
         }
 
         sources
+    }
+
+    /// Apply advancements to `subducted_distance` for convergent boundary vertices.
+    fn apply_subducted_advancements(&mut self, advancements: &[(u32, u32, f64)]) {
+        for &(plate_idx, global_vertex, delta) in advancements {
+            let plate = &mut self.plates[plate_idx as usize];
+            if let Some(local) = plate.point_indices.iter().position(|&g| g == global_vertex) {
+                plate.crust[local].subducted_distance += delta;
+            }
+        }
     }
 
     fn apply_uplift(&mut self, clustered: &[Vec<SubductionSource>]) {
@@ -412,6 +441,65 @@ impl Simulation {
 
     fn remove_empty_plates(&mut self) {
         self.plates.retain(|p| !p.point_indices.is_empty());
+    }
+
+    /// Remove vertices that have fully subducted (traveled past the convergence
+    /// front by more than `SUBDUCTION_DISTANCE`). Compacts `sim.points`, remaps
+    /// every plate's `point_indices`, and rebuilds `sim.adjacency`.
+    fn consume_subducted_vertices(&mut self) {
+        let mut is_consumed = vec![false; self.points.len()];
+        let mut consumed_count = 0usize;
+
+        for plate in &self.plates {
+            for (local, &global) in plate.point_indices.iter().enumerate() {
+                if plate.crust[local].subducted_distance > subduction::SUBDUCTION_DISTANCE {
+                    is_consumed[global as usize] = true;
+                    consumed_count += 1;
+                }
+            }
+        }
+
+        if consumed_count == 0 {
+            return;
+        }
+
+        let original_len = self.points.len();
+        let mut old_to_new = vec![u32::MAX; self.points.len()];
+        let mut new_points = Vec::with_capacity(original_len - consumed_count);
+        for (i, &p) in self.points.iter().enumerate() {
+            if is_consumed[i] {
+                continue;
+            }
+            old_to_new[i] = new_points.len() as u32;
+            new_points.push(p);
+        }
+
+        for plate in self.plates.iter_mut() {
+            let mut new_indices = Vec::with_capacity(plate.point_indices.len());
+            let mut new_crust = Vec::with_capacity(plate.crust.len());
+            for (local, &global) in plate.point_indices.iter().enumerate() {
+                if is_consumed[global as usize] {
+                    continue;
+                }
+                new_indices.push(old_to_new[global as usize]);
+                new_crust.push(plate.crust[local].clone());
+            }
+            plate.point_indices = new_indices;
+            plate.crust = new_crust;
+        }
+
+        self.points = new_points;
+        let delaunay = SphericalDelaunay::from_points(&self.points);
+        self.adjacency = Adjacency::from_delaunay(self.points.len(), &delaunay);
+
+        if let Some(diag) = self.diagnostics.as_mut() {
+            let _ = writeln!(
+                diag.file,
+                "=== SUBDUCTION CONSUMPTION step={} t={:.0} Myr consumed={} of {} remaining={} ===",
+                self.step_count, self.time, consumed_count, original_len, self.points.len(),
+            );
+            let _ = diag.file.flush();
+        }
     }
 
     // --- Diagnostic logging helpers ---

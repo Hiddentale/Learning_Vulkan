@@ -6,7 +6,8 @@ use image::{Rgb, RgbImage};
 
 use super::fibonnaci_spiral::SphericalFibonacci;
 use super::plate_seed_placement::{assign_plates, PlateAssignment};
-use super::plates::{CrustType, Plate};
+use super::plates::{CrustData, CrustType, Plate};
+use super::resample::compute_triangle_ownership;
 use super::simulate::Simulation;
 use super::spherical_delaunay_triangulation::SphericalDelaunay;
 
@@ -90,6 +91,23 @@ fn pixel_to_direction(px: u32, py: u32) -> DVec3 {
     let lat = PI / 2.0 - (py as f64 + PIXEL_CENTER) / IMAGE_HEIGHT as f64 * PI;
     let lon = (px as f64 + PIXEL_CENTER) / IMAGE_WIDTH as f64 * 2.0 * PI - PI;
     latlon_to_direction(lat, lon)
+}
+
+/// Majority crust type among a triangle's three vertices. Ties go to Oceanic
+/// (arbitrary but deterministic; ocean is the default sea-floor state).
+fn dominant_crust(del: &SphericalDelaunay, tri: usize, point_crust: &[CrustType]) -> CrustType {
+    let base = tri * 3;
+    let mut continental_votes = 0;
+    for i in 0..3 {
+        if point_crust[del.triangles[base + i] as usize] == CrustType::Continental {
+            continental_votes += 1;
+        }
+    }
+    if continental_votes >= 2 {
+        CrustType::Continental
+    } else {
+        CrustType::Oceanic
+    }
 }
 
 /// Draw plate borders: any pixel whose right or bottom neighbor belongs to a different plate.
@@ -267,12 +285,24 @@ pub fn render_simulation(sim: &Simulation) -> RgbImage {
     let n = sim.points.len();
     let mut point_plate = vec![0u32; n];
     let mut point_crust = vec![CrustType::Oceanic; n];
+    let mut global_crust = vec![CrustData::oceanic(0.0, 0.0, 0.0, DVec3::X); n];
     for (plate_idx, plate) in sim.plates.iter().enumerate() {
         for (local, &global) in plate.point_indices.iter().enumerate() {
             point_plate[global as usize] = plate_idx as u32;
             point_crust[global as usize] = plate.crust[local].crust_type;
+            global_crust[global as usize] = plate.crust[local].clone();
         }
     }
+
+    // Per-triangle plate owner (majority vote, triple-junction resolution via
+    // subduction precedence). Stable against nearest-vertex flipping at
+    // boundaries.
+    let triangle_owner = compute_triangle_ownership(&delaunay, &point_plate, &global_crust);
+    // Per-triangle dominant crust type so pixels within one triangle get
+    // consistent continental/oceanic coloring.
+    let triangle_crust: Vec<CrustType> = (0..delaunay.triangles.len() / 3)
+        .map(|t| dominant_crust(&delaunay, t, &point_crust))
+        .collect();
 
     let mut pixel_plate = vec![0u32; (IMAGE_WIDTH * IMAGE_HEIGHT) as usize];
     let mut last_tri = 0;
@@ -283,21 +313,10 @@ pub fn render_simulation(sim: &Simulation) -> RgbImage {
             let (tri, _b1, _b2, _b3) = delaunay.locate(dir, &sim.points, last_tri);
             last_tri = tri;
 
-            let base = tri * 3;
-            let vi = [
-                delaunay.triangles[base] as usize,
-                delaunay.triangles[base + 1] as usize,
-                delaunay.triangles[base + 2] as usize,
-            ];
-            let nearest = *vi
-                .iter()
-                .max_by(|&&a, &&b| dir.dot(sim.points[a]).partial_cmp(&dir.dot(sim.points[b])).unwrap())
-                .unwrap();
-
             let idx = (py * IMAGE_WIDTH + px) as usize;
-            pixel_plate[idx] = point_plate[nearest];
+            pixel_plate[idx] = triangle_owner[tri];
 
-            let color = match point_crust[nearest] {
+            let color = match triangle_crust[tri] {
                 CrustType::Continental => CONTINENTAL_COLOR,
                 CrustType::Oceanic => OCEANIC_COLOR,
             };
