@@ -3,7 +3,17 @@ use glam::DVec3;
 use super::plates::CrustType;
 
 /// Maximum subduction distance r_s in km. Beyond this, f(d) = 0.
+/// Governs how far inland from the trench the uplift reaches (mountain-building
+/// zone width). NOT the distance at which a subducting vertex is consumed.
 pub const SUBDUCTION_DISTANCE: f64 = 1800.0;
+/// Distance a subducting vertex can travel past the trench before it is treated
+/// as fully consumed (descended into the mantle) and removed from the visible
+/// surface. Much smaller than the uplift reach: on Earth, oceanic crust at the
+/// trench disappears from the surface within tens of km, not thousands. Values
+/// above a few hundred km leave ghost vertices visible inside the overriding
+/// plate's territory, corrupting triangle ownership and creating pointy
+/// interlocked boundaries.
+pub const SURFACE_VISIBILITY_DISTANCE: f64 = 300.0;
 /// Distance from boundary where f(d) peaks, approximately r_s / 3.
 const SUBDUCTION_PEAK_DISTANCE: f64 = 600.0;
 /// Base subduction uplift u_0 in mm/yr.

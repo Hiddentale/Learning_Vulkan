@@ -33,3 +33,6 @@ it on the subducted plate's trajectory, widening the smear each cycle.
   Solution: per-plate-mesh, point-in-polygon assignment
   older plate is subducting → overriding plate wins.
   oceanic is subducting → continental wins.
+
+  No single tectonic plate event causes the plate degeneration bug,
+ this is confirmed. Hence the problem lies in how tectonic plates move.
