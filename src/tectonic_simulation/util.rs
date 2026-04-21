@@ -44,14 +44,22 @@ impl PartialOrd for MinHeapEntry {
 /// Avoids near-parallel vectors when building a tangent frame.
 const TANGENT_AXIS_THRESHOLD: f64 = 0.9;
 
-/// Compute the centroid of a plate's points on the unit sphere.
-pub(super) fn plate_centroid(plate: &Plate, points: &[DVec3]) -> DVec3 {
-    let sum: DVec3 = plate.point_indices.iter().map(|&i| points[i as usize]).sum();
-    sum.normalize_or_zero()
+/// Compute the world-space centroid of a plate on the unit sphere.
+pub(super) fn plate_centroid(plate: &Plate) -> DVec3 {
+    plate
+        .reference_points
+        .iter()
+        .map(|&p| plate.to_world(p))
+        .sum::<DVec3>()
+        .normalize_or_zero()
 }
 
 /// Arbitrary tangent vector perpendicular to a sphere-surface normal.
 pub(super) fn arbitrary_tangent(normal: DVec3) -> DVec3 {
-    let up = if normal.y.abs() < TANGENT_AXIS_THRESHOLD { DVec3::Y } else { DVec3::X };
+    let up = if normal.y.abs() < TANGENT_AXIS_THRESHOLD {
+        DVec3::Y
+    } else {
+        DVec3::X
+    };
     normal.cross(up).normalize()
 }

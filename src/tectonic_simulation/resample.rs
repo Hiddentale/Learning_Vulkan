@@ -1,975 +1,647 @@
-use std::io::Write;
+use std::collections::HashMap;
 
 use glam::DVec3;
 
 use super::fibonnaci_spiral::SphericalFibonacci;
 use super::plate_seed_placement::Adjacency;
-use super::plates::{CrustData, CrustType};
-use super::simulate::Simulation;
-use super::sphere_grid::SphereGrid;
+use super::plates::{
+    BoundingCap, CrustData, CrustType, Plate, SampleCache, TriangleNeighbors, WalkResult,
+};
+use super::simulate::{Simulation, NO_PLATE};
 use super::spherical_delaunay_triangulation::SphericalDelaunay;
-use super::subduction::{resolve_subduction, SubductionResult};
 
-/// How many steps between resamples.
-pub const RESAMPLE_INTERVAL: usize = 20;
-/// Barycentric weight sum below which all three vertices are weighted equally.
-/// Guards against degenerate triangles where all coordinates are near zero.
-const MIN_BARYCENTRIC_WEIGHT: f64 = 1e-30;
-/// Nearest-neighbor count used by the ambiguity diagnostic. Each new point
-/// queries this many nearest old points and counts how many distinct plates
-/// appear among them. K=6 matches the IDW neighborhood used elsewhere.
-const AMBIGUITY_K: usize = 6;
-/// Number of smoothing passes applied to triangle ownership after majority
-/// voting. Each pass flips a triangle to its neighbors' majority plate if
-/// that majority disagrees with the triangle's current owner. One pass
-/// removes single-triangle spikes; two passes remove 2-wide spikes.
-const SMOOTHING_ITERATIONS: usize = 2;
+/// Resample interval bounds (steps). Faster plates resample sooner.
+const MIN_RESAMPLE_INTERVAL: usize = 10;
+const MAX_RESAMPLE_INTERVAL: usize = 60;
+/// Angular speed thresholds for the interval ramp (rad/Myr).
+const FAST_SPEED: f64 = 0.02;
+const SLOW_SPEED: f64 = 0.005;
 
-// --- Bisection flags: flip these to isolate the bug ---
-/// When true, crust interpolation uses nearest-vertex instead of barycentric
-/// blending. If the bug disappears, cross-plate blending is the cause.
-const BISECT_SKIP_INTERPOLATION: bool = true;
-/// When true, triangle ownership smoothing is skipped. If the bug disappears,
-/// the smoothing passes are flipping plates incorrectly.
-const BISECT_SKIP_SMOOTHING: bool = true;
+/// Adaptive resample interval: fast plates → 10 steps, slow → 60.
+pub fn resample_interval(plates: &[Plate]) -> usize {
+    let max_speed = plates
+        .iter()
+        .map(|p| p.angular_speed.abs())
+        .fold(0.0_f64, f64::max);
+
+    if max_speed >= FAST_SPEED {
+        return MIN_RESAMPLE_INTERVAL;
+    }
+    if max_speed <= SLOW_SPEED {
+        return MAX_RESAMPLE_INTERVAL;
+    }
+
+    let t = (max_speed - SLOW_SPEED) / (FAST_SPEED - SLOW_SPEED);
+    let interval = MAX_RESAMPLE_INTERVAL as f64
+        - t * (MAX_RESAMPLE_INTERVAL - MIN_RESAMPLE_INTERVAL) as f64;
+    interval.round() as usize
+}
+/// Maximum walk steps when locating a new point in an old plate mesh.
+const MAX_WALK_STEPS: u32 = 256;
+const NO_TRIANGLE: u32 = u32::MAX;
+
+struct PointAssignment {
+    plate: u32,
+    crust: CrustData,
+}
 
 /// Resample the simulation onto a fresh Fibonacci grid.
 ///
-/// Plate assignment: each new point inherits the plate of the nearest old
-/// point (via the old Delaunay triangulation), preserving plate shapes
-/// through resamples instead of re-partitioning from centroids.
-///
-/// Crust interpolation: barycentric interpolation from the enclosing old
-/// triangle for smooth crust data transfer.
-pub fn resample(sim: &mut Simulation, point_count: u32) {
-    let (global_crust, global_plate) = build_global_lookups(sim);
-    // Global Delaunay on rotated points is degenerate at plate boundaries —
-    // locate() walks get lost in huge spanning triangles. Use SphereGrid
-    // nearest-point instead, which is O(n) build + O(1) per lookup.
-    // let global_delaunay = build_global_delaunay(sim);
-    let grid = SphereGrid::build(&sim.points);
-
-    let fib = SphericalFibonacci::new(point_count);
+/// 1. Generate new Fibonacci sample points + global Delaunay.
+/// 2. Locate each new point in the old plate meshes (walk-based).
+/// 3. Barycentric-interpolate crust from the enclosing old triangle.
+/// 4. Partition the new Delaunay into per-plate sub-meshes.
+/// 5. Store reference points in each plate's frame (R_k⁻¹ · world).
+/// 6. Build per-plate triangle adjacency and sample warm-start cache.
+pub fn resample(sim: &mut Simulation) {
+    let fib = SphericalFibonacci::new(sim.target_sample_count);
     let new_points = fib.all_points();
-    let new_delaunay = SphericalDelaunay::from_points(&new_points);
-    let new_adjacency = Adjacency::from_delaunay(new_points.len(), &new_delaunay);
+    let del = SphericalDelaunay::from_points(&new_points);
+    let sample_adj = Adjacency::from_delaunay(new_points.len(), &del);
 
-    log_plate_ambiguity(sim, &new_points, &global_plate);
+    let assignments = assign_from_old_plates(&sim.plates, &new_points);
 
-    // SphereGrid nearest-point: each new point gets the plate of the closest
-    // old point. No degenerate triangle issues.
-    let mut new_plate_ids: Vec<u32> = new_points.iter()
-        .map(|&p| {
-            let nearest = grid.find_nearest_k(p, &sim.points, 1);
-            global_plate[nearest[0].0 as usize]
-        })
-        .collect();
-
-    // Remove plate enclaves: repeatedly find connected components and dissolve
-    // orphans until no enclaves remain. Each pass can create new small components
-    // from the reassigned points, so we iterate until stable.
-    loop {
-        let changed = dissolve_enclaves(&mut new_plate_ids, &new_adjacency, sim.plates.len());
-        if changed == 0 { break; }
-    }
-
-    // Old: smooth plate assignment (makes blobs bigger instead of removing them).
-    // smooth_plate_assignment(&mut new_plate_ids, &new_adjacency);
-
-    // Old Delaunay-based approaches (broken by degenerate boundary triangles):
-    // let new_plate_ids = assign_plates_by_triangle_owner(&new_points, &sim.points, &global_plate, &global_crust, &global_delaunay);
-    // let new_plate_ids = assign_plates_by_nearest(&new_points, &sim.points, &global_plate, &global_delaunay);
-    // log_assignment_diff(sim, &new_points, &new_plate_ids, &global_plate, &global_crust, &global_delaunay);
-    // if let Some(del) = &global_delaunay {
-    //     let bf = del.brute_force_count();
-    //     if bf > 0 {
-    //         if let Some(d) = sim.diagnostics.as_mut() {
-    //             let _ = writeln!(d.file, "  locate brute_force_fallbacks: {bf}/{}", new_points.len());
-    //         }
-    //     }
-    //     del.reset_locate_stats();
-    // }
-
-    // Crust: nearest-point from SphereGrid (no cross-plate barycentric blending).
-    let (new_plate_points, new_plate_crust) = interpolate_crust_nearest(
-        sim, &new_points, &new_plate_ids, &grid, &global_crust,
-    );
-
-    // Old Delaunay-based crust interpolation:
-    // let (new_plate_points, new_plate_crust) = interpolate_crust(sim, &new_points, &new_plate_ids, &global_delaunay, &global_crust);
-
-    for (plate_idx, plate) in sim.plates.iter_mut().enumerate() {
-        plate.point_indices = new_plate_points[plate_idx].clone();
-        plate.crust = new_plate_crust[plate_idx].clone();
-    }
-
-    sim.adjacency = new_adjacency;
-    sim.points = new_points;
-}
-
-/// For each new Fibonacci point, count distinct plate IDs among its
-/// `AMBIGUITY_K` nearest old points. Histogram the counts and log to the
-/// sim's diagnostic file. A histogram dominated by "1 distinct plate" means
-/// resample assignment is well-defined; mass at "2+" marks overlap zones
-/// where nearest-neighbor is noisy.
-fn log_plate_ambiguity(sim: &mut Simulation, new_points: &[DVec3], global_plate: &[u32]) {
-    let diag = match sim.diagnostics.as_mut() {
-        Some(d) => d,
-        None => return,
-    };
-
-    let grid = SphereGrid::build(&sim.points);
-    let mut histogram = [0usize; AMBIGUITY_K + 1];
-    let mut worst_pos = DVec3::ZERO;
-    let mut worst_count = 0usize;
-
-    for &p in new_points {
-        let neighbors = grid.find_nearest_k(p, &sim.points, AMBIGUITY_K);
-        let mut seen = [u32::MAX; AMBIGUITY_K];
-        let mut distinct = 0usize;
-        for (idx, _) in &neighbors {
-            let plate = global_plate[*idx as usize];
-            if !seen[..distinct].contains(&plate) {
-                seen[distinct] = plate;
-                distinct += 1;
-            }
-        }
-        histogram[distinct.min(AMBIGUITY_K)] += 1;
-        if distinct > worst_count {
-            worst_count = distinct;
-            worst_pos = p;
-        }
-    }
-
-    let total = new_points.len() as f64;
-    let _ = writeln!(
-        diag.file,
-        "=== RESAMPLE AMBIGUITY step={} t={:.0} Myr new_points={} K={} ===",
-        sim.step_count,
-        sim.time,
-        new_points.len(),
-        AMBIGUITY_K,
-    );
-    for (k, count) in histogram.iter().enumerate().skip(1) {
-        if *count == 0 {
-            continue;
-        }
-        let _ = writeln!(
-            diag.file,
-            "  distinct_plates_in_{}nn={}: {} ({:.2}%)",
-            AMBIGUITY_K,
-            k,
-            count,
-            (*count as f64 / total) * 100.0,
-        );
-    }
-    let _ = writeln!(
-        diag.file,
-        "  worst: {} distinct plates at pos=({:.3},{:.3},{:.3})",
-        worst_count, worst_pos.x, worst_pos.y, worst_pos.z,
-    );
-    let _ = diag.file.flush();
-}
-
-/// Log plate assignment stats: for each new point, compare the plate it was
-/// assigned to against the plate of the nearest old vertex. Reports how many
-/// points would get a different crust type due to assignment, and per-plate
-/// point counts before/after.
-fn log_assignment_diff(
-    sim: &mut Simulation,
-    new_points: &[DVec3],
-    new_plate_ids: &[u32],
-    global_plate: &[u32],
-    global_crust: &[CrustData],
-    global_delaunay: &Option<SphericalDelaunay>,
-) {
-    let diag = match sim.diagnostics.as_mut() {
-        Some(d) if d.active(sim.step_count) => d,
-        _ => return,
-    };
-
-    // Count new points per plate
-    let plate_count = sim.plates.len();
-    let mut new_counts = vec![0usize; plate_count];
-    for &pid in new_plate_ids {
-        new_counts[pid as usize] += 1;
-    }
-
-    // Count old points per plate
-    let mut old_counts = vec![0usize; plate_count];
-    for &pid in global_plate {
-        old_counts[pid as usize] += 1;
-    }
-
-    // For each new point, find the nearest old vertex and compare assignments
-    let del = global_delaunay.as_ref();
-    let mut same_plate = 0usize;
-    let mut diff_plate = 0usize;
-    let mut crust_type_flip = 0usize;
-    let mut last_tri = 0usize;
-
-    for (i, &p) in new_points.iter().enumerate() {
-        let nearest_old = if let Some(d) = del {
-            let (tri, b1, b2, b3) = d.locate(p, &sim.points, last_tri);
-            last_tri = tri;
-            let base = tri * 3;
-            let vi = [d.triangles[base] as usize, d.triangles[base + 1] as usize, d.triangles[base + 2] as usize];
-            let bary = [b1, b2, b3];
-            let best = if bary[0] >= bary[1] && bary[0] >= bary[2] {
-                0
-            } else if bary[1] >= bary[2] {
-                1
-            } else {
-                2
-            };
-            vi[best]
-        } else {
-            sim.points
-                .iter()
-                .enumerate()
-                .max_by(|(_, a), (_, b)| p.dot(**a).partial_cmp(&p.dot(**b)).unwrap())
-                .map(|(idx, _)| idx)
-                .unwrap_or(0)
-        };
-
-        let assigned_plate = new_plate_ids[i];
-        let nearest_plate = global_plate[nearest_old];
-        if assigned_plate == nearest_plate {
-            same_plate += 1;
-        } else {
-            diff_plate += 1;
-            // Did the plate change also flip crust type?
-            let assigned_type = global_crust[nearest_old].crust_type;
-            // The triangle owner's dominant vertex may have a different crust type
-            // than the nearest vertex — that's the flip we care about.
-            let owner_nearest = if let Some(d) = del {
-                let (tri, _, _, _) = d.locate(p, &sim.points, last_tri);
-                let base = tri * 3;
-                // Find any vertex belonging to the assigned plate
-                let vi = [d.triangles[base] as usize, d.triangles[base + 1] as usize, d.triangles[base + 2] as usize];
-                vi.iter()
-                    .find(|&&v| global_plate[v] == assigned_plate as u32)
-                    .map(|&v| global_crust[v].crust_type)
-                    .unwrap_or(assigned_type)
-            } else {
-                assigned_type
-            };
-            if owner_nearest != assigned_type {
-                crust_type_flip += 1;
-            }
-        }
-    }
-
-    let total = new_points.len();
-    let _ = writeln!(
-        diag.file,
-        "  assignment: same_plate={} ({:.1}%) diff_plate={} ({:.1}%) crust_type_flips={}",
-        same_plate,
-        same_plate as f64 / total as f64 * 100.0,
-        diff_plate,
-        diff_plate as f64 / total as f64 * 100.0,
-        crust_type_flip,
-    );
-
-    // Per-plate old vs new counts
-    for pid in 0..plate_count {
-        let old_c = old_counts[pid];
-        let new_c = new_counts[pid];
-        if old_c != new_c {
+    // Log assignment gaps.
+    let gap_count = assignments.iter().filter(|a| a.plate == NO_PLATE).count();
+    if let Some(diag) = sim.diagnostics.as_mut() {
+        if diag.active(sim.step_count) {
+            use std::io::Write;
             let _ = writeln!(
                 diag.file,
-                "    plate[{}]: {} -> {} ({:+})",
-                pid,
-                old_c,
-                new_c,
-                new_c as i64 - old_c as i64,
+                "=== RESAMPLE step={} t={:.0} Myr: {}/{} assigned, {} gap, {} plates ===",
+                sim.step_count, sim.time,
+                assignments.len() - gap_count, assignments.len(),
+                gap_count, sim.plates.len(),
             );
+            for (k, plate) in sim.plates.iter().enumerate() {
+                let assigned_to_k = assignments.iter().filter(|a| a.plate == k as u32).count();
+                let _ = writeln!(
+                    diag.file,
+                    "  plate[{}]: {} pts assigned (was {} verts, {} tris)",
+                    k, assigned_to_k, plate.point_count(), plate.triangle_count(),
+                );
+            }
         }
     }
-    let _ = diag.file.flush();
-}
 
-/// Map global point index -> (CrustData, plate_index).
-fn build_global_lookups(sim: &Simulation) -> (Vec<CrustData>, Vec<u32>) {
-    let mut crust = vec![CrustData::oceanic(7.0, -4.0, 0.0, DVec3::X); sim.points.len()];
-    let mut plate = vec![0u32; sim.points.len()];
-    for (plate_idx, p) in sim.plates.iter().enumerate() {
-        for (local, &global) in p.point_indices.iter().enumerate() {
-            crust[global as usize] = p.crust[local].clone();
-            plate[global as usize] = plate_idx as u32;
+    let tri_owner = assign_triangle_ownership(&del, &assignments);
+    let (new_plates, global_indices) =
+        build_plate_meshes(&new_points, &del, &tri_owner, &assignments, &sim.plates);
+    let cache = build_sample_cache(&new_plates, &global_indices, new_points.len());
+
+    // Log post-resample plate sizes.
+    if let Some(diag) = sim.diagnostics.as_mut() {
+        if diag.active(sim.step_count) {
+            use std::io::Write;
+            for (k, plate) in new_plates.iter().enumerate() {
+                let _ = writeln!(
+                    diag.file,
+                    "  new plate[{}]: {} verts, {} tris",
+                    k, plate.point_count(), plate.triangle_count(),
+                );
+            }
+            let cached = cache.iter().filter(|c| c.plate != NO_PLATE).count();
+            let _ = writeln!(diag.file, "  cache: {}/{} assigned", cached, cache.len());
         }
     }
-    (crust, plate)
+
+    sim.sample_points = new_points;
+    sim.sample_cache = cache;
+    sim.sample_adjacency = sample_adj;
+    sim.plates = new_plates;
 }
 
-/// Build one Delaunay from all old simulation points.
-fn build_global_delaunay(sim: &Simulation) -> Option<SphericalDelaunay> {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| SphericalDelaunay::from_points(&sim.points))).ok()
+// ── Step 1-2: locate new points in old plate meshes ───────────────────
+
+/// For each new Fibonacci point, walk the old plate meshes to find which
+/// plate covers it and barycentric-interpolate crust. Uses a per-plate
+/// "last successful triangle" as a spatial locality hint for the walk.
+fn assign_from_old_plates(plates: &[Plate], new_points: &[DVec3]) -> Vec<PointAssignment> {
+    let mut last_tri = vec![0u32; plates.len()];
+
+    new_points
+        .iter()
+        .map(|&p| {
+            // Try walk-based assignment (barycentric interpolation).
+            for (k, plate) in plates.iter().enumerate() {
+                if !plate.world_point_in_cap(p) {
+                    continue;
+                }
+                let q = plate.to_reference(p);
+                if let WalkResult::Found { triangle, bary } =
+                    plate.walk_to_point(q, last_tri[k], MAX_WALK_STEPS)
+                {
+                    last_tri[k] = triangle;
+                    let [vi, vj, vk] = plate.triangles[triangle as usize];
+                    let crust = CrustData::barycentric_blend(
+                        &plate.crust[vi as usize],
+                        &plate.crust[vj as usize],
+                        &plate.crust[vk as usize],
+                        bary,
+                    );
+                    return PointAssignment {
+                        plate: k as u32,
+                        crust,
+                    };
+                }
+            }
+
+            // Walk failed — assign to nearest plate vertex, preserving
+            // its crust type. New seafloor at ridges is created by
+            // per-step oceanic crust generation, not here.
+            nearest_vertex_assignment(plates, p)
+        })
+        .collect()
 }
 
-/// Assign each new point the plate that owns the Delaunay triangle it lands in.
+/// Fallback for samples the walk can't locate.
 ///
-/// The owner of each triangle is the majority plate among its three vertices.
-/// For triple junctions (three distinct plates on one triangle) we resolve
-/// pairwise using `subduction::resolve_subduction`: whichever plate would not
-/// subduct wins. This mirrors the paper's "partition the triangulation"
-/// language and is stable against the per-vertex flipping that produced
-/// boundary fragmentation with the nearest-vertex approach.
-fn assign_plates_by_triangle_owner(
-    new_points: &[DVec3],
-    old_points: &[DVec3],
-    global_plate: &[u32],
-    global_crust: &[CrustData],
-    global_delaunay: &Option<SphericalDelaunay>,
-) -> Vec<u32> {
-    let del = match global_delaunay {
-        Some(d) => d,
-        None => {
-            return new_points
-                .iter()
-                .map(|&p| {
-                    let nearest = old_points
-                        .iter()
-                        .enumerate()
-                        .max_by(|(_, a), (_, b)| p.dot(**a).partial_cmp(&p.dot(**b)).unwrap())
-                        .map(|(idx, _)| idx)
-                        .unwrap_or(0);
-                    global_plate[nearest]
-                })
-                .collect();
-        }
-    };
+/// Finds the nearest world-space plate vertex and copies its crust.
+/// This preserves continental crust for walk failures on continental
+/// interiors, and naturally gives oceanic crust near ocean regions.
+/// Genuine new seafloor at ridges is handled by per-step oceanic
+/// crust generation (Section 4.3), not by the resample fallback.
+fn nearest_vertex_assignment(plates: &[Plate], world_p: DVec3) -> PointAssignment {
+    let mut best_dot = f64::NEG_INFINITY;
+    let mut best_plate = 0u32;
+    let mut best_crust_idx = 0usize;
 
-    let triangle_owner = compute_triangle_ownership(del, global_plate, global_crust);
-
-    let mut plate_ids = vec![0u32; new_points.len()];
-    let mut last_tri = 0usize;
-    for (i, &p) in new_points.iter().enumerate() {
-        let (tri, _, _, _) = del.locate(p, old_points, last_tri);
-        last_tri = tri;
-        plate_ids[i] = triangle_owner[tri];
-    }
-    plate_ids
-}
-
-/// Compute one plate owner per Delaunay triangle.
-pub(super) fn compute_triangle_ownership(del: &SphericalDelaunay, global_plate: &[u32], global_crust: &[CrustData]) -> Vec<u32> {
-    let n_tri = del.triangles.len() / 3;
-    let mut owner = Vec::with_capacity(n_tri);
-    for t in 0..n_tri {
-        let base = t * 3;
-        let v = [
-            del.triangles[base] as usize,
-            del.triangles[base + 1] as usize,
-            del.triangles[base + 2] as usize,
-        ];
-        let p = [global_plate[v[0]], global_plate[v[1]], global_plate[v[2]]];
-
-        let label = if p[0] == p[1] && p[1] == p[2] {
-            p[0]
-        } else if p[0] == p[1] || p[0] == p[2] {
-            p[0]
-        } else if p[1] == p[2] {
-            p[1]
-        } else {
-            resolve_triple_junction(v, p, global_crust)
-        };
-        owner.push(label);
-    }
-    if !BISECT_SKIP_SMOOTHING {
-        smooth_triangle_ownership(del, &mut owner);
-    }
-    owner
-}
-
-/// Post-process triangle ownership to remove small spikes at plate boundaries.
-///
-/// For each triangle, check the plates of its up-to-three Delaunay neighbors.
-/// If two or more neighbors agree on a plate that differs from the triangle's
-/// current owner, flip to that plate. Running this `SMOOTHING_ITERATIONS`
-/// times removes spikes of that pixel width without distorting well-supported
-/// boundaries (where a triangle's own plate already dominates its neighbors).
-fn smooth_triangle_ownership(del: &SphericalDelaunay, owner: &mut Vec<u32>) {
-    let n_tri = del.triangle_count();
-    for _ in 0..SMOOTHING_ITERATIONS {
-        let snapshot = owner.clone();
-        for t in 0..n_tri {
-            let own = snapshot[t];
-            let mut neighbors: [u32; 3] = [u32::MAX; 3];
-            let mut count = 0usize;
-            for edge in 0..3 {
-                let he = del.halfedges[t * 3 + edge];
-                if he != u32::MAX {
-                    neighbors[count] = snapshot[(he / 3) as usize];
-                    count += 1;
-                }
-            }
-            if let Some(majority) = majority_of(&neighbors[..count]) {
-                if majority != own {
-                    owner[t] = majority;
-                }
+    for (k, plate) in plates.iter().enumerate() {
+        for (i, &ref_p) in plate.reference_points.iter().enumerate() {
+            let dot = plate.to_world(ref_p).dot(world_p);
+            if dot > best_dot {
+                best_dot = dot;
+                best_plate = k as u32;
+                best_crust_idx = i;
             }
         }
     }
-}
 
-/// Return the plate that appears at least twice among neighbors, if any.
-fn majority_of(plates: &[u32]) -> Option<u32> {
-    for i in 0..plates.len() {
-        let c = plates.iter().filter(|&&p| p == plates[i]).count();
-        if c >= 2 {
-            return Some(plates[i]);
-        }
-    }
-    None
-}
-
-/// Number of smoothing passes for plate assignment on the new point grid.
-const PLATE_SMOOTHING_PASSES: usize = 3;
-
-/// Smooth plate IDs on the new Fibonacci grid using the adjacency graph.
-/// For each point, if the strict majority of its neighbors disagree with its
-/// plate, flip it. Multiple passes remove progressively larger blobs.
-fn smooth_plate_assignment(plate_ids: &mut [u32], adjacency: &Adjacency) {
-    for _ in 0..PLATE_SMOOTHING_PASSES {
-        let snapshot = plate_ids.to_vec();
-        for i in 0..plate_ids.len() {
-            let own = snapshot[i];
-            let neighbors = adjacency.neighbors_of(i as u32);
-
-            // Count occurrences of each plate among neighbors.
-            // Most points have 5-7 neighbors, so a small linear scan suffices.
-            let mut best_plate = own;
-            let mut best_count = 0usize;
-            let mut own_count = 0usize;
-            for &ni in neighbors {
-                let np = snapshot[ni as usize];
-                if np == own {
-                    own_count += 1;
-                }
-                // Count how many neighbors share this plate.
-                let c = neighbors.iter().filter(|&&nj| snapshot[nj as usize] == np).count();
-                if c > best_count {
-                    best_count = c;
-                    best_plate = np;
-                }
-            }
-
-            // Flip if the majority plate has strictly more neighbors than own.
-            if best_plate != own && best_count > own_count {
-                plate_ids[i] = best_plate;
-            }
-        }
+    PointAssignment {
+        plate: best_plate,
+        crust: plates[best_plate as usize].crust[best_crust_idx].clone(),
     }
 }
 
-/// For each plate, find connected components via BFS on the adjacency graph.
-/// Keep the largest component; reassign all smaller components' points to the
-/// majority plate among their neighbors. Eliminates plate enclaves — small
-/// disconnected blobs of plate A floating inside plate B.
-fn dissolve_enclaves(plate_ids: &mut [u32], adjacency: &Adjacency, plate_count: usize) -> usize {
-    let n = plate_ids.len();
-    let mut component_id = vec![u32::MAX; n]; // which component each point belongs to
-    let mut components: Vec<(u32, usize)> = Vec::new(); // (plate_id, size)
-    let mut queue: Vec<u32> = Vec::new();
+// ── Step 3: partition the new Delaunay into plates ────────────────────
 
-    // BFS to find all connected components per plate.
-    for start in 0..n {
-        if component_id[start] != u32::MAX {
-            continue;
-        }
-        let plate = plate_ids[start];
-        let comp_idx = components.len() as u32;
-        let mut size = 0usize;
-
-        queue.push(start as u32);
-        component_id[start] = comp_idx;
-        while let Some(cur) = queue.pop() {
-            size += 1;
-            for &ni in adjacency.neighbors_of(cur) {
-                if component_id[ni as usize] == u32::MAX && plate_ids[ni as usize] == plate {
-                    component_id[ni as usize] = comp_idx;
-                    queue.push(ni);
-                }
-            }
-        }
-        components.push((plate, size));
-    }
-
-    // For each plate, find its largest component.
-    let mut largest_component: Vec<u32> = vec![u32::MAX; plate_count]; // comp_idx of largest
-    let mut largest_size: Vec<usize> = vec![0; plate_count];
-    for (comp_idx, &(plate, size)) in components.iter().enumerate() {
-        let pi = plate as usize;
-        if pi < plate_count && size > largest_size[pi] {
-            largest_size[pi] = size;
-            largest_component[pi] = comp_idx as u32;
-        }
-    }
-
-    // Reassign orphaned points (not in the largest component) to the majority
-    // neighbor plate.
-    let mut changed = 0usize;
-    for i in 0..n {
-        let plate = plate_ids[i];
-        let comp = component_id[i];
-        if comp == largest_component[plate as usize] {
-            continue; // part of the main body — keep
-        }
-
-        // Find majority plate among neighbors.
-        let neighbors = adjacency.neighbors_of(i as u32);
-        let mut best_plate = plate;
-        let mut best_count = 0usize;
-        for &ni in neighbors {
-            let np = plate_ids[ni as usize];
-            if np == plate { continue; } // skip same (orphaned) plate
-            let c = neighbors.iter().filter(|&&nj| plate_ids[nj as usize] == np).count();
-            if c > best_count {
-                best_count = c;
-                best_plate = np;
-            }
-        }
-        if best_count > 0 {
-            plate_ids[i] = best_plate;
-            changed += 1;
-        }
-    }
-    changed
-}
-
-/// Three distinct plates meet at this triangle. Apply `resolve_subduction`
-/// pairwise to pick the plate that does not subduct. Deterministic in the
-/// rare continental-continental case: the lower plate id wins.
-fn resolve_triple_junction(verts: [usize; 3], plates: [u32; 3], global_crust: &[CrustData]) -> u32 {
-    let winner_01 = pairwise_winner(plates[0], plates[1], verts[0], verts[1], global_crust);
-    let winner_2 = match winner_01 {
-        Some(p) => {
-            let v_winner = if p == plates[0] { verts[0] } else { verts[1] };
-            pairwise_winner(p, plates[2], v_winner, verts[2], global_crust)
-        }
-        None => None,
-    };
-    winner_2.or(winner_01).unwrap_or(plates[0].min(plates[1]).min(plates[2]))
-}
-
-/// Winner in a two-plate interaction: the non-subducting plate. `None`
-/// means continental collision (no subduction) — caller picks a fallback.
-fn pairwise_winner(plate_i: u32, plate_j: u32, vert_i: usize, vert_j: usize, global_crust: &[CrustData]) -> Option<u32> {
-    let ci = &global_crust[vert_i];
-    let cj = &global_crust[vert_j];
-    match resolve_subduction(plate_i, plate_j, ci.crust_type, ci.age, cj.crust_type, cj.age) {
-        SubductionResult::PlateSubducts(s) => Some(if s == plate_i { plate_j } else { plate_i }),
-        SubductionResult::ContinentalCollision => {
-            // Both are continental; neither subducts. Pick lower-id continental
-            // deterministically so the same triangle always labels the same way.
-            let lower = plate_i.min(plate_j);
-            if ci.crust_type == CrustType::Continental && cj.crust_type == CrustType::Continental {
-                Some(lower)
-            } else {
-                None
-            }
-        }
-    }
-}
-
-/// Assign each new point to the plate of the nearest old point.
-/// Uses the old Delaunay to locate the enclosing triangle, then picks the
-/// nearest vertex — preserving plate shapes through resamples.
-#[allow(dead_code)]
-fn assign_plates_by_nearest(
-    new_points: &[DVec3],
-    old_points: &[DVec3],
-    global_plate: &[u32],
-    global_delaunay: &Option<SphericalDelaunay>,
-) -> Vec<u32> {
-    let mut plate_ids = vec![0u32; new_points.len()];
-    let mut last_tri = 0usize;
-
-    for (i, &p) in new_points.iter().enumerate() {
-        plate_ids[i] = if let Some(del) = global_delaunay {
-            let (tri, b1, b2, b3) = del.locate(p, old_points, last_tri);
-            last_tri = tri;
-            let base = tri * 3;
-            let vi = [
-                del.triangles[base] as usize,
-                del.triangles[base + 1] as usize,
-                del.triangles[base + 2] as usize,
-            ];
-            // Pick the vertex with the largest barycentric coordinate (nearest).
-            let bary = [b1, b2, b3];
-            let best = if bary[0] >= bary[1] && bary[0] >= bary[2] {
-                0
-            } else if bary[1] >= bary[2] {
-                1
-            } else {
-                2
-            };
-            global_plate[vi[best]]
-        } else {
-            // Fallback: brute-force nearest.
-            let nearest = old_points
-                .iter()
-                .enumerate()
-                .max_by(|(_, a), (_, b)| p.dot(**a).partial_cmp(&p.dot(**b)).unwrap())
-                .map(|(idx, _)| idx)
-                .unwrap_or(0);
-            global_plate[nearest]
-        };
-    }
-
-    plate_ids
-}
-
-fn interpolate_crust(
-    sim: &Simulation,
-    new_points: &[DVec3],
-    new_plate_ids: &[u32],
-    global_delaunay: &Option<SphericalDelaunay>,
-    global_crust: &[CrustData],
-) -> (Vec<Vec<u32>>, Vec<Vec<CrustData>>) {
-    let plate_count = sim.plates.len();
-    let mut new_plate_points: Vec<Vec<u32>> = vec![Vec::new(); plate_count];
-    let mut new_plate_crust: Vec<Vec<CrustData>> = vec![Vec::new(); plate_count];
-    let mut last_tri = 0usize;
-
-    for (new_idx, &new_p) in new_points.iter().enumerate() {
-        let owner = new_plate_ids[new_idx] as usize;
-
-        let crust = if let Some(del) = global_delaunay {
-            interpolate_from_global(del, new_p, &sim.points, global_crust, &mut last_tri)
-        } else {
-            nearest_crust_global(new_p, &sim.points, global_crust)
-        };
-
-        new_plate_points[owner].push(new_idx as u32);
-        new_plate_crust[owner].push(crust);
-    }
-
-    (new_plate_points, new_plate_crust)
-}
-
-/// Nearest-neighbor crust type from K neighbors. Majority vote determines
-/// crust_type and orogeny_type; continuous fields (thickness, elevation, age,
-/// direction) are taken from the single nearest point. This prevents Fibonacci
-/// spiral Moiré aliasing from creating false continental/oceanic blobs —
-/// a point deep inside continental territory always has K continental neighbors
-/// so the majority always wins, even if the single nearest happens to be on
-/// the wrong side of a coastline.
-const CRUST_VOTE_K: usize = 6;
-
-fn interpolate_crust_nearest(
-    sim: &Simulation,
-    new_points: &[DVec3],
-    new_plate_ids: &[u32],
-    grid: &SphereGrid,
-    global_crust: &[CrustData],
-) -> (Vec<Vec<u32>>, Vec<Vec<CrustData>>) {
-    let plate_count = sim.plates.len();
-    let mut new_plate_points: Vec<Vec<u32>> = vec![Vec::new(); plate_count];
-    let mut new_plate_crust: Vec<Vec<CrustData>> = vec![Vec::new(); plate_count];
-
-    for (new_idx, &new_p) in new_points.iter().enumerate() {
-        let owner = new_plate_ids[new_idx] as usize;
-        let neighbors = grid.find_nearest_k(new_p, &sim.points, CRUST_VOTE_K);
-
-        // Continuous fields from the single nearest point.
-        let nearest_idx = neighbors[0].0 as usize;
-        let nearest_crust = &global_crust[nearest_idx];
-
-        // Majority vote on crust_type among K neighbors.
-        let continental_votes = neighbors.iter()
-            .filter(|(idx, _)| global_crust[*idx as usize].crust_type == CrustType::Continental)
-            .count();
-        let voted_type = if continental_votes * 2 >= neighbors.len() {
-            CrustType::Continental
-        } else {
-            CrustType::Oceanic
-        };
-
-        // Orogeny from majority among continental neighbors (if voted continental).
-        let orogeny = if voted_type == CrustType::Continental {
-            nearest_crust.orogeny_type
-        } else {
-            None
-        };
-
-        let crust = CrustData {
-            crust_type: voted_type,
-            thickness: nearest_crust.thickness,
-            elevation: nearest_crust.elevation,
-            age: nearest_crust.age,
-            local_direction: nearest_crust.local_direction,
-            orogeny_type: orogeny,
-            subducted_distance: nearest_crust.subducted_distance,
-        };
-
-        new_plate_points[owner].push(new_idx as u32);
-        new_plate_crust[owner].push(crust);
-    }
-
-    (new_plate_points, new_plate_crust)
-}
-
-// Old approach: single nearest-point crust (Fibonacci spiral aliasing).
-// fn interpolate_crust_nearest_single(
-//     sim: &Simulation,
-//     new_points: &[DVec3],
-//     new_plate_ids: &[u32],
-//     grid: &SphereGrid,
-//     global_crust: &[CrustData],
-// ) -> (Vec<Vec<u32>>, Vec<Vec<CrustData>>) {
-//     let plate_count = sim.plates.len();
-//     let mut new_plate_points: Vec<Vec<u32>> = vec![Vec::new(); plate_count];
-//     let mut new_plate_crust: Vec<Vec<CrustData>> = vec![Vec::new(); plate_count];
-//     for (new_idx, &new_p) in new_points.iter().enumerate() {
-//         let owner = new_plate_ids[new_idx] as usize;
-//         let nearest = grid.find_nearest_k(new_p, &sim.points, 1);
-//         let crust = global_crust[nearest[0].0 as usize].clone();
-//         new_plate_points[owner].push(new_idx as u32);
-//         new_plate_crust[owner].push(crust);
-//     }
-//     (new_plate_points, new_plate_crust)
-// }
-
-/// Interpolate crust data from a global Delaunay triangle.
-/// All three vertices are spatially nearby — no back-side triangle problem.
-/// Cross-plate blending at boundaries creates organic coastline irregularity.
-fn interpolate_from_global(
+/// Assign each triangle in the new Delaunay to a plate via majority vote
+/// on its vertex assignments. Triple junctions resolved by crust density.
+fn assign_triangle_ownership(
     del: &SphericalDelaunay,
-    point: DVec3,
-    old_points: &[DVec3],
-    global_crust: &[CrustData],
-    last_tri: &mut usize,
-) -> CrustData {
-    let (tri, b1, b2, b3) = del.locate(point, old_points, *last_tri);
-    *last_tri = tri;
+    assignments: &[PointAssignment],
+) -> Vec<u32> {
+    let n_tri = del.triangles.len() / 3;
+    (0..n_tri)
+        .map(|t| {
+            let base = t * 3;
+            let p = [
+                assignments[del.triangles[base] as usize].plate,
+                assignments[del.triangles[base + 1] as usize].plate,
+                assignments[del.triangles[base + 2] as usize].plate,
+            ];
 
-    let base = tri * 3;
-    let gi = [
-        del.triangles[base] as usize,
-        del.triangles[base + 1] as usize,
-        del.triangles[base + 2] as usize,
+            if p[0] == p[1] && p[1] == p[2] {
+                p[0]
+            } else if p[0] == p[1] || p[0] == p[2] {
+                p[0]
+            } else if p[1] == p[2] {
+                p[1]
+            } else {
+                resolve_triple_junction(base, del, assignments, p)
+            }
+        })
+        .collect()
+}
+
+/// Three distinct plates meet: pick the one with lowest-density crust
+/// (continental over oceanic, younger oceanic over older).
+fn resolve_triple_junction(
+    base: usize,
+    del: &SphericalDelaunay,
+    assignments: &[PointAssignment],
+    plates: [u32; 3],
+) -> u32 {
+    let crusts: [&CrustData; 3] = std::array::from_fn(|i| {
+        &assignments[del.triangles[base + i] as usize].crust
+    });
+    let mut best = 0;
+    for i in 1..3 {
+        let wins = match (crusts[i].crust_type, crusts[best].crust_type) {
+            (CrustType::Continental, CrustType::Oceanic) => true,
+            (CrustType::Oceanic, CrustType::Continental) => false,
+            _ => crusts[i].age < crusts[best].age,
+        };
+        if wins {
+            best = i;
+        }
+    }
+    plates[best]
+}
+
+// ── Step 4-5: build per-plate sub-meshes ──────────────────────────────
+
+/// Build per-plate reference meshes from the partitioned global Delaunay.
+/// Returns (plates, global_indices) where `global_indices[k][local]` is the
+/// Fibonacci index of plate k's local vertex — needed for sample cache.
+fn build_plate_meshes(
+    new_points: &[DVec3],
+    del: &SphericalDelaunay,
+    tri_owner: &[u32],
+    assignments: &[PointAssignment],
+    old_plates: &[Plate],
+) -> (Vec<Plate>, Vec<Vec<u32>>) {
+    let plate_count = old_plates.len();
+    let n_tri = del.triangles.len() / 3;
+
+    let mut plate_tris: Vec<Vec<usize>> = vec![Vec::new(); plate_count];
+    for t in 0..n_tri {
+        let owner = tri_owner[t] as usize;
+        if owner < plate_count {
+            plate_tris[owner].push(t);
+        }
+    }
+
+    let mut plates = Vec::with_capacity(plate_count);
+    let mut all_global_indices = Vec::with_capacity(plate_count);
+
+    for (k, old_plate) in old_plates.iter().enumerate() {
+        let (local_verts, global_to_local) = collect_plate_vertices(&plate_tris[k], del);
+
+        let inv_rot = old_plate.rotation.inverse();
+        let reference_points: Vec<DVec3> = local_verts
+            .iter()
+            .map(|&gi| inv_rot.mul_vec3(new_points[gi as usize]).normalize())
+            .collect();
+
+        let crust: Vec<CrustData> = local_verts
+            .iter()
+            .map(|&gi| assignments[gi as usize].crust.clone())
+            .collect();
+
+        let triangles: Vec<[u32; 3]> = plate_tris[k]
+            .iter()
+            .map(|&t| {
+                let base = t * 3;
+                [
+                    global_to_local[&del.triangles[base]],
+                    global_to_local[&del.triangles[base + 1]],
+                    global_to_local[&del.triangles[base + 2]],
+                ]
+            })
+            .collect();
+
+        let adjacency = build_triangle_adjacency(&plate_tris[k], del);
+
+        let mut plate = Plate {
+            reference_points,
+            crust,
+            triangles,
+            adjacency,
+            bounding_cap: BoundingCap {
+                center: DVec3::Y,
+                cos_radius: -1.0,
+            },
+            rotation: old_plate.rotation,
+            rotation_axis: old_plate.rotation_axis,
+            angular_speed: old_plate.angular_speed,
+        };
+        plate.recompute_bounding_cap();
+
+        plates.push(plate);
+        all_global_indices.push(local_verts);
+    }
+
+    (plates, all_global_indices)
+}
+
+/// Collect unique vertices from this plate's triangles, returning
+/// (global_indices, global_to_local_map).
+fn collect_plate_vertices(
+    plate_tris: &[usize],
+    del: &SphericalDelaunay,
+) -> (Vec<u32>, HashMap<u32, u32>) {
+    let mut global_to_local: HashMap<u32, u32> = HashMap::new();
+    let mut local_verts: Vec<u32> = Vec::new();
+
+    for &t in plate_tris {
+        let base = t * 3;
+        for i in 0..3 {
+            let gi = del.triangles[base + i];
+            global_to_local.entry(gi).or_insert_with(|| {
+                let idx = local_verts.len() as u32;
+                local_verts.push(gi);
+                idx
+            });
+        }
+    }
+
+    (local_verts, global_to_local)
+}
+
+/// Build per-triangle adjacency from the global Delaunay halfedge structure.
+/// Edges whose neighbor triangle belongs to a different plate become `None`
+/// (plate boundary), enabling step 3's exit detection.
+fn build_triangle_adjacency(
+    global_tri_indices: &[usize],
+    del: &SphericalDelaunay,
+) -> Vec<TriangleNeighbors> {
+    let mut global_to_local_tri: HashMap<usize, u32> =
+        HashMap::with_capacity(global_tri_indices.len());
+    for (local_t, &global_t) in global_tri_indices.iter().enumerate() {
+        global_to_local_tri.insert(global_t, local_t as u32);
+    }
+
+    global_tri_indices
+        .iter()
+        .map(|&global_t| {
+            let mut neighbors: TriangleNeighbors = [None; 3];
+            for edge in 0..3 {
+                let he = del.halfedges[global_t * 3 + edge];
+                if he != u32::MAX {
+                    let neighbor_global = (he / 3) as usize;
+                    if let Some(&neighbor_local) = global_to_local_tri.get(&neighbor_global) {
+                        neighbors[edge] = Some(neighbor_local);
+                    }
+                }
+            }
+            neighbors
+        })
+        .collect()
+}
+
+// ── Step 6: build sample warm-start cache ─────────────────────────────
+
+/// Populate the sample cache so the first step after resample has warm-start
+/// data. Each sample vertex sits exactly on a plate mesh vertex, so the
+/// barycentric weight is 1.0 at that vertex and 0.0 at the other two.
+fn build_sample_cache(
+    plates: &[Plate],
+    global_indices: &[Vec<u32>],
+    sample_count: usize,
+) -> Vec<SampleCache> {
+    let mut cache = vec![
+        SampleCache {
+            plate: NO_PLATE,
+            triangle: NO_TRIANGLE,
+            bary: [0.0; 3],
+        };
+        sample_count
     ];
 
-    let total_w = b1.max(0.0) + b2.max(0.0) + b3.max(0.0);
-    let w = if total_w > MIN_BARYCENTRIC_WEIGHT {
-        [b1.max(0.0) / total_w, b2.max(0.0) / total_w, b3.max(0.0) / total_w]
-    } else {
-        [1.0 / 3.0; 3]
-    };
+    for (k, globals) in global_indices.iter().enumerate() {
+        let incident = vertex_incident_triangles(&plates[k].triangles, globals.len());
 
-    let dom = if w[0] >= w[1] && w[0] >= w[2] {
-        0
-    } else if w[1] >= w[2] {
-        1
-    } else {
-        2
-    };
+        for (local, &global) in globals.iter().enumerate() {
+            let tri = incident[local];
+            if tri == NO_TRIANGLE {
+                continue;
+            }
 
-    // Bisection: nearest-vertex only (no blending)
-    if BISECT_SKIP_INTERPOLATION {
-        return global_crust[gi[dom]].clone();
+            let tri_verts = plates[k].triangles[tri as usize];
+            let local_u32 = local as u32;
+            let bary = if tri_verts[0] == local_u32 {
+                [1.0, 0.0, 0.0]
+            } else if tri_verts[1] == local_u32 {
+                [0.0, 1.0, 0.0]
+            } else {
+                [0.0, 0.0, 1.0]
+            };
+
+            cache[global as usize] = SampleCache {
+                plate: k as u32,
+                triangle: tri,
+                bary,
+            };
+        }
     }
 
-    let crusts: [&CrustData; 3] = std::array::from_fn(|i| &global_crust[gi[i]]);
-
-    let mut thickness = 0.0;
-    let mut elevation = 0.0;
-    let mut age = 0.0;
-    let mut direction = DVec3::ZERO;
-    for i in 0..3 {
-        thickness += crusts[i].thickness * w[i];
-        elevation += crusts[i].elevation * w[i];
-        age += crusts[i].age * w[i];
-        direction += crusts[i].local_direction * w[i];
-    }
-
-    CrustData {
-        crust_type: crusts[dom].crust_type,
-        thickness,
-        elevation,
-        age,
-        local_direction: direction.normalize_or_zero(),
-        orogeny_type: crusts[dom].orogeny_type,
-        subducted_distance: 0.0,
-    }
+    cache
 }
 
-fn nearest_crust_global(point: DVec3, old_points: &[DVec3], global_crust: &[CrustData]) -> CrustData {
-    let nearest = old_points
-        .iter()
-        .enumerate()
-        .max_by(|(_, a), (_, b)| point.dot(**a).partial_cmp(&point.dot(**b)).unwrap())
-        .map(|(i, _)| i)
-        .unwrap_or(0);
-    global_crust[nearest].clone()
+/// For each local vertex, find one incident triangle (any will do).
+fn vertex_incident_triangles(triangles: &[[u32; 3]], vertex_count: usize) -> Vec<u32> {
+    let mut incident = vec![NO_TRIANGLE; vertex_count];
+    for (t, tri) in triangles.iter().enumerate() {
+        for &v in tri {
+            if incident[v as usize] == NO_TRIANGLE {
+                incident[v as usize] = t as u32;
+            }
+        }
+    }
+    incident
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::fibonnaci_spiral::SphericalFibonacci;
     use super::super::plate_initializer::{initialize_plates, InitParams};
-    use super::super::plate_seed_placement::assign_plates;
+    use super::super::plate_seed_placement::{assign_plates, Adjacency};
+    use super::super::plates::CrustType;
+    use super::super::simulate::Simulation;
+    use super::super::spherical_delaunay_triangulation::SphericalDelaunay;
     use super::*;
 
-    fn setup(point_count: u32, plate_count: u32) -> Simulation {
+    fn make_sim(point_count: u32, plate_count: u32) -> Simulation {
         let fib = SphericalFibonacci::new(point_count);
         let points = fib.all_points();
         let del = SphericalDelaunay::from_points(&points);
         let assignment = assign_plates(&points, &fib, &del, plate_count, 42);
-        let plates = initialize_plates(&points, &del, &assignment, &InitParams::default());
-        Simulation::new(points, plates, &del)
+        let (plates, cache) = initialize_plates(&points, &del, &assignment, &InitParams::default());
+        let adj = Adjacency::from_delaunay(points.len(), &del);
+        Simulation::new(points, cache, adj, plates)
     }
 
     #[test]
-    fn resample_preserves_point_count() {
-        let mut sim = setup(500, 8);
+    fn resample_preserves_sample_count() {
+        let mut sim = make_sim(500, 8);
         sim.run(5);
-        resample(&mut sim, 500);
-        let total: usize = sim.plates.iter().map(|p| p.point_count()).sum();
-        assert_eq!(total, 500);
+        resample(&mut sim);
+        assert_eq!(sim.sample_points.len(), 500);
+        assert_eq!(sim.sample_cache.len(), 500);
     }
 
     #[test]
     fn resample_preserves_plate_count() {
-        let mut sim = setup(500, 8);
+        let mut sim = make_sim(500, 8);
+        let plates_before = sim.plates.len();
         sim.run(5);
-        let plate_count_before = sim.plates.len();
-        resample(&mut sim, 500);
-        assert_eq!(sim.plates.len(), plate_count_before);
+        resample(&mut sim);
+        assert_eq!(sim.plates.len(), plates_before);
     }
 
     #[test]
-    fn resample_points_on_unit_sphere() {
-        let mut sim = setup(500, 8);
+    fn resample_samples_on_unit_sphere() {
+        let mut sim = make_sim(500, 8);
         sim.run(5);
-        resample(&mut sim, 500);
-        for &p in &sim.points {
+        resample(&mut sim);
+        for &p in &sim.sample_points {
             assert!((p.length() - 1.0).abs() < 1e-10);
         }
     }
 
     #[test]
-    fn resample_most_plates_have_points() {
-        let mut sim = setup(500, 8);
+    fn resample_most_samples_assigned() {
+        let mut sim = make_sim(500, 8);
         sim.run(5);
-        resample(&mut sim, 500);
-        let non_empty = sim.plates.iter().filter(|p| !p.point_indices.is_empty()).count();
-        assert!(non_empty >= 6, "too many empty plates: only {non_empty}/8 have points");
+        resample(&mut sim);
+        let assigned = sim
+            .sample_cache
+            .iter()
+            .filter(|c| c.plate != NO_PLATE)
+            .count();
+        // Boundary gaps between plates leave ~10-20% unassigned.
+        assert!(
+            assigned >= 350,
+            "only {assigned}/500 assigned after resample"
+        );
     }
 
     #[test]
-    fn resample_crust_parallel_to_indices() {
-        let mut sim = setup(500, 8);
+    fn resample_plates_have_triangles() {
+        let mut sim = make_sim(500, 8);
         sim.run(5);
-        resample(&mut sim, 500);
-        for plate in &sim.plates {
-            assert_eq!(plate.crust.len(), plate.point_indices.len());
-        }
-    }
-
-    #[test]
-    fn resample_after_movement_still_works() {
-        let mut sim = setup(1000, 12);
-        sim.run(20);
-        resample(&mut sim, 1000);
-        let after_resample: usize = sim.plates.iter().map(|p| p.point_count()).sum();
-        assert_eq!(after_resample, 1000, "resample should restore full point count");
-        sim.run(5);
-        let total: usize = sim.plates.iter().map(|p| p.point_count()).sum();
-        // Subduction removes vertices; oceanic ridge generation adds them.
-        assert!(total > 0 && total <= 2000, "total out of expected range: {total}");
-    }
-
-    #[test]
-    fn locate_finds_containing_triangle() {
-        use super::super::fibonnaci_spiral::SphericalFibonacci;
-        let fib = SphericalFibonacci::new(500);
-        let points = fib.all_points();
-        let del = SphericalDelaunay::from_points(&points);
-
-        let mut state = 77777u64;
-        let next = |s: &mut u64| -> f64 {
-            *s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-            (*s >> 11) as f64 / ((1u64 << 53) as f64)
-        };
-        let mut last_tri = 0;
-        for _ in 0..100 {
-            let z = next(&mut state) * 2.0 - 1.0;
-            let theta = next(&mut state) * std::f64::consts::TAU;
-            let r = (1.0 - z * z).sqrt();
-            let p = DVec3::new(r * theta.cos(), r * theta.sin(), z).normalize();
-
-            let (tri, b1, b2, b3) = del.locate(p, &points, last_tri);
-            last_tri = tri;
+        resample(&mut sim);
+        for (i, plate) in sim.plates.iter().enumerate() {
+            if plate.reference_points.is_empty() {
+                continue;
+            }
             assert!(
-                b1 >= 0.0 && b2 >= 0.0 && b3 >= 0.0,
-                "negative barycentric: b1={b1:.4e} b2={b2:.4e} b3={b3:.4e}"
-            );
-            assert!(b1 + b2 + b3 > 0.0, "zero total weight");
-        }
-    }
-
-    #[test]
-    fn locate_on_drifted_points() {
-        let mut sim = setup(1000, 8);
-        sim.run(10);
-
-        let old_del = SphericalDelaunay::from_points(&sim.points);
-        let fib = SphericalFibonacci::new(1000);
-        let new_points = fib.all_points();
-
-        let mut last_tri = 0;
-        for &p in &new_points {
-            let (tri, b1, b2, b3) = old_del.locate(p, &sim.points, last_tri);
-            last_tri = tri;
-            assert!(
-                b1 >= -1e-10 && b2 >= -1e-10 && b3 >= -1e-10,
-                "point outside triangle: b1={b1:.4e} b2={b2:.4e} b3={b3:.4e}"
+                !plate.triangles.is_empty(),
+                "plate {i} has vertices but no triangles"
             );
         }
     }
 
     #[test]
-    fn resample_crust_type_stable_for_interior_points() {
-        let mut sim = setup(2000, 12);
-
-        let mut initial_crust = vec![super::super::plates::CrustType::Oceanic; 2000];
+    fn resample_adjacency_parallel_to_triangles() {
+        let mut sim = make_sim(500, 8);
+        sim.run(5);
+        resample(&mut sim);
         for plate in &sim.plates {
-            for (local, &global) in plate.point_indices.iter().enumerate() {
-                initial_crust[global as usize] = plate.crust[local].crust_type;
+            assert_eq!(plate.adjacency.len(), plate.triangles.len());
+        }
+    }
+
+    #[test]
+    fn resample_crust_parallel_to_reference_points() {
+        let mut sim = make_sim(500, 8);
+        sim.run(5);
+        resample(&mut sim);
+        for plate in &sim.plates {
+            assert_eq!(plate.crust.len(), plate.reference_points.len());
+        }
+    }
+
+    #[test]
+    fn resample_bounding_caps_cover_vertices() {
+        let mut sim = make_sim(500, 8);
+        sim.run(5);
+        resample(&mut sim);
+        for plate in &sim.plates {
+            for &ref_p in &plate.reference_points {
+                let dot = ref_p.dot(plate.bounding_cap.center);
+                assert!(
+                    dot >= plate.bounding_cap.cos_radius - 1e-6,
+                    "vertex outside bounding cap"
+                );
             }
         }
+    }
 
-        sim.run(RESAMPLE_INTERVAL);
-
-        let mut changed = 0;
-        for plate in &sim.plates {
-            for (local, &global) in plate.point_indices.iter().enumerate() {
-                if plate.crust[local].crust_type != initial_crust[global as usize] {
-                    changed += 1;
-                }
+    #[test]
+    fn resample_cache_bary_sums_to_one() {
+        let mut sim = make_sim(500, 8);
+        sim.run(5);
+        resample(&mut sim);
+        for cache in &sim.sample_cache {
+            if cache.plate == NO_PLATE {
+                continue;
             }
+            let sum: f64 = cache.bary.iter().sum();
+            assert!(
+                (sum - 1.0).abs() < 1e-10,
+                "bary sum {sum} != 1.0"
+            );
         }
+    }
 
-        let pct = changed as f64 / 2000.0 * 100.0;
-        assert!(pct < 20.0, "too many crust type changes after resample: {changed}/2000 ({pct:.1}%)");
+    #[test]
+    fn resample_continental_fraction_roughly_preserved() {
+        let mut sim = make_sim(1000, 8);
+        let before: usize = sim
+            .plates
+            .iter()
+            .flat_map(|p| &p.crust)
+            .filter(|c| c.crust_type == CrustType::Continental)
+            .count();
+        let total_before: usize = sim.plates.iter().map(|p| p.point_count()).sum();
+        let frac_before = before as f64 / total_before as f64;
+
+        sim.run(5);
+        resample(&mut sim);
+
+        let after: usize = sim
+            .plates
+            .iter()
+            .flat_map(|p| &p.crust)
+            .filter(|c| c.crust_type == CrustType::Continental)
+            .count();
+        let total_after: usize = sim.plates.iter().map(|p| p.point_count()).sum();
+        let frac_after = after as f64 / total_after as f64;
+
+        assert!(
+            (frac_after - frac_before).abs() < 0.15,
+            "continental fraction changed too much: {frac_before:.2} → {frac_after:.2}"
+        );
     }
 
     #[test]
     fn multiple_resample_cycles_stable() {
-        let mut sim = setup(1000, 8);
+        let mut sim = make_sim(500, 8);
         for _ in 0..3 {
-            sim.run(RESAMPLE_INTERVAL);
+            sim.run(resample_interval(&sim.plates));
         }
+        assert_eq!(sim.sample_points.len(), 500);
+        let non_empty = sim
+            .plates
+            .iter()
+            .filter(|p| !p.reference_points.is_empty())
+            .count();
+        assert!(non_empty >= 2, "too few plates survived: {non_empty}");
+    }
 
-        let total: usize = sim.plates.iter().map(|p| p.point_count()).sum();
-        assert_eq!(total, 1000, "points lost after 3 resample cycles");
+    #[test]
+    fn walk_finds_vertices_from_incident_triangle_after_resample() {
+        use super::super::plates::WalkResult;
 
-        // Consumption can eat entire small plates at convergent boundaries, so
-        // only require that at least two plates survive — the sim as a whole
-        // should not collapse to a single plate.
-        let non_empty = sim.plates.iter().filter(|p| !p.point_indices.is_empty()).count();
-        assert!(non_empty >= 2, "too many empty plates after 3 cycles: {non_empty}/8");
+        let mut sim = make_sim(500, 8);
+        sim.run(5);
+        resample(&mut sim);
+
+        for plate in &sim.plates {
+            if plate.point_count() == 0 {
+                continue;
+            }
+            let mut found = 0;
+            for (i, &ref_p) in plate.reference_points.iter().enumerate() {
+                let start = plate
+                    .triangles
+                    .iter()
+                    .position(|tri| tri.contains(&(i as u32)))
+                    .unwrap_or(0);
+                if let WalkResult::Found { .. } =
+                    plate.walk_to_point(ref_p, start as u32, 256)
+                {
+                    found += 1;
+                }
+            }
+            assert_eq!(
+                found,
+                plate.point_count(),
+                "walk missed {} vertices after resample",
+                plate.point_count() - found
+            );
+        }
     }
 }

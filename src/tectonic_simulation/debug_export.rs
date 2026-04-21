@@ -1,8 +1,9 @@
 use std::io::{self, Write};
 use std::path::Path;
 
-use super::plates::{CrustType, OrogenyType};
-use super::simulate::Simulation;
+use super::plates::CrustType;
+use super::plates::OrogenyType;
+use super::simulate::{Simulation, NO_PLATE};
 use super::spherical_delaunay_triangulation::SphericalDelaunay;
 
 const MAGIC: [u8; 4] = *b"DBGV";
@@ -49,39 +50,45 @@ impl DebugRecorder {
         }
     }
 
-    /// Set the shared triangulation (index buffer) for all frames.
-    /// Call once with the Delaunay computed from the Fibonacci grid.
     pub fn set_triangulation(&mut self, delaunay: &SphericalDelaunay) {
         self.triangles = delaunay.triangles.clone();
     }
 
+    /// Record a snapshot from the simulation's sample grid.
+    /// Each sample point gets its plate assignment and interpolated crust
+    /// from the warm-start cache.
     pub fn record(&mut self, sim: &Simulation) {
-        let n = sim.points.len();
-        let mut point_plate = vec![0u16; n];
-        let mut point_local = vec![0usize; n];
-        for (plate_idx, plate) in sim.plates.iter().enumerate() {
-            for (local, &global) in plate.point_indices.iter().enumerate() {
-                point_plate[global as usize] = plate_idx as u16;
-                point_local[global as usize] = local;
-            }
-        }
-
+        let n = sim.sample_points.len();
         let mut points = Vec::with_capacity(n);
+
         for i in 0..n {
-            let p = sim.points[i];
-            let plate_idx = point_plate[i] as usize;
-            let local = point_local[i];
-            let crust = &sim.plates[plate_idx].crust[local];
+            let p = sim.sample_points[i];
+            let cache = &sim.sample_cache[i];
+
+            let (elevation, thickness, age, plate_id, ct, orog) = if cache.plate != NO_PLATE {
+                let crust = sim.interpolated_crust(cache);
+                (
+                    crust.elevation as f32,
+                    crust.thickness as f32,
+                    crust.age as f32,
+                    cache.plate as u16,
+                    crust_type_byte(crust.crust_type),
+                    orogeny_byte(crust.orogeny_type),
+                )
+            } else {
+                (-4.0f32, 7.0f32, 0.0f32, u16::MAX, 0, 0)
+            };
+
             points.push(PackedPoint {
                 x: p.x as f32,
                 y: p.y as f32,
                 z: p.z as f32,
-                elevation: crust.elevation as f32,
-                thickness: crust.thickness as f32,
-                age: crust.age as f32,
-                plate_id: point_plate[i],
-                crust_type: crust_type_byte(crust.crust_type),
-                orogeny: orogeny_byte(crust.orogeny_type),
+                elevation,
+                thickness,
+                age,
+                plate_id,
+                crust_type: ct,
+                orogeny: orog,
             });
         }
 
@@ -104,33 +111,6 @@ impl DebugRecorder {
         });
     }
 
-    /// Write all recorded frames to a single binary file.
-    ///
-    /// Layout (version 2):
-    /// ```text
-    /// [4] magic "DBGV"
-    /// [4] version (u32 LE) = 2
-    /// [4] frame_count (u32 LE)
-    /// [4] triangle_count (u32 LE)  — number of triangles
-    /// [tri_count * 3 * 4] triangle indices (u32 LE, 3 per triangle)
-    ///
-    /// Per frame:
-    ///   [8] time (f64 LE)
-    ///   [4] point_count (u32 LE)
-    ///   [4] plate_count (u32 LE)
-    ///   Per plate (plate_count):
-    ///     [4] axis_x, axis_y, axis_z (f32 LE)
-    ///     [4] angular_speed (f32 LE)
-    ///     [4] point_count (u32 LE)
-    ///   Per point (point_count):
-    ///     [4] x, y, z (f32 LE)
-    ///     [4] elevation (f32 LE)
-    ///     [4] thickness (f32 LE)
-    ///     [4] age (f32 LE)
-    ///     [2] plate_id (u16 LE)
-    ///     [1] crust_type (0=oceanic, 1=continental)
-    ///     [1] orogeny (0=none, 1=andean, 2=himalayan)
-    /// ```
     pub fn save(&self, path: &Path) -> io::Result<()> {
         let mut f = std::fs::File::create(path)?;
         f.write_all(&MAGIC)?;
@@ -206,19 +186,20 @@ mod tests {
     use super::*;
     use crate::tectonic_simulation::fibonnaci_spiral::SphericalFibonacci;
     use crate::tectonic_simulation::plate_initializer::{initialize_plates, InitParams};
-    use crate::tectonic_simulation::plate_seed_placement::assign_plates;
+    use crate::tectonic_simulation::plate_seed_placement::{assign_plates, Adjacency};
 
     #[test]
     fn record_and_save_smoke_test() {
         let fib = SphericalFibonacci::new(5_000);
         let points = fib.all_points();
-        let delaunay = SphericalDelaunay::from_points(&points);
-        let assignment = assign_plates(&points, &fib, &delaunay, 10, 42);
-        let plates = initialize_plates(&points, &delaunay, &assignment, &InitParams::default());
-        let sim = Simulation::new(points, plates, &delaunay);
+        let del = SphericalDelaunay::from_points(&points);
+        let assignment = assign_plates(&points, &fib, &del, 10, 42);
+        let (plates, cache) = initialize_plates(&points, &del, &assignment, &InitParams::default());
+        let adj = Adjacency::from_delaunay(points.len(), &del);
+        let sim = Simulation::new(points, cache, adj, plates);
 
         let mut recorder = DebugRecorder::new();
-        recorder.set_triangulation(&delaunay);
+        recorder.set_triangulation(&del);
         recorder.record(&sim);
         assert_eq!(recorder.frame_count(), 1);
 

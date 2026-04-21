@@ -6,9 +6,8 @@ use image::{Rgb, RgbImage};
 
 use super::fibonnaci_spiral::SphericalFibonacci;
 use super::plate_seed_placement::{assign_plates, PlateAssignment};
-use super::plates::{CrustData, CrustType, Plate};
-use super::resample::compute_triangle_ownership;
-use super::simulate::Simulation;
+use super::plates::CrustType;
+use super::simulate::{Simulation, NO_PLATE};
 use super::sphere_grid::SphereGrid;
 use super::spherical_delaunay_triangulation::SphericalDelaunay;
 
@@ -17,13 +16,9 @@ const IMAGE_HEIGHT: u32 = 1024;
 const POINT_COUNT: u32 = 50_000;
 const PLATE_COUNT: u32 = 20;
 
-/// Velocity magnitudes below this are treated as stationary (no arrow drawn).
 const MIN_VELOCITY: f64 = 1e-12;
-/// Line thickness in pixels for velocity arrows.
 const LINE_THICKNESS: u32 = 2;
-/// Half-size of the seed marker dot in pixels.
 const SEED_DOT_RADIUS: i32 = 2;
-/// Offset to sample at pixel centers rather than pixel edges.
 const PIXEL_CENTER: f64 = 0.5;
 
 const CONTINENTAL_COLOR: [u8; 3] = [255, 255, 255];
@@ -34,7 +29,6 @@ const ARROW_LENGTH: f64 = 40.0;
 const ARROW_HEAD_LENGTH: f64 = 10.0;
 const ARROW_HEAD_HALF_WIDTH: f64 = 5.0;
 
-/// Distinct, saturated colors for up to 40 plates.
 const PALETTE: [[u8; 3]; 40] = [
     [230, 25, 75],
     [60, 180, 75],
@@ -78,40 +72,13 @@ const PALETTE: [[u8; 3]; 40] = [
     [100, 100, 100],
 ];
 
-/// Convert lat/lon to a unit direction vector.
-/// Uses visualizer convention: X = east, Y = north (up in lat), Z = toward viewer.
-/// This differs from the simulation convention (Y = up) because the equirectangular
-/// projection maps latitude to the Z-component of atan2-based lookups.
-fn latlon_to_direction(lat: f64, lon: f64) -> DVec3 {
+fn pixel_to_direction(px: u32, py: u32) -> DVec3 {
+    let lat = PI / 2.0 - (py as f64 + PIXEL_CENTER) / IMAGE_HEIGHT as f64 * PI;
+    let lon = (px as f64 + PIXEL_CENTER) / IMAGE_WIDTH as f64 * 2.0 * PI - PI;
     let cos_lat = lat.cos();
     DVec3::new(cos_lat * lon.cos(), cos_lat * lon.sin(), lat.sin())
 }
 
-/// Convert a pixel coordinate to a sphere direction.
-fn pixel_to_direction(px: u32, py: u32) -> DVec3 {
-    let lat = PI / 2.0 - (py as f64 + PIXEL_CENTER) / IMAGE_HEIGHT as f64 * PI;
-    let lon = (px as f64 + PIXEL_CENTER) / IMAGE_WIDTH as f64 * 2.0 * PI - PI;
-    latlon_to_direction(lat, lon)
-}
-
-/// Majority crust type among a triangle's three vertices. Ties go to Oceanic
-/// (arbitrary but deterministic; ocean is the default sea-floor state).
-fn dominant_crust(del: &SphericalDelaunay, tri: usize, point_crust: &[CrustType]) -> CrustType {
-    let base = tri * 3;
-    let mut continental_votes = 0;
-    for i in 0..3 {
-        if point_crust[del.triangles[base + i] as usize] == CrustType::Continental {
-            continental_votes += 1;
-        }
-    }
-    if continental_votes >= 2 {
-        CrustType::Continental
-    } else {
-        CrustType::Oceanic
-    }
-}
-
-/// Draw plate borders: any pixel whose right or bottom neighbor belongs to a different plate.
 fn draw_borders(img: &mut RgbImage, pixel_plate: &[u32]) {
     let color = Rgb(BORDER_COLOR);
     for py in 0..IMAGE_HEIGHT {
@@ -163,7 +130,6 @@ pub fn render_plate_map(fibonacci: &SphericalFibonacci, assignment: &PlateAssign
     img
 }
 
-/// Generates the full plate pipeline and saves a PNG.
 pub fn generate_and_save(seed: u64, output: &Path) {
     let fibonacci = SphericalFibonacci::new(POINT_COUNT);
     let points = fibonacci.all_points();
@@ -176,26 +142,29 @@ pub fn generate_and_save(seed: u64, output: &Path) {
     println!("  {} points, {} plates, seed {seed}", POINT_COUNT, PLATE_COUNT);
 }
 
-/// Renders plates colored by crust type with velocity arrows at each plate center.
-pub fn render_initialized_plates(fibonacci: &SphericalFibonacci, assignment: &PlateAssignment, plates: &[Plate]) -> RgbImage {
+/// Render the simulation state using the sample grid.
+/// Each pixel finds the nearest sample point and uses its cached plate/crust.
+pub fn render_simulation(sim: &Simulation) -> RgbImage {
     let mut img = RgbImage::new(IMAGE_WIDTH, IMAGE_HEIGHT);
-
-    let mut point_crust = vec![CrustType::Oceanic; fibonacci.point_count() as usize];
-    for plate in plates {
-        for (i, &pi) in plate.point_indices.iter().enumerate() {
-            point_crust[pi as usize] = plate.crust[i].crust_type;
-        }
-    }
-
+    let grid = SphereGrid::build(&sim.sample_points);
     let mut pixel_plate = vec![0u32; (IMAGE_WIDTH * IMAGE_HEIGHT) as usize];
+
     for py in 0..IMAGE_HEIGHT {
         for px in 0..IMAGE_WIDTH {
             let dir = pixel_to_direction(px, py);
-            let nearest = fibonacci.nearest_index(dir);
+            let nearest = grid.find_nearest_k(dir, &sim.sample_points, 1);
+            let vi = nearest[0].0 as usize;
+            let cache = &sim.sample_cache[vi];
             let idx = (py * IMAGE_WIDTH + px) as usize;
-            pixel_plate[idx] = assignment.plate_ids[nearest as usize];
+            pixel_plate[idx] = cache.plate;
 
-            let color = match point_crust[nearest as usize] {
+            let crust_type = if cache.plate != NO_PLATE {
+                sim.dominant_crust(cache).crust_type
+            } else {
+                CrustType::Oceanic
+            };
+
+            let color = match crust_type {
                 CrustType::Continental => CONTINENTAL_COLOR,
                 CrustType::Oceanic => OCEANIC_COLOR,
             };
@@ -205,20 +174,26 @@ pub fn render_initialized_plates(fibonacci: &SphericalFibonacci, assignment: &Pl
 
     draw_borders(&mut img, &pixel_plate);
 
-    for (plate_idx, plate) in plates.iter().enumerate() {
-        let seed_3d = fibonacci.index_to_point(assignment.seeds[plate_idx]);
-        let velocity = plate.surface_velocity(seed_3d);
+    for plate in &sim.plates {
+        if plate.reference_points.is_empty() {
+            continue;
+        }
+        let centroid: DVec3 = plate
+            .reference_points
+            .iter()
+            .map(|&p| plate.to_world(p))
+            .sum::<DVec3>()
+            .normalize_or_zero();
+        let velocity = plate.surface_velocity(centroid);
         if velocity.length() < MIN_VELOCITY {
             continue;
         }
-        draw_velocity_arrow(&mut img, seed_3d, velocity);
+        draw_velocity_arrow(&mut img, centroid, velocity);
     }
 
     img
 }
 
-/// Project a 3D velocity vector to 2D pixel displacement on the equirectangular map,
-/// then draw an arrow (line + head).
 fn draw_velocity_arrow(img: &mut RgbImage, origin: DVec3, velocity: DVec3) {
     let lat = origin.z.asin();
     let lon = origin.y.atan2(origin.x);
@@ -234,13 +209,11 @@ fn draw_velocity_arrow(img: &mut RgbImage, origin: DVec3, velocity: DVec3) {
         return;
     }
 
-    // Pixel direction: east = +x, north = -y.
     let dx = ve / mag;
     let dy = -vn / mag;
 
     let tip_x = cx + dx * ARROW_LENGTH;
     let tip_y = cy + dy * ARROW_LENGTH;
-
     draw_line(img, cx, cy, tip_x, tip_y, ARROW_COLOR);
 
     let back_x = -dx;
@@ -276,112 +249,25 @@ fn draw_line(img: &mut RgbImage, x0: f64, y0: f64, x1: f64, y1: f64, color: [u8;
     }
 }
 
-/// Render the simulation state. Must be called right after a resample so that
-/// Use `clean_grid = true` when points are a fresh Fibonacci grid (right
-/// after resample or at init) for fast Delaunay-based rendering with organic
-/// borders. Use `clean_grid = false` between resamples when plates have
-/// rotated and the global Delaunay is degenerate — falls back to SphereGrid
-/// nearest-point which is slower but always correct.
-pub fn render_simulation(sim: &Simulation) -> RgbImage {
-    render_simulation_ex(sim, false)
-}
-
-pub fn render_simulation_ex(sim: &Simulation, clean_grid: bool) -> RgbImage {
-    let mut img = RgbImage::new(IMAGE_WIDTH, IMAGE_HEIGHT);
-
-    let n = sim.points.len();
-    let mut point_plate = vec![0u32; n];
-    let mut point_crust = vec![CrustType::Oceanic; n];
-    for (plate_idx, plate) in sim.plates.iter().enumerate() {
-        for (local, &global) in plate.point_indices.iter().enumerate() {
-            point_plate[global as usize] = plate_idx as u32;
-            point_crust[global as usize] = plate.crust[local].crust_type;
-        }
-    }
-
-    let mut pixel_plate = vec![0u32; (IMAGE_WIDTH * IMAGE_HEIGHT) as usize];
-
-    if clean_grid {
-        // Fast path: Delaunay triangle ownership. Only valid when points form
-        // a clean grid (post-resample) so boundary triangles are well-formed.
-        let delaunay = SphericalDelaunay::from_points(&sim.points);
-        let global_crust: Vec<CrustData> = {
-            let mut gc = vec![CrustData::oceanic(0.0, 0.0, 0.0, DVec3::X); n];
-            for (plate_idx, plate) in sim.plates.iter().enumerate() {
-                for (local, &global) in plate.point_indices.iter().enumerate() {
-                    gc[global as usize] = plate.crust[local].clone();
-                }
-            }
-            gc
-        };
-        let triangle_owner = compute_triangle_ownership(&delaunay, &point_plate, &global_crust);
-        let triangle_crust: Vec<CrustType> = (0..delaunay.triangles.len() / 3)
-            .map(|t| dominant_crust(&delaunay, t, &point_crust))
-            .collect();
-        let mut last_tri = 0;
-        for py in 0..IMAGE_HEIGHT {
-            for px in 0..IMAGE_WIDTH {
-                let dir = pixel_to_direction(px, py);
-                let (tri, _, _, _) = delaunay.locate(dir, &sim.points, last_tri);
-                last_tri = tri;
-                let idx = (py * IMAGE_WIDTH + px) as usize;
-                pixel_plate[idx] = triangle_owner[tri];
-                let color = match triangle_crust[tri] {
-                    CrustType::Continental => CONTINENTAL_COLOR,
-                    CrustType::Oceanic => OCEANIC_COLOR,
-                };
-                img.put_pixel(px, py, Rgb(color));
-            }
-        }
-    } else {
-        // Safe path: SphereGrid nearest-point. Works regardless of grid
-        // quality — no degenerate triangle issues.
-        let grid = SphereGrid::build(&sim.points);
-        for py in 0..IMAGE_HEIGHT {
-            for px in 0..IMAGE_WIDTH {
-                let dir = pixel_to_direction(px, py);
-                let nearest = grid.find_nearest_k(dir, &sim.points, 1);
-                let vi = nearest[0].0 as usize;
-                let idx = (py * IMAGE_WIDTH + px) as usize;
-                pixel_plate[idx] = point_plate[vi];
-                let color = match point_crust[vi] {
-                    CrustType::Continental => CONTINENTAL_COLOR,
-                    CrustType::Oceanic => OCEANIC_COLOR,
-                };
-                img.put_pixel(px, py, Rgb(color));
-            }
-        }
-    }
-
-    draw_borders(&mut img, &pixel_plate);
-
-    for plate in &sim.plates {
-        if plate.point_indices.is_empty() {
-            continue;
-        }
-        let centroid: DVec3 = plate
-            .point_indices
-            .iter()
-            .map(|&i| sim.points[i as usize])
-            .sum::<DVec3>()
-            .normalize_or_zero();
-        let velocity = plate.surface_velocity(centroid);
-        if velocity.length() < MIN_VELOCITY {
-            continue;
-        }
-        draw_velocity_arrow(&mut img, centroid, velocity);
-    }
-
-    img
-}
-
 #[cfg(test)]
 mod tests {
     use super::super::plate_initializer::{initialize_plates, InitParams};
+    use super::super::plate_seed_placement::Adjacency;
+    use super::super::resample;
     use super::*;
 
+    fn make_sim(point_count: u32, plate_count: u32) -> Simulation {
+        let fib = SphericalFibonacci::new(point_count);
+        let points = fib.all_points();
+        let del = SphericalDelaunay::from_points(&points);
+        let assignment = assign_plates(&points, &fib, &del, plate_count, 42);
+        let (plates, cache) = initialize_plates(&points, &del, &assignment, &InitParams::default());
+        let adj = Adjacency::from_delaunay(points.len(), &del);
+        Simulation::new(points, cache, adj, plates)
+    }
+
     #[test]
-    #[ignore] // Run with: cargo test --release plate_visualizer -- --ignored --nocapture
+    #[ignore]
     fn plate_visualizer() {
         let output = Path::new("src/tectonic_simulation/plate_map.png");
         generate_and_save(42, output);
@@ -389,13 +275,11 @@ mod tests {
 
     const TIMELAPSE_POINTS: u32 = 51_000;
     const TIMELAPSE_STEPS: usize = 100;
-    /// Render every N resample cycles. Each cycle = RESAMPLE_INTERVAL steps.
     const TIMELAPSE_RENDER_EVERY_N_RESAMPLES: usize = 1;
 
     #[test]
-    #[ignore] // Run with: cargo test --release simulation_timelapse -- --ignored --nocapture
+    #[ignore]
     fn simulation_timelapse() {
-        use super::super::resample;
         use std::io::Write;
 
         let suffix = if TIMELAPSE_POINTS >= 1_000_000 {
@@ -409,17 +293,12 @@ mod tests {
         let output_dir = Path::new(&dir_name);
         std::fs::create_dir_all(output_dir).expect("failed to create timelapse dir");
 
-        let fibonacci = SphericalFibonacci::new(TIMELAPSE_POINTS);
-        let points = fibonacci.all_points();
-        let delaunay = SphericalDelaunay::from_points(&points);
-        let assignment = assign_plates(&points, &fibonacci, &delaunay, PLATE_COUNT, 42);
-        let plates = initialize_plates(&points, &delaunay, &assignment, &InitParams::default());
-        let mut sim = Simulation::new(points, plates, &delaunay);
+        let mut sim = make_sim(TIMELAPSE_POINTS, PLATE_COUNT);
 
         let log_path = output_dir.join("tectonic_debug.log");
         sim.enable_diagnostics(&log_path, 0, usize::MAX);
 
-        let steps_per_frame = resample::RESAMPLE_INTERVAL * TIMELAPSE_RENDER_EVERY_N_RESAMPLES;
+        let steps_per_frame = resample::resample_interval(&sim.plates) * TIMELAPSE_RENDER_EVERY_N_RESAMPLES;
         let total_frames = TIMELAPSE_STEPS / steps_per_frame + 1;
         let mut frame = 0;
 
@@ -431,83 +310,30 @@ mod tests {
             total_frames
         );
         std::io::stdout().flush().unwrap();
-        render_simulation_ex(&sim, true).save(output_dir.join("frame_000.png")).unwrap();
+        render_simulation(&sim)
+            .save(output_dir.join("frame_000.png"))
+            .unwrap();
 
         for step in 1..=TIMELAPSE_STEPS {
             sim.step();
             if step % steps_per_frame == 0 {
+                resample::resample(&mut sim);
                 frame += 1;
                 let pct = (frame * 100).min(100 * total_frames) / total_frames;
-                print!("\r[{:>3}%] Frame {}/{} (t={:.0} Myr)        ", pct, frame, total_frames, sim.time);
+                print!(
+                    "\r[{:>3}%] Frame {}/{} (t={:.0} Myr)        ",
+                    pct, frame, total_frames, sim.time
+                );
                 std::io::stdout().flush().unwrap();
-                // TODO: pass `true` once resample is re-enabled — frames
-                // on resample boundaries have a clean Fibonacci grid.
-                render_simulation_ex(&sim, false)
+                render_simulation(&sim)
                     .save(output_dir.join(format!("frame_{:03}.png", step)))
                     .unwrap();
             }
         }
-        println!("\r[100%] Done — {} frames in {}        ", total_frames, output_dir.display());
-    }
-
-    const DEBUG_EXPORT_POINTS: u32 = 100_000;
-    const DEBUG_EXPORT_STEPS: usize = 200;
-    const DEBUG_EXPORT_RECORD_EVERY_N_RESAMPLES: usize = 1;
-
-    #[test]
-    #[ignore] // Run with: cargo test --release debug_export -- --ignored --nocapture
-    fn debug_export() {
-        use super::super::debug_export::DebugRecorder;
-        use super::super::resample;
-        use std::io::Write;
-
-        let fibonacci = SphericalFibonacci::new(DEBUG_EXPORT_POINTS);
-        let points = fibonacci.all_points();
-        let delaunay = SphericalDelaunay::from_points(&points);
-        let assignment = assign_plates(&points, &fibonacci, &delaunay, PLATE_COUNT, 42);
-        let plates = initialize_plates(&points, &delaunay, &assignment, &InitParams::default());
-        let mut sim = Simulation::new(points, plates, &delaunay);
-
-        let mut recorder = DebugRecorder::new();
-        recorder.set_triangulation(&delaunay);
-        recorder.record(&sim);
-
-        let steps_per_frame = resample::RESAMPLE_INTERVAL * DEBUG_EXPORT_RECORD_EVERY_N_RESAMPLES;
-        let total_steps = DEBUG_EXPORT_STEPS;
-
-        for step in 1..=total_steps {
-            sim.step();
-            if step % steps_per_frame == 0 {
-                recorder.record(&sim);
-                let pct = step * 100 / total_steps;
-                print!(
-                    "\r[{:>3}%] Recorded frame {} (t={:.0} Myr)        ",
-                    pct,
-                    recorder.frame_count(),
-                    sim.time
-                );
-                std::io::stdout().flush().unwrap();
-            }
-        }
-        println!();
-
-        let output = Path::new("tools/debug_viewer/sim_data.bin");
-        std::fs::create_dir_all(output.parent().unwrap()).unwrap();
-        recorder.save(output).expect("failed to save debug export");
-    }
-
-    #[test]
-    #[ignore] // Run with: cargo test --release initialized_plate_map -- --ignored --nocapture
-    fn initialized_plate_map() {
-        let fibonacci = SphericalFibonacci::new(POINT_COUNT);
-        let points = fibonacci.all_points();
-        let delaunay = SphericalDelaunay::from_points(&points);
-        let assignment = assign_plates(&points, &fibonacci, &delaunay, PLATE_COUNT, 42);
-        let plates = initialize_plates(&points, &delaunay, &assignment, &InitParams::default());
-
-        let img = render_initialized_plates(&fibonacci, &assignment, &plates);
-        let output = Path::new("src/tectonic_simulation/initialized_plates.png");
-        img.save(output).expect("failed to save initialized plate map");
-        println!("Saved initialized plate map to {}", output.display());
+        println!(
+            "\r[100%] Done — {} frames in {}        ",
+            total_frames,
+            output_dir.display()
+        );
     }
 }

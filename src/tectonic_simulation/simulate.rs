@@ -1,77 +1,48 @@
-use std::collections::HashMap;
 use std::io::Write;
 
 use glam::{DQuat, DVec3};
-use noise::{Fbm, MultiFractal, NoiseFn, Perlin};
 
-use super::boundary::{find_boundary_edges, BoundaryEdge};
+use super::plate_seed_placement::Adjacency;
 use super::continental_collision;
 use super::oceanic_crust_generation;
-use super::plate_rifting;
-use super::plate_seed_placement::Adjacency;
-use super::plates::{CrustType, OrogenyType, Plate};
+use super::plates::{CrustData, CrustType, OrogenyType, Plate, SampleCache, WalkResult};
 use super::resample;
-use super::spherical_delaunay_triangulation::SphericalDelaunay;
 use super::subduction;
 use super::util::plate_centroid;
 
-/// Timestep δt in Myr.
+/// Timestep in Myr.
 const DT: f64 = 2.0;
-/// Planet radius in km, for arc distance conversion.
+/// Planet radius in km.
 const PLANET_RADIUS: f64 = 6370.0;
-/// Continental erosion rate ε_c in km/Myr (converted from 0.03 mm/yr).
-const CONTINENTAL_EROSION: f64 = 0.03e-3;
-/// Oceanic elevation damping rate ε_o in km/Myr (converted from 0.04 mm/yr).
-const OCEANIC_DAMPING: f64 = 0.04e-3;
-/// Sediment accretion rate ε_t in km/Myr (converted from 0.3 mm/yr).
-const SEDIMENT_ACCRETION: f64 = 0.3e-3;
-/// Highest continental altitude z_c in km, normalizes erosion.
-const MAX_CONTINENTAL_ALTITUDE: f64 = 10.0;
-/// Oceanic trench depth z_t in km, normalizes damping.
-const OCEANIC_TRENCH_DEPTH: f64 = -10.0;
-/// Interpenetration threshold for triggering a continental collision, in km.
-const COLLISION_THRESHOLD: f64 = 300.0;
-/// Dot product threshold for the 1800km subduction radius.
-/// cos(1800 / 6370) — points with dot > this are within 1800km.
-const SUBDUCTION_DOT_THRESHOLD: f64 = 0.9603;
-/// Low-frequency noise amplitude for spatial erosion/damping variation.
-/// A value of 0.4 means rates vary between 60%–140% of their base value.
-const EROSION_NOISE_AMPLITUDE: f64 = 0.4;
-/// Noise frequency — low values produce continent-scale variation.
-const EROSION_NOISE_FREQUENCY: f64 = 1.5;
-/// FBM octaves for erosion noise.
-const EROSION_NOISE_OCTAVES: usize = 3;
-/// Noise seed for erosion spatial variation.
-const EROSION_NOISE_SEED: u32 = 7;
-/// Angular speed below which plate rotation is skipped (effectively zero).
+/// Maximum triangle-walk steps before giving up.
+const MAX_WALK_STEPS: u32 = 256;
+/// Sentinel: sample not covered by any plate (gap region).
+pub const NO_PLATE: u32 = u32::MAX;
+const NO_TRIANGLE: u32 = u32::MAX;
+/// Angular speed below which rotation is skipped.
 const MIN_ANGULAR_SPEED: f64 = 1e-15;
-/// Floor for noise-modulated erosion multiplier. Prevents sign flip.
-const EROSION_NOISE_FLOOR: f64 = 0.1;
-/// Minimum subduction uplift (mm/yr) to classify a point as active Andean orogeny.
-/// ~10% of BASE_UPLIFT — gates orogeny to the zone near the subduction front
-/// where deformation is strong enough to build mountains.
+/// Dot product threshold for 1800km subduction radius.
+const SUBDUCTION_DOT_THRESHOLD: f64 = 0.9603;
+/// Minimum subduction uplift to classify as active Andean orogeny.
 const MIN_OROGENY_UPLIFT: f64 = 0.06;
+/// Interpenetration threshold for continental collision (km).
+const COLLISION_THRESHOLD: f64 = 300.0;
 
-/// Number of latitude bands for subduction source clustering.
-const CLUSTER_LAT_BINS: usize = 64;
-/// Number of longitude bands for subduction source clustering.
-const CLUSTER_LON_BINS: usize = 128;
-
-/// A subduction source on the overriding plate's boundary.
-#[derive(Clone)]
-struct SubductionSource {
-    boundary_pos: DVec3,
-    vel_sub: DVec3,
-    vel_over: DVec3,
-    /// Elevation of the subducting plate at the boundary (for height transfer h(z̃_i)).
-    subducting_elevation: f64,
+/// Boundary between two adjacent samples assigned to different plates.
+pub struct BoundarySample {
+    /// World-space midpoint of the two sample points.
+    pub position: DVec3,
+    pub sample_a: u32,
+    pub sample_b: u32,
+    pub plate_a: u32,
+    pub plate_b: u32,
+    pub crust_type_a: CrustType,
+    pub crust_type_b: CrustType,
+    pub age_a: f64,
+    pub age_b: f64,
 }
 
-/// Step-range diagnostic logger. Writes per-phase crust statistics to a file.
-/// One entry of a step-to-step crust snapshot: (crust_type, elevation, orogeny_type, plate_index).
-type CrustSnapshotEntry = (CrustType, f64, Option<OrogenyType>, usize);
-type CrustSnapshot = Vec<CrustSnapshotEntry>;
-
+/// Step-range diagnostic logger.
 pub struct DiagnosticLog {
     pub(super) file: std::io::BufWriter<std::fs::File>,
     start_step: usize,
@@ -94,12 +65,21 @@ impl DiagnosticLog {
 }
 
 /// Full simulation state.
+///
+/// Architecture: plates own reference sub-meshes (T_k) with accumulated
+/// rotations (R_k). The global sample grid is a fixed Fibonacci lattice
+/// queried against plates each step via warm-start triangle walks.
+/// Only R_k changes between resamples; meshes are stable.
 pub struct Simulation {
-    pub points: Vec<DVec3>,
+    /// Global sample grid (Fibonacci points, fixed between resamples).
+    pub sample_points: Vec<DVec3>,
+    /// Per-sample warm-start: plate + triangle + barycentric coords.
+    pub sample_cache: Vec<SampleCache>,
+    /// Sample grid adjacency for boundary detection.
+    pub sample_adjacency: Adjacency,
     pub plates: Vec<Plate>,
-    pub adjacency: Adjacency,
     pub time: f64,
-    pub point_count: u32,
+    pub target_sample_count: u32,
     pub(super) step_count: usize,
     steps_since_resample: usize,
     steps_since_crust_generation: usize,
@@ -109,15 +89,20 @@ pub struct Simulation {
 }
 
 impl Simulation {
-    pub fn new(points: Vec<DVec3>, plates: Vec<Plate>, delaunay: &SphericalDelaunay) -> Self {
-        let point_count = points.len() as u32;
-        let adjacency = Adjacency::from_delaunay(points.len(), delaunay);
+    pub fn new(
+        sample_points: Vec<DVec3>,
+        sample_cache: Vec<SampleCache>,
+        sample_adjacency: Adjacency,
+        plates: Vec<Plate>,
+    ) -> Self {
+        let target = sample_points.len() as u32;
         Self {
-            points,
+            sample_points,
+            sample_cache,
+            sample_adjacency,
             plates,
-            adjacency,
             time: 0.0,
-            point_count,
+            target_sample_count: target,
             step_count: 0,
             steps_since_resample: 0,
             steps_since_crust_generation: 0,
@@ -127,477 +112,341 @@ impl Simulation {
         }
     }
 
-    pub fn enable_diagnostics(&mut self, path: &std::path::Path, start_step: usize, end_step: usize) {
+    pub fn enable_diagnostics(
+        &mut self,
+        path: &std::path::Path,
+        start_step: usize,
+        end_step: usize,
+    ) {
         self.diagnostics = Some(DiagnosticLog::new(path, start_step, end_step));
-    }
-
-    /// Look up the elevation of a global point within a plate (by plate index).
-    fn elevation_at_point(&self, plate_idx: u32, global_point: u32) -> f64 {
-        let plate = &self.plates[plate_idx as usize];
-        for (local, &global) in plate.point_indices.iter().enumerate() {
-            if global == global_point {
-                return plate.crust[local].elevation;
-            }
-        }
-        0.0
     }
 
     /// Advance the simulation by one timestep.
     pub fn step(&mut self) {
         self.step_count += 1;
-        self.log_step_start();
 
-        self.move_plates();
-        self.debug_validate("after move_plates");
+        self.advance_rotations();
+        self.assign_samples();
+        self.log_assignment_stats("after assign_samples");
+        self.log_crust_summary("  crust");
 
-        let boundary = self.find_boundary();
+        let boundary = self.detect_boundaries();
         self.phase_subduction(&boundary);
-        self.consume_subducted_vertices();
-
-        // Consumption can remove points; rebuild boundary for collision.
-        let boundary = self.find_boundary();
         self.phase_collision(&boundary);
-        self.remove_empty_plates();
 
-        // `remove_empty_plates` can renumber plates; rebuild boundary.
-        let boundary = self.find_boundary();
-        let boundary = self.phase_rift(boundary);
+        let plates_before = self.plates.len();
+        self.remove_empty_plates();
+        if self.plates.len() != plates_before {
+            self.log_msg(&format!(
+                "  remove_empty_plates: {} → {} plates",
+                plates_before,
+                self.plates.len()
+            ));
+        }
+
+        let boundary = self.detect_boundaries();
+        self.phase_rift(&boundary);
         self.phase_oceanic_gen(&boundary);
-        //self.phase_erosion();
 
         self.time += DT;
         self.steps_since_resample += 1;
-
-        self.phase_resample();
-        //self.debug_validate("after phase_resample");
-        self.log_isolated_crust_points();
-    }
-
-    // --- Step phases ---
-    //
-    // Each phase bundles one simulation concern (physics + its diagnostic
-    // logging). Commenting out a single call in `step()` cleanly disables
-    // the entire phase — no leftover logging scaffolding or side-effect
-    // surprises.
-
-    fn phase_subduction(&mut self, boundary: &[BoundaryEdge]) {
-        let snap = self.crust_snapshot_if_logging();
-        self.process_subduction(boundary);
-        self.log_crust_diff_opt("  after subduction", snap);
-    }
-
-    fn phase_collision(&mut self, boundary: &[BoundaryEdge]) {
-        let snap = self.crust_snapshot_if_logging();
-        let plates_before = self.plates.len();
-        self.process_collisions(boundary);
-        if let Some(before) = snap {
-            self.log_crust_diff("  after collision", &before);
-            if self.plates.len() != plates_before {
-                self.log_msg(&format!(
-                    "  collision transferred terrane: {} -> {} plates",
-                    plates_before,
-                    self.plates.len()
-                ));
-            }
-        }
-    }
-
-    fn phase_rift(&mut self, boundary: Vec<BoundaryEdge>) -> Vec<BoundaryEdge> {
-        let snap = self.crust_snapshot_if_logging();
-        let boundary = self.maybe_rift(boundary);
-        self.log_crust_diff_opt("  after rift", snap);
-        boundary
-    }
-
-    fn phase_oceanic_gen(&mut self, boundary: &[BoundaryEdge]) {
-        let snap = self.crust_snapshot_if_logging();
-        self.maybe_generate_oceanic_crust(boundary);
-        self.log_crust_diff_opt("  after oceanic gen", snap);
-    }
-
-    fn phase_erosion(&mut self) {
-        let snap = self.crust_snapshot_if_logging();
-        self.apply_erosion_and_damping();
-        if let Some(before) = snap {
-            self.log_elevation_changes("  after erosion", &before);
-        }
-    }
-
-    fn phase_resample(&mut self) {
-        let snap = self.crust_snapshot_if_logging();
         self.maybe_resample();
-        if let Some(before) = snap {
-            self.log_crust_diff("  after resample", &before);
-            self.log_crust_summary("  final");
-        }
     }
 
-    // --- Helpers shared by phases ---
-
-    fn logging_active(&self) -> bool {
-        self.diagnostics.as_ref().map_or(false, |d| d.active(self.step_count))
-    }
-
-    fn crust_snapshot_if_logging(&self) -> Option<CrustSnapshot> {
-        if self.logging_active() {
-            Some(self.snapshot_crust())
-        } else {
-            None
-        }
-    }
-
-    fn log_crust_diff_opt(&mut self, label: &str, snap: Option<CrustSnapshot>) {
-        if let Some(before) = snap {
-            self.log_crust_diff(label, &before);
-        }
-    }
-
-    fn log_step_start(&mut self) {
-        if self.logging_active() {
-            self.log_header("STEP START");
-            self.log_crust_summary("  initial");
-        }
-    }
-
-    fn find_boundary(&self) -> Vec<BoundaryEdge> {
-        find_boundary_edges(&self.plates, &self.points, &self.adjacency)
-    }
-
-    /// Validate simulation invariants and panic with details on first violation.
-    fn debug_validate(&self, label: &str) {
-        let n = self.points.len();
-
-        // Points are unit-length and finite
-        for (i, p) in self.points.iter().enumerate() {
-            let len = p.length();
-            assert!((len - 1.0).abs() < 1e-6, "[{label}] point {i} not unit-length: {len}");
-            assert!(!p.x.is_nan() && !p.y.is_nan() && !p.z.is_nan(), "[{label}] point {i} contains NaN");
-        }
-
-        // Crust/index parallel arrays, bounds, ownership, and crust sanity
-        let mut owner_count = vec![0u32; n];
-        for (plate_idx, plate) in self.plates.iter().enumerate() {
-            assert_eq!(
-                plate.point_indices.len(),
-                plate.crust.len(),
-                "[{label}] plate {plate_idx}: point_indices.len()={} != crust.len()={}",
-                plate.point_indices.len(),
-                plate.crust.len(),
-            );
-            for (local, &global) in plate.point_indices.iter().enumerate() {
-                assert!(
-                    (global as usize) < n,
-                    "[{label}] plate {plate_idx} local {local}: global index {global} >= points.len() {n}"
-                );
-                owner_count[global as usize] += 1;
-
-                let c = &plate.crust[local];
-                assert!(
-                    !c.elevation.is_nan() && !c.elevation.is_infinite(),
-                    "[{label}] plate {plate_idx} local {local} (global {global}): bad elevation {}",
-                    c.elevation
-                );
-                assert!(
-                    !c.age.is_nan() && c.age >= 0.0,
-                    "[{label}] plate {plate_idx} local {local} (global {global}): bad age {}",
-                    c.age
-                );
-            }
-        }
-
-        // Every point owned by exactly one plate
-        for (i, &count) in owner_count.iter().enumerate() {
-            assert!(count == 1, "[{label}] point {i} owned by {count} plates (expected 1)");
-        }
-
-        // Total owned matches global array size
-        let total_owned: usize = self.plates.iter().map(|p| p.point_indices.len()).sum();
-        assert_eq!(total_owned, n, "[{label}] total owned points {total_owned} != points.len() {n}");
-    }
-
-    /// Log any crust-type points that are isolated within their own plate —
-    /// a continental point whose K nearest same-plate neighbors are all oceanic,
-    /// or vice versa. Indicates resample is corrupting interior crust data.
-    fn log_isolated_crust_points(&mut self) {
-        if !self.logging_active() {
-            return;
-        }
-
-        use super::plates::CrustType;
-        use super::sphere_grid::SphereGrid;
-
-        const K: usize = 6;
-
-        // Build per-point lookups.
-        let n = self.points.len();
-        let mut point_plate = vec![0u32; n];
-        let mut point_crust = vec![CrustType::Oceanic; n];
-        for (plate_idx, plate) in self.plates.iter().enumerate() {
-            for (local, &global) in plate.point_indices.iter().enumerate() {
-                point_plate[global as usize] = plate_idx as u32;
-                point_crust[global as usize] = plate.crust[local].crust_type;
-            }
-        }
-
-        let grid = SphereGrid::build(&self.points);
-        let mut isolated_cont = 0usize; // continental surrounded by oceanic
-        let mut isolated_ocean = 0usize; // oceanic surrounded by continental
-        let mut first_cont_pos = glam::DVec3::ZERO;
-        let mut first_ocean_pos = glam::DVec3::ZERO;
-
-        for (i, &p) in self.points.iter().enumerate() {
-            let my_plate = point_plate[i];
-            let my_crust = point_crust[i];
-            let neighbors = grid.find_nearest_k(p, &self.points, K + 1); // +1 because self is included
-
-            // Count same-plate neighbors with different crust type.
-            let mut same_plate_neighbors = 0usize;
-            let mut diff_crust = 0usize;
-            for &(ni, _) in &neighbors {
-                let ni = ni as usize;
-                if ni == i {
-                    continue;
-                }
-                if point_plate[ni] != my_plate {
-                    continue;
-                }
-                same_plate_neighbors += 1;
-                if point_crust[ni] != my_crust {
-                    diff_crust += 1;
-                }
-            }
-
-            // Isolated: all same-plate neighbors have different crust type.
-            if same_plate_neighbors > 0 && diff_crust == same_plate_neighbors {
-                match my_crust {
-                    CrustType::Continental => {
-                        if isolated_cont == 0 {
-                            first_cont_pos = p;
-                        }
-                        isolated_cont += 1;
-                    }
-                    CrustType::Oceanic => {
-                        if isolated_ocean == 0 {
-                            first_ocean_pos = p;
-                        }
-                        isolated_ocean += 1;
-                    }
-                }
-            }
-        }
-
-        if isolated_cont > 0 || isolated_ocean > 0 {
-            if let Some(diag) = &mut self.diagnostics {
-                let _ = std::io::Write::write_fmt(
-                    &mut diag.file,
-                    format_args!(
-                        "  ISOLATED CRUST step={}: cont_in_ocean={} ocean_in_cont={} first_cont=({:.3},{:.3},{:.3}) first_ocean=({:.3},{:.3},{:.3})\n",
-                        self.step_count,
-                        isolated_cont, isolated_ocean,
-                        first_cont_pos.x, first_cont_pos.y, first_cont_pos.z,
-                        first_ocean_pos.x, first_ocean_pos.y, first_ocean_pos.z,
-                    ),
-                );
-            }
-        }
-    }
-
-    /// Run the simulation for a number of timesteps.
     pub fn run(&mut self, steps: usize) {
         for _ in 0..steps {
             self.step();
         }
     }
 
-    /// Rotate each plate's points around its Euler pole by angular_speed * dt.
-    fn move_plates(&mut self) {
-        for plate in &self.plates {
-            let angle = plate.angular_speed * DT;
-            if angle.abs() < MIN_ANGULAR_SPEED {
+    // ── Rotation ──────────────────────────────────────────────────────
+
+    /// Update each plate's accumulated rotation R_k. No points move.
+    fn advance_rotations(&mut self) {
+        for plate in &mut self.plates {
+            if plate.angular_speed.abs() < MIN_ANGULAR_SPEED {
                 continue;
             }
-            let rotation = DQuat::from_axis_angle(plate.rotation_axis, angle);
-            for &global in &plate.point_indices {
-                self.points[global as usize] = rotation.mul_vec3(self.points[global as usize]).normalize();
-            }
+            let step_rot =
+                DQuat::from_axis_angle(plate.rotation_axis, plate.angular_speed * DT);
+            plate.rotation = (step_rot * plate.rotation).normalize();
         }
     }
 
-    fn process_subduction(&mut self, boundary: &[BoundaryEdge]) {
-        let mut slab_pull_points: Vec<Vec<DVec3>> = vec![Vec::new(); self.plates.len()];
-        let mut advancements: Vec<(u32, u32, f64)> = Vec::new();
-        let sources = self.collect_subduction_sources(boundary, &mut slab_pull_points, &mut advancements);
-        let clustered = cluster_sources(&sources);
-        self.apply_uplift(&clustered);
-        self.apply_slab_pull(&slab_pull_points);
-        self.apply_subducted_advancements(&advancements);
+    // ── Sample assignment (steps 1–8) ─────────────────────────────────
+
+    /// For every sample point, find which plate covers it using the
+    /// warm-start triangle walk. Most samples stay in the same plate;
+    /// only boundary crossings trigger the candidate search.
+    fn assign_samples(&mut self) {
+        for i in 0..self.sample_points.len() {
+            let p = self.sample_points[i];
+            let cache = self.sample_cache[i];
+
+            // Step 1–2: try previous plate.
+            if cache.plate != NO_PLATE && (cache.plate as usize) < self.plates.len() {
+                let plate = &self.plates[cache.plate as usize];
+                let q = plate.to_reference(p);
+                if let WalkResult::Found { triangle, bary } =
+                    plate.walk_to_point(q, cache.triangle, MAX_WALK_STEPS)
+                {
+                    self.sample_cache[i] = SampleCache {
+                        plate: cache.plate,
+                        triangle,
+                        bary,
+                    };
+                    continue;
+                }
+            }
+
+            // Steps 4–6: search candidate plates.
+            self.sample_cache[i] = self.search_candidates(p);
+        }
     }
 
-    fn collect_subduction_sources(
-        &self,
-        boundary: &[BoundaryEdge],
-        slab_pull_points: &mut [Vec<DVec3>],
-        advancements: &mut Vec<(u32, u32, f64)>,
-    ) -> Vec<Vec<SubductionSource>> {
+    /// Steps 4–6: test candidate plates via bounding caps, walk in each,
+    /// resolve gaps and overlaps.
+    fn search_candidates(&self, world_p: DVec3) -> SampleCache {
+        let mut hits: Vec<SampleCache> = Vec::new();
+
+        for (k, plate) in self.plates.iter().enumerate() {
+            if !plate.world_point_in_cap(world_p) {
+                continue;
+            }
+            let q = plate.to_reference(world_p);
+            if let WalkResult::Found { triangle, bary } =
+                plate.walk_to_point(q, 0, MAX_WALK_STEPS)
+            {
+                hits.push(SampleCache {
+                    plate: k as u32,
+                    triangle,
+                    bary,
+                });
+            }
+        }
+
+        match hits.len() {
+            0 => SampleCache {
+                plate: NO_PLATE,
+                triangle: NO_TRIANGLE,
+                bary: [0.0; 3],
+            },
+            1 => hits[0],
+            _ => self.resolve_overlap(&hits),
+        }
+    }
+
+    /// Step 6, overlap: multiple plates claim the point. Lower-density wins
+    /// (continental over oceanic; younger oceanic over older).
+    fn resolve_overlap(&self, hits: &[SampleCache]) -> SampleCache {
+        let mut best = 0;
+        for i in 1..hits.len() {
+            let ci = self.dominant_crust(&hits[i]);
+            let cb = self.dominant_crust(&hits[best]);
+            let i_wins = match (ci.crust_type, cb.crust_type) {
+                (CrustType::Continental, CrustType::Oceanic) => true,
+                (CrustType::Oceanic, CrustType::Continental) => false,
+                _ => ci.age < cb.age,
+            };
+            if i_wins {
+                best = i;
+            }
+        }
+        hits[best]
+    }
+
+    // ── Crust access ──────────────────────────────────────────────────
+
+    /// Barycentric-blended crust at a sample's cached location (step 7).
+    pub fn interpolated_crust(&self, cache: &SampleCache) -> CrustData {
+        if cache.plate == NO_PLATE {
+            return CrustData::oceanic(7.0, -4.0, 0.0, DVec3::X);
+        }
+        let plate = &self.plates[cache.plate as usize];
+        let [vi, vj, vk] = plate.triangles[cache.triangle as usize];
+        CrustData::barycentric_blend(
+            &plate.crust[vi as usize],
+            &plate.crust[vj as usize],
+            &plate.crust[vk as usize],
+            cache.bary,
+        )
+    }
+
+    /// Dominant-vertex crust (no blending) — for discrete fields like crust_type.
+    pub fn dominant_crust(&self, cache: &SampleCache) -> &CrustData {
+        let plate = &self.plates[cache.plate as usize];
+        let [vi, vj, vk] = plate.triangles[cache.triangle as usize];
+        let dom = if cache.bary[0] >= cache.bary[1] && cache.bary[0] >= cache.bary[2] {
+            vi
+        } else if cache.bary[1] >= cache.bary[2] {
+            vj
+        } else {
+            vk
+        };
+        &plate.crust[dom as usize]
+    }
+
+    // ── Boundary detection ────────────────────────────────────────────
+
+    /// Scan sample adjacency for edges crossing plate boundaries.
+    fn detect_boundaries(&self) -> Vec<BoundarySample> {
+        let mut boundaries = Vec::new();
+
+        for i in 0..self.sample_points.len() {
+            let ca = &self.sample_cache[i];
+            if ca.plate == NO_PLATE {
+                continue;
+            }
+
+            for &j in self.sample_adjacency.neighbors_of(i as u32) {
+                if (j as usize) <= i {
+                    continue;
+                }
+                let cb = &self.sample_cache[j as usize];
+                if cb.plate == NO_PLATE || cb.plate == ca.plate {
+                    continue;
+                }
+
+                let crust_a = self.dominant_crust(ca);
+                let crust_b = self.dominant_crust(cb);
+                let midpoint =
+                    (self.sample_points[i] + self.sample_points[j as usize]).normalize();
+
+                boundaries.push(BoundarySample {
+                    position: midpoint,
+                    sample_a: i as u32,
+                    sample_b: j,
+                    plate_a: ca.plate,
+                    plate_b: cb.plate,
+                    crust_type_a: crust_a.crust_type,
+                    crust_type_b: crust_b.crust_type,
+                    age_a: crust_a.age,
+                    age_b: crust_b.age,
+                });
+            }
+        }
+
+        boundaries
+    }
+
+    // ── Physics phases (stubs — sub-modules need adapting) ────────────
+    //
+    // Each phase will be implemented by adapting its existing sub-module
+    // to the per-plate mesh model. Key difference from the old code:
+    // world-space positions come from `plate.to_world(plate.reference_points[i])`
+    // instead of a global `sim.points[global_idx]` array.
+
+    fn phase_subduction(&mut self, boundary: &[BoundarySample]) {
         let mut sources: Vec<Vec<SubductionSource>> = vec![Vec::new(); self.plates.len()];
+        let mut slab_pull_points: Vec<Vec<DVec3>> = vec![Vec::new(); self.plates.len()];
 
         for edge in boundary {
-            let result = subduction::resolve_subduction(edge.plate_a, edge.plate_b, edge.crust_a, edge.age_a, edge.crust_b, edge.age_b);
+            let result = subduction::resolve_subduction(
+                edge.plate_a,
+                edge.plate_b,
+                edge.crust_type_a,
+                edge.age_a,
+                edge.crust_type_b,
+                edge.age_b,
+            );
 
-            let (subducting_idx, overriding_idx) = match result {
+            let (sub_idx, over_idx) = match result {
                 subduction::SubductionResult::PlateSubducts(s) => {
-                    let o = if s == edge.plate_a { edge.plate_b } else { edge.plate_a };
+                    let o = if s == edge.plate_a {
+                        edge.plate_b
+                    } else {
+                        edge.plate_a
+                    };
                     (s, o)
                 }
                 subduction::SubductionResult::ContinentalCollision => continue,
             };
 
-            let boundary_pos = self.points[edge.point as usize];
-
-            // Only process convergent boundaries: plates must be closing.
-            let vel_sub = self.plates[subducting_idx as usize].surface_velocity(boundary_pos);
-            let vel_over = self.plates[overriding_idx as usize].surface_velocity(boundary_pos);
-            let neighbor_pos = self.points[edge.neighbor as usize];
-            let edge_dir = (neighbor_pos - boundary_pos).normalize_or_zero();
-            let relative = vel_sub - vel_over;
-            // Negative component along edge direction means plates are closing.
-            if relative.dot(edge_dir) >= 0.0 {
+            // Check convergence: plates must be closing.
+            let pos_a = self.sample_points[edge.sample_a as usize];
+            let pos_b = self.sample_points[edge.sample_b as usize];
+            let vel_a = self.plates[edge.plate_a as usize].surface_velocity(edge.position);
+            let vel_b = self.plates[edge.plate_b as usize].surface_velocity(edge.position);
+            let gap_dir = (pos_b - pos_a).normalize_or_zero();
+            if (vel_a - vel_b).dot(gap_dir) <= 0.0 {
                 continue;
             }
 
-            slab_pull_points[subducting_idx as usize].push(boundary_pos);
+            slab_pull_points[sub_idx as usize].push(edge.position);
 
-            // Paper: d(p, t+δt) = d(p, t) + ||s_sub - s_over|| δt. Advance the
-            // subducting vertex's distance-past-front so it can be removed once
-            // it has fully subducted. `relative` is in rad/Myr (angular_speed
-            // times a unit tangent), so scale by PLANET_RADIUS to get km/Myr
-            // before multiplying by DT.
-            let subducting_vertex = if subducting_idx == edge.plate_a { edge.point } else { edge.neighbor };
-            let delta = relative.length() * PLANET_RADIUS * DT;
-            advancements.push((subducting_idx, subducting_vertex, delta));
-
-            // Look up the subducting plate's elevation at the boundary for h(z̃_i).
-            let subducting_elevation = if subducting_idx == edge.plate_a {
-                self.elevation_at_point(edge.plate_a, edge.point)
+            // Subducting plate's elevation at the boundary.
+            let sub_cache = if sub_idx == edge.plate_a {
+                &self.sample_cache[edge.sample_a as usize]
             } else {
-                self.elevation_at_point(edge.plate_b, edge.neighbor)
+                &self.sample_cache[edge.sample_b as usize]
+            };
+            let sub_elevation = if sub_cache.plate != NO_PLATE {
+                self.interpolated_crust(sub_cache).elevation
+            } else {
+                -4.0
             };
 
-            sources[overriding_idx as usize].push(SubductionSource {
-                boundary_pos,
+            let vel_sub = self.plates[sub_idx as usize].surface_velocity(edge.position);
+            let vel_over = self.plates[over_idx as usize].surface_velocity(edge.position);
+
+            sources[over_idx as usize].push(SubductionSource {
+                position: edge.position,
                 vel_sub,
                 vel_over,
-                subducting_elevation,
+                subducting_elevation: sub_elevation,
             });
+
+            // Advance subducted_distance on subducting plate vertices near boundary.
+            let relative_speed = (vel_sub - vel_over).length() * PLANET_RADIUS;
+            let delta = relative_speed * DT;
+            advance_nearest_vertex(&mut self.plates[sub_idx as usize], edge.position, delta);
         }
 
-        sources
+        self.apply_uplift(&sources);
+        self.apply_slab_pull(&slab_pull_points);
     }
 
-    /// Apply advancements to `subducted_distance` for convergent boundary vertices.
-    ///
-    /// Per paper: `d(p,t+δt) ≥ d(p,t) + ||s(p)||δt` — the ≥ explicitly permits
-    /// overestimating, and the update is applied per converging triangle/edge.
-    /// A vertex on multiple convergent edges (triple junctions, long trenches)
-    /// is legitimately consumed faster, matching how overlapping subduction
-    /// fronts work physically.
-    fn apply_subducted_advancements(&mut self, advancements: &[(u32, u32, f64)]) {
-        for &(plate_idx, global_vertex, delta) in advancements {
-            let plate = &mut self.plates[plate_idx as usize];
-            if let Some(local) = plate.point_indices.iter().position(|&g| g == global_vertex) {
-                plate.crust[local].subducted_distance += delta;
-            }
-        }
-    }
+    fn phase_collision(&mut self, boundary: &[BoundarySample]) {
+        // Collect continental-continental convergent boundary points by plate pair.
+        let mut collision_boundaries: std::collections::HashMap<(u32, u32), Vec<DVec3>> =
+            std::collections::HashMap::new();
 
-    fn apply_uplift(&mut self, clustered: &[Vec<SubductionSource>]) {
-        for plate_idx in 0..self.plates.len() {
-            let sources = &clustered[plate_idx];
-            if sources.is_empty() {
-                continue;
-            }
-            let plate = &mut self.plates[plate_idx];
-            for (local, &global) in plate.point_indices.iter().enumerate() {
-                let p = self.points[global as usize];
-                for src in sources {
-                    if p.dot(src.boundary_pos) < SUBDUCTION_DOT_THRESHOLD {
-                        continue;
-                    }
-                    let d = p.dot(src.boundary_pos).clamp(-1.0, 1.0).acos() * PLANET_RADIUS;
-
-                    let crust = &plate.crust[local];
-                    let relative_speed = (src.vel_sub - src.vel_over).length();
-                    // Paper: h(z̃_i) uses the subducting plate's elevation, not the overriding plate's.
-                    let uplift = subduction::subduction_uplift(d, relative_speed, src.subducting_elevation);
-                    let (new_z, new_fold, new_age) = subduction::apply_subduction_step(
-                        crust.elevation,
-                        crust.local_direction,
-                        crust.age,
-                        d,
-                        src.vel_sub,
-                        src.vel_over,
-                        src.subducting_elevation,
-                        DT,
-                    );
-                    let crust = &mut plate.crust[local];
-                    crust.elevation = new_z;
-                    crust.local_direction = new_fold;
-                    crust.age = new_age;
-                    if uplift > MIN_OROGENY_UPLIFT {
-                        if crust.crust_type == CrustType::Oceanic && crust.elevation > 0.0 {
-                            crust.crust_type = CrustType::Continental;
-                            crust.orogeny_type = Some(OrogenyType::Andean);
-                        } else if crust.crust_type == CrustType::Continental {
-                            crust.orogeny_type = Some(OrogenyType::Andean);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    fn apply_slab_pull(&mut self, slab_pull_points: &[Vec<DVec3>]) {
-        for (plate_idx, pull_points) in slab_pull_points.iter().enumerate() {
-            if pull_points.is_empty() {
-                continue;
-            }
-            let center = plate_centroid(&self.plates[plate_idx], &self.points);
-            self.plates[plate_idx].rotation_axis = subduction::apply_slab_pull(self.plates[plate_idx].rotation_axis, center, pull_points, DT);
-        }
-    }
-
-    fn process_collisions(&mut self, boundary: &[BoundaryEdge]) {
-        let mut collision_boundaries: HashMap<(u32, u32), Vec<DVec3>> = HashMap::new();
         for edge in boundary {
-            if edge.crust_a != CrustType::Continental || edge.crust_b != CrustType::Continental {
+            if edge.crust_type_a != CrustType::Continental
+                || edge.crust_type_b != CrustType::Continental
+            {
                 continue;
             }
-            let boundary_pos = self.points[edge.point as usize];
-            let neighbor_pos = self.points[edge.neighbor as usize];
-            let vel_a = self.plates[edge.plate_a as usize].surface_velocity(boundary_pos);
-            let vel_b = self.plates[edge.plate_b as usize].surface_velocity(boundary_pos);
-            let relative = vel_a - vel_b;
-            // Check convergence: relative velocity should close the gap across the boundary.
-            // edge_dir points from this plate's point toward the neighboring plate's point.
-            let edge_dir = (neighbor_pos - boundary_pos).normalize_or_zero();
-            if relative.dot(edge_dir) >= 0.0 {
+
+            // Check convergence.
+            let pos_a = self.sample_points[edge.sample_a as usize];
+            let pos_b = self.sample_points[edge.sample_b as usize];
+            let vel_a = self.plates[edge.plate_a as usize].surface_velocity(edge.position);
+            let vel_b = self.plates[edge.plate_b as usize].surface_velocity(edge.position);
+            let gap_dir = (pos_b - pos_a).normalize_or_zero();
+            if (vel_a - vel_b).dot(gap_dir) <= 0.0 {
                 continue;
             }
+
             let pair = (edge.plate_a.min(edge.plate_b), edge.plate_a.max(edge.plate_b));
-            collision_boundaries.entry(pair).or_default().push(boundary_pos);
+            collision_boundaries
+                .entry(pair)
+                .or_default()
+                .push(edge.position);
         }
 
-        for ((plate_a, plate_b), boundary_points) in collision_boundaries {
-            self.try_collision(plate_a, plate_b, &boundary_points);
+        for ((plate_a, plate_b), boundary_points) in &collision_boundaries {
+            self.try_collision(*plate_a, *plate_b, boundary_points);
         }
     }
 
     fn try_collision(&mut self, plate_a: u32, plate_b: u32, boundary_points: &[DVec3]) {
-        let terranes_a = continental_collision::find_terranes(&self.plates[plate_a as usize], &self.points, &self.adjacency);
+        let terranes_a = continental_collision::find_terranes(&self.plates[plate_a as usize]);
         if terranes_a.is_empty() {
             return;
         }
 
+        // Find the terrane closest to the collision boundary.
         let nearest = terranes_a
             .iter()
             .min_by(|a, b| {
@@ -612,111 +461,154 @@ impl Simulation {
             return;
         }
 
-        let terrane_area = estimate_area(nearest.points.len(), self.points.len());
+        // Estimate terrane area from vertex count.
+        let total_verts: usize = self.plates.iter().map(|p| p.point_count()).sum();
+        let terrane_area = estimate_area(nearest.vertices.len(), total_verts);
+
         let vel_a = self.plates[plate_a as usize].surface_velocity(nearest.centroid);
         let vel_b = self.plates[plate_b as usize].surface_velocity(nearest.centroid);
         let relative_speed = (vel_a - vel_b).length();
 
-        let radius = continental_collision::influence_radius(relative_speed, terrane_area, self.plates.len());
-
+        let radius =
+            continental_collision::influence_radius(relative_speed, terrane_area, self.plates.len());
         let dot_threshold = (radius / PLANET_RADIUS).cos();
+
+        // Apply uplift surge to plate_b vertices within influence radius.
         let plate_b_ref = &mut self.plates[plate_b as usize];
-        for (local, &global) in plate_b_ref.point_indices.iter().enumerate() {
-            let p = self.points[global as usize];
-            let dot = p.dot(nearest.centroid);
-            if dot < dot_threshold {
+        for i in 0..plate_b_ref.reference_points.len() {
+            let world_p = plate_b_ref.to_world(plate_b_ref.reference_points[i]);
+            if world_p.dot(nearest.centroid) < dot_threshold {
                 continue;
             }
-            let d = dot.clamp(-1.0, 1.0).acos() * PLANET_RADIUS;
-            let (new_z, new_fold) = continental_collision::apply(plate_b_ref.crust[local].elevation, p, nearest.centroid, terrane_area, d, radius);
-            plate_b_ref.crust[local].elevation = new_z;
-            plate_b_ref.crust[local].local_direction = new_fold;
-            plate_b_ref.crust[local].orogeny_type = Some(OrogenyType::Himalayan);
+            let d = world_p.dot(nearest.centroid).clamp(-1.0, 1.0).acos() * PLANET_RADIUS;
+            let (new_z, new_fold) = continental_collision::apply(
+                plate_b_ref.crust[i].elevation,
+                world_p,
+                nearest.centroid,
+                terrane_area,
+                d,
+                radius,
+            );
+            plate_b_ref.crust[i].elevation = new_z;
+            plate_b_ref.crust[i].local_direction = new_fold;
+            plate_b_ref.crust[i].orogeny_type = Some(OrogenyType::Himalayan);
         }
 
-        let (src, dst) = borrow_two_mut(&mut self.plates, plate_a as usize, plate_b as usize);
-        continental_collision::transfer_terrane(nearest, src, dst);
+        // TODO: transfer_terrane — mesh surgery to move terrane from plate_a to plate_b.
+    }
+
+    fn phase_rift(&mut self, _boundary: &[BoundarySample]) {
+        // TODO: adapt plate rifting module.
+        // - Detect rift conditions on plate meshes
+        // - Split one plate's mesh into two new plates
+        // - Rebuild adjacency for the new plates
+    }
+
+    fn phase_oceanic_gen(&mut self, boundary: &[BoundarySample]) {
+        self.steps_since_crust_generation += 1;
+        if self.steps_since_crust_generation
+            < oceanic_crust_generation::generation_interval(&self.plates)
+        {
+            return;
+        }
+        self.steps_since_crust_generation = 0;
+        oceanic_crust_generation::generate_oceanic_crust(&mut self.plates, boundary);
+    }
+
+    fn apply_uplift(&mut self, sources: &[Vec<SubductionSource>]) {
+        for (plate_idx, plate_sources) in sources.iter().enumerate() {
+            if plate_sources.is_empty() {
+                continue;
+            }
+            let plate = &mut self.plates[plate_idx];
+            for i in 0..plate.reference_points.len() {
+                let world_p = plate.to_world(plate.reference_points[i]);
+                for src in plate_sources {
+                    if world_p.dot(src.position) < SUBDUCTION_DOT_THRESHOLD {
+                        continue;
+                    }
+                    let d = world_p.dot(src.position).clamp(-1.0, 1.0).acos() * PLANET_RADIUS;
+                    let (new_z, new_fold, new_age) = subduction::apply_subduction_step(
+                        plate.crust[i].elevation,
+                        plate.crust[i].local_direction,
+                        plate.crust[i].age,
+                        d,
+                        src.vel_sub,
+                        src.vel_over,
+                        src.subducting_elevation,
+                        DT,
+                    );
+                    let uplift = subduction::subduction_uplift(
+                        d,
+                        (src.vel_sub - src.vel_over).length(),
+                        src.subducting_elevation,
+                    );
+                    plate.crust[i].elevation = new_z;
+                    plate.crust[i].local_direction = new_fold;
+                    plate.crust[i].age = new_age;
+                    if uplift > MIN_OROGENY_UPLIFT {
+                        if plate.crust[i].crust_type == CrustType::Oceanic
+                            && plate.crust[i].elevation > 0.0
+                        {
+                            plate.crust[i].crust_type = CrustType::Continental;
+                            plate.crust[i].orogeny_type = Some(OrogenyType::Andean);
+                        } else if plate.crust[i].crust_type == CrustType::Continental {
+                            plate.crust[i].orogeny_type = Some(OrogenyType::Andean);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn apply_slab_pull(&mut self, slab_pull_points: &[Vec<DVec3>]) {
+        for (plate_idx, pull_points) in slab_pull_points.iter().enumerate() {
+            if pull_points.is_empty() {
+                continue;
+            }
+            let center = plate_centroid(&self.plates[plate_idx]);
+            self.plates[plate_idx].rotation_axis = subduction::apply_slab_pull(
+                self.plates[plate_idx].rotation_axis,
+                center,
+                pull_points,
+                DT,
+            );
+        }
     }
 
     fn remove_empty_plates(&mut self) {
-        self.plates.retain(|p| !p.point_indices.is_empty());
-    }
-
-    /// Remove vertices that have fully subducted (traveled past the convergence
-    /// front by more than `SURFACE_VISIBILITY_DISTANCE`). Compacts `sim.points`,
-    /// remaps every plate's `point_indices`, and rebuilds `sim.adjacency`.
-    fn consume_subducted_vertices(&mut self) {
-        let mut is_consumed = vec![false; self.points.len()];
-        let mut consumed_count = 0usize;
-
-        for plate in &self.plates {
-            for (local, &global) in plate.point_indices.iter().enumerate() {
-                if plate.crust[local].subducted_distance > subduction::SURFACE_VISIBILITY_DISTANCE {
-                    is_consumed[global as usize] = true;
-                    consumed_count += 1;
-                }
+        let old_len = self.plates.len();
+        let mut old_to_new = vec![NO_PLATE; old_len];
+        let mut new_idx = 0u32;
+        for i in 0..old_len {
+            if !self.plates[i].reference_points.is_empty() {
+                old_to_new[i] = new_idx;
+                new_idx += 1;
             }
         }
+        self.plates.retain(|p| !p.reference_points.is_empty());
 
-        if consumed_count == 0 {
+        for cache in &mut self.sample_cache {
+            if cache.plate != NO_PLATE && (cache.plate as usize) < old_len {
+                cache.plate = old_to_new[cache.plate as usize];
+            }
+        }
+    }
+
+    fn maybe_resample(&mut self) {
+        if self.steps_since_resample < resample::resample_interval(&self.plates) {
             return;
         }
-
-        let original_len = self.points.len();
-        let mut old_to_new = vec![u32::MAX; self.points.len()];
-        let mut new_points = Vec::with_capacity(original_len - consumed_count);
-        for (i, &p) in self.points.iter().enumerate() {
-            if is_consumed[i] {
-                continue;
-            }
-            old_to_new[i] = new_points.len() as u32;
-            new_points.push(p);
-        }
-
-        for plate in self.plates.iter_mut() {
-            let mut new_indices = Vec::with_capacity(plate.point_indices.len());
-            let mut new_crust = Vec::with_capacity(plate.crust.len());
-            for (local, &global) in plate.point_indices.iter().enumerate() {
-                if is_consumed[global as usize] {
-                    continue;
-                }
-                new_indices.push(old_to_new[global as usize]);
-                new_crust.push(plate.crust[local].clone());
-            }
-            plate.point_indices = new_indices;
-            plate.crust = new_crust;
-        }
-
-        self.points = new_points;
-        let delaunay = SphericalDelaunay::from_points(&self.points);
-        self.adjacency = Adjacency::from_delaunay(self.points.len(), &delaunay);
-
-        if let Some(diag) = self.diagnostics.as_mut() {
-            let _ = writeln!(
-                diag.file,
-                "=== SUBDUCTION CONSUMPTION step={} t={:.0} Myr consumed={} of {} remaining={} ===",
-                self.step_count,
-                self.time,
-                consumed_count,
-                original_len,
-                self.points.len(),
-            );
-            let _ = diag.file.flush();
-        }
+        resample::resample(self);
+        self.steps_since_resample = 0;
     }
 
-    // --- Diagnostic logging helpers ---
+    // ── Diagnostics ───────────────────────────────────────────────────
 
-    /// Per-point crust snapshot: (crust_type, elevation, orogeny_type, plate_index).
-    fn snapshot_crust(&self) -> CrustSnapshot {
-        let mut snap = vec![(CrustType::Oceanic, 0.0, None, 0usize); self.points.len()];
-        for (plate_idx, plate) in self.plates.iter().enumerate() {
-            for (local, &global) in plate.point_indices.iter().enumerate() {
-                let c = &plate.crust[local];
-                snap[global as usize] = (c.crust_type, c.elevation, c.orogeny_type, plate_idx);
-            }
-        }
-        snap
+    fn logging_active(&self) -> bool {
+        self.diagnostics
+            .as_ref()
+            .map_or(false, |d| d.active(self.step_count))
     }
 
     fn log_msg(&mut self, msg: &str) {
@@ -725,45 +617,34 @@ impl Simulation {
         }
     }
 
-    fn log_header(&mut self, label: &str) {
-        let step = self.step_count;
-        let time = self.time + DT; // time after this step completes
-        if let Some(diag) = &mut self.diagnostics {
-            let _ = writeln!(
-                diag.file,
-                "\n=== {} step={} t={:.0} Myr plates={} ===",
-                label,
-                step,
-                time,
-                self.plates.len()
-            );
-        }
-    }
-
     fn log_crust_summary(&mut self, label: &str) {
+        if !self.logging_active() {
+            return;
+        }
         let mut continental = 0usize;
         let mut oceanic = 0usize;
+        let mut cont_below_sea = 0usize;
+        let mut min_cont = f64::MAX;
+        let mut max_cont = f64::MIN;
+        let mut avg_cont = 0.0f64;
         let mut andean = 0usize;
         let mut himalayan = 0usize;
-        let mut no_orogeny = 0usize;
-        let mut cont_below_sea = 0usize;
-        let mut min_cont_elev = f64::MAX;
-        let mut max_cont_elev = f64::MIN;
 
         for plate in &self.plates {
             for c in &plate.crust {
                 match c.crust_type {
                     CrustType::Continental => {
                         continental += 1;
+                        avg_cont += c.elevation;
                         if c.elevation < 0.0 {
                             cont_below_sea += 1;
                         }
-                        min_cont_elev = min_cont_elev.min(c.elevation);
-                        max_cont_elev = max_cont_elev.max(c.elevation);
+                        min_cont = min_cont.min(c.elevation);
+                        max_cont = max_cont.max(c.elevation);
                         match c.orogeny_type {
                             Some(OrogenyType::Andean) => andean += 1,
                             Some(OrogenyType::Himalayan) => himalayan += 1,
-                            None => no_orogeny += 1,
+                            _ => {}
                         }
                     }
                     CrustType::Oceanic => oceanic += 1,
@@ -772,308 +653,62 @@ impl Simulation {
         }
 
         let total = continental + oceanic;
+        if total == 0 {
+            return;
+        }
+        if continental > 0 {
+            avg_cont /= continental as f64;
+        }
+
         if let Some(diag) = &mut self.diagnostics {
             let _ = writeln!(
                 diag.file,
-                "{}: total={} cont={} ({:.1}%) ocean={} | andean={} himalayan={} plain={} | cont_below_sea={} elev=[{:.3},{:.3}]",
+                "{}: cont={} ({:.1}%) ocean={} below_sea={} elev=[{:.3},{:.3}] avg={:.3} andean={} himalayan={}",
                 label,
-                total,
                 continental,
                 continental as f64 / total as f64 * 100.0,
                 oceanic,
+                cont_below_sea,
+                if min_cont == f64::MAX { 0.0 } else { min_cont },
+                if max_cont == f64::MIN { 0.0 } else { max_cont },
+                avg_cont,
                 andean,
                 himalayan,
-                no_orogeny,
-                cont_below_sea,
-                if min_cont_elev == f64::MAX { 0.0 } else { min_cont_elev },
-                if max_cont_elev == f64::MIN { 0.0 } else { max_cont_elev },
             );
-            // Per-plate breakdown
-            for (i, plate) in self.plates.iter().enumerate() {
-                let pc: usize = plate.crust.iter().filter(|c| c.crust_type == CrustType::Continental).count();
-                let po: usize = plate.crust.iter().filter(|c| c.crust_type == CrustType::Oceanic).count();
-                if pc > 0 || plate.crust.len() < 100 {
-                    let _ = writeln!(diag.file, "    plate[{}]: {} pts (cont={} ocean={})", i, plate.crust.len(), pc, po);
-                }
-            }
         }
     }
 
-    fn log_crust_diff(&mut self, label: &str, before: &[CrustSnapshotEntry]) {
-        let after = self.snapshot_crust();
-        let mut cont_to_ocean = 0usize;
-        let mut ocean_to_cont = 0usize;
-        let mut orogeny_changes = 0usize;
-        let mut plate_changes = 0usize;
-        let mut biggest_elev_drop = 0.0f64;
-        let mut biggest_drop_idx = 0usize;
-
-        for i in 0..before.len().min(after.len()) {
-            let (bt, be, bo, bp) = before[i];
-            let (at, ae, ao, ap) = after[i];
-            if bt == CrustType::Continental && at == CrustType::Oceanic {
-                cont_to_ocean += 1;
-            }
-            if bt == CrustType::Oceanic && at == CrustType::Continental {
-                ocean_to_cont += 1;
-            }
-            if bo != ao {
-                orogeny_changes += 1;
-            }
-            if bp != ap {
-                plate_changes += 1;
-            }
-            let drop = be - ae;
-            if bt == CrustType::Continental && drop > biggest_elev_drop {
-                biggest_elev_drop = drop;
-                biggest_drop_idx = i;
-            }
-        }
-
-        // Count new points appended beyond the original snapshot length.
-        let mut new_ocean = 0usize;
-        let mut new_cont = 0usize;
-        for i in before.len()..after.len() {
-            match after[i].0 {
-                CrustType::Oceanic => new_ocean += 1,
-                CrustType::Continental => new_cont += 1,
-            }
-        }
-
-        // Only log if something happened
-        if cont_to_ocean == 0
-            && ocean_to_cont == 0
-            && orogeny_changes == 0
-            && plate_changes == 0
-            && biggest_elev_drop < 0.001
-            && new_ocean == 0
-            && new_cont == 0
-        {
+    fn log_assignment_stats(&mut self, label: &str) {
+        if !self.logging_active() {
             return;
         }
+        let total = self.sample_cache.len();
+        let assigned = self.sample_cache.iter().filter(|c| c.plate != NO_PLATE).count();
+        let gap = total - assigned;
+
+        let mut per_plate = vec![0usize; self.plates.len()];
+        for c in &self.sample_cache {
+            if c.plate != NO_PLATE && (c.plate as usize) < self.plates.len() {
+                per_plate[c.plate as usize] += 1;
+            }
+        }
+        let plate_sizes: Vec<usize> = self.plates.iter().map(|p| p.point_count()).collect();
 
         if let Some(diag) = &mut self.diagnostics {
-            let _ = write!(
+            let _ = writeln!(
                 diag.file,
-                "{}: cont->ocean={} ocean->cont={} orogeny_changed={} plate_changed={} max_cont_elev_drop={:.4}km (pt {})",
-                label, cont_to_ocean, ocean_to_cont, orogeny_changes, plate_changes, biggest_elev_drop, biggest_drop_idx,
+                "  {} step={}: assigned={}/{} gap={} plates={}",
+                label, self.step_count, assigned, total, gap, self.plates.len()
             );
-            if new_ocean > 0 || new_cont > 0 {
-                let _ = write!(diag.file, " new_ocean={} new_cont={}", new_ocean, new_cont);
-            }
-            let _ = writeln!(diag.file);
-            // Detail the first few continental->oceanic transitions
-            if cont_to_ocean > 0 {
-                let mut shown = 0;
-                for i in 0..before.len().min(after.len()) {
-                    if before[i].0 == CrustType::Continental && after[i].0 == CrustType::Oceanic {
-                        let pos = self.points[i];
-                        let _ = writeln!(
-                            diag.file,
-                            "    cont->ocean pt={} pos=({:.3},{:.3},{:.3}) elev_before={:.4} elev_after={:.4} plate {}->{}",
-                            i, pos.x, pos.y, pos.z, before[i].1, after[i].1, before[i].3, after[i].3,
-                        );
-                        shown += 1;
-                        if shown >= 20 {
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    fn log_elevation_changes(&mut self, label: &str, before: &[CrustSnapshotEntry]) {
-        let after = self.snapshot_crust();
-        let mut cont_lost_elev = 0usize;
-        let mut cont_sank_below_sea = 0usize;
-
-        for i in 0..before.len().min(after.len()) {
-            if before[i].0 == CrustType::Continental && after[i].0 == CrustType::Continental {
-                if after[i].1 < before[i].1 {
-                    cont_lost_elev += 1;
-                }
-                if before[i].1 >= 0.0 && after[i].1 < 0.0 {
-                    cont_sank_below_sea += 1;
-                }
-            }
-        }
-
-        if cont_sank_below_sea > 0 {
-            if let Some(diag) = &mut self.diagnostics {
+            for (i, (&samples, &verts)) in per_plate.iter().zip(plate_sizes.iter()).enumerate() {
                 let _ = writeln!(
                     diag.file,
-                    "{}: continental_lost_elevation={} continental_sank_below_sea={}",
-                    label, cont_lost_elev, cont_sank_below_sea
+                    "    plate[{}]: {} samples, {} mesh verts, {} tris",
+                    i, samples, verts, self.plates[i].triangle_count()
                 );
             }
         }
     }
-
-    fn maybe_rift(&mut self, boundary: Vec<BoundaryEdge>) -> Vec<BoundaryEdge> {
-        self.steps_since_rift_check += 1;
-        if self.steps_since_rift_check < plate_rifting::RIFT_CHECK_INTERVAL {
-            return boundary;
-        }
-        self.steps_since_rift_check = 0;
-
-        if self.process_rifting() {
-            find_boundary_edges(&self.plates, &self.points, &self.adjacency)
-        } else {
-            boundary
-        }
-    }
-
-    fn process_rifting(&mut self) -> bool {
-        let mut rifted = false;
-        let mut new_plates: Vec<Plate> = Vec::new();
-        let mut emptied: Vec<usize> = Vec::new();
-
-        let total_points = self.points.len();
-        let plate_count = self.plates.len();
-
-        for i in 0..plate_count {
-            if !plate_rifting::should_rift(&self.plates[i], i, total_points, plate_count, self.time, self.rift_seed) {
-                continue;
-            }
-            let sub_plates = plate_rifting::rift_plate(&self.plates[i], &self.points, &self.adjacency, self.rift_seed);
-            if sub_plates.len() < 2 {
-                continue;
-            }
-            emptied.push(i);
-            new_plates.extend(sub_plates);
-            rifted = true;
-        }
-
-        if !rifted {
-            self.rift_seed = self.rift_seed.wrapping_add(1);
-            return false;
-        }
-
-        emptied.sort_unstable();
-        for &i in emptied.iter().rev() {
-            self.plates.swap_remove(i);
-        }
-        self.plates.extend(new_plates);
-
-        let delaunay = SphericalDelaunay::from_points(&self.points);
-        self.adjacency = Adjacency::from_delaunay(self.points.len(), &delaunay);
-        self.rift_seed = self.rift_seed.wrapping_add(1);
-        true
-    }
-
-    fn maybe_generate_oceanic_crust(&mut self, boundary: &[BoundaryEdge]) {
-        self.steps_since_crust_generation += 1;
-        if self.steps_since_crust_generation < oceanic_crust_generation::generation_interval(&self.plates) {
-            return;
-        }
-        self.generate_oceanic_crust(boundary);
-        self.steps_since_crust_generation = 0;
-    }
-
-    fn generate_oceanic_crust(&mut self, boundary: &[BoundaryEdge]) {
-        let divergent = oceanic_crust_generation::find_divergent_edges(boundary, &self.plates, &self.points);
-        if divergent.is_empty() {
-            return;
-        }
-
-        let new_points = oceanic_crust_generation::generate_ridge_points(&divergent, &self.plates, &self.points);
-        if new_points.is_empty() {
-            return;
-        }
-
-        for np in new_points {
-            let global_idx = self.points.len() as u32;
-            self.points.push(np.position);
-            self.plates[np.plate_index as usize].point_indices.push(global_idx);
-            self.plates[np.plate_index as usize].crust.push(np.crust);
-        }
-
-        let delaunay = SphericalDelaunay::from_points(&self.points);
-        self.adjacency = Adjacency::from_delaunay(self.points.len(), &delaunay);
-    }
-
-    fn maybe_resample(&mut self) {
-        if self.steps_since_resample < resample::RESAMPLE_INTERVAL {
-            return;
-        }
-        resample::resample(self, self.point_count);
-        self.steps_since_resample = 0;
-    }
-
-    fn apply_erosion_and_damping(&mut self) {
-        let fbm: Fbm<Perlin> = Fbm::new(EROSION_NOISE_SEED)
-            .set_octaves(EROSION_NOISE_OCTAVES)
-            .set_frequency(EROSION_NOISE_FREQUENCY);
-
-        for plate in &mut self.plates {
-            for (local, &global) in plate.point_indices.iter().enumerate() {
-                let p = self.points[global as usize];
-                let noise = 1.0 + EROSION_NOISE_AMPLITUDE * fbm.get([p.x, p.y, p.z]);
-                let scale = noise.max(EROSION_NOISE_FLOOR);
-                let crust = &mut plate.crust[local];
-                match crust.crust_type {
-                    CrustType::Continental => {
-                        crust.elevation -= (crust.elevation / MAX_CONTINENTAL_ALTITUDE) * CONTINENTAL_EROSION * scale * DT;
-                    }
-                    CrustType::Oceanic => {
-                        crust.elevation -= (1.0 - crust.elevation / OCEANIC_TRENCH_DEPTH) * OCEANIC_DAMPING * scale * DT;
-                        crust.elevation += SEDIMENT_ACCRETION * DT;
-                        crust.age += DT;
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// Cluster boundary sources by grid cell to reduce per-point work.
-/// Many boundary edges are geographically adjacent — averaging them per cell
-/// preserves physical accuracy while dramatically cutting source count.
-fn cluster_sources(raw_sources: &[Vec<SubductionSource>]) -> Vec<Vec<SubductionSource>> {
-    let bin_count = CLUSTER_LAT_BINS * CLUSTER_LON_BINS;
-    let mut clustered = Vec::with_capacity(raw_sources.len());
-
-    for sources in raw_sources {
-        if sources.is_empty() {
-            clustered.push(Vec::new());
-            continue;
-        }
-        let mut grid: HashMap<usize, Vec<&SubductionSource>> = HashMap::new();
-        for src in sources {
-            let bin = cluster_bin(src.boundary_pos, bin_count);
-            grid.entry(bin).or_default().push(src);
-        }
-        let mut plate_clustered = Vec::with_capacity(grid.len());
-        for (_, cell) in &grid {
-            let n = cell.len() as f64;
-            let avg_pos: DVec3 = cell.iter().map(|s| s.boundary_pos).sum::<DVec3>() / n;
-            let avg_vel_sub: DVec3 = cell.iter().map(|s| s.vel_sub).sum::<DVec3>() / n;
-            let avg_vel_over: DVec3 = cell.iter().map(|s| s.vel_over).sum::<DVec3>() / n;
-            let avg_elev: f64 = cell.iter().map(|s| s.subducting_elevation).sum::<f64>() / n;
-            plate_clustered.push(SubductionSource {
-                boundary_pos: avg_pos.normalize(),
-                vel_sub: avg_vel_sub,
-                vel_over: avg_vel_over,
-                subducting_elevation: avg_elev,
-            });
-        }
-        clustered.push(plate_clustered);
-    }
-
-    clustered
-}
-
-fn cluster_bin(p: DVec3, _bin_count: usize) -> usize {
-    let lat = p.y.clamp(-1.0, 1.0).asin();
-    let lon = p.z.atan2(p.x);
-    let lat_bin = ((lat / std::f64::consts::PI + 0.5) * CLUSTER_LAT_BINS as f64)
-        .max(0.0)
-        .min(CLUSTER_LAT_BINS as f64 - 1.0) as usize;
-    let lon_bin = ((lon / std::f64::consts::TAU + 0.5) * CLUSTER_LON_BINS as f64)
-        .max(0.0)
-        .min(CLUSTER_LON_BINS as f64 - 1.0) as usize;
-    lat_bin * CLUSTER_LON_BINS + lon_bin
 }
 
 fn arc_distance(a: DVec3, b: DVec3) -> f64 {
@@ -1081,60 +716,61 @@ fn arc_distance(a: DVec3, b: DVec3) -> f64 {
 }
 
 fn min_arc_distance(point: DVec3, targets: &[DVec3]) -> f64 {
-    targets.iter().map(|&t| arc_distance(point, t)).fold(f64::MAX, f64::min)
+    targets
+        .iter()
+        .map(|&t| arc_distance(point, t))
+        .fold(f64::MAX, f64::min)
 }
 
-/// Rough terrane area estimate from point count, assuming uniform density.
 fn estimate_area(terrane_points: usize, total_points: usize) -> f64 {
     let total_area = 4.0 * std::f64::consts::PI * PLANET_RADIUS * PLANET_RADIUS;
     total_area * terrane_points as f64 / total_points as f64
 }
 
-/// Borrow two distinct elements of a slice mutably.
-fn borrow_two_mut(plates: &mut [Plate], a: usize, b: usize) -> (&mut Plate, &mut Plate) {
-    assert_ne!(a, b);
-    if a < b {
-        let (left, right) = plates.split_at_mut(b);
-        (&mut left[a], &mut right[0])
-    } else {
-        let (left, right) = plates.split_at_mut(a);
-        (&mut right[0], &mut left[b])
+#[derive(Clone)]
+struct SubductionSource {
+    position: DVec3,
+    vel_sub: DVec3,
+    vel_over: DVec3,
+    subducting_elevation: f64,
+}
+
+/// Advance `subducted_distance` on the plate vertex nearest to a boundary point.
+fn advance_nearest_vertex(plate: &mut Plate, world_boundary: DVec3, delta: f64) {
+    let ref_p = plate.to_reference(world_boundary);
+    let mut best_dot = f64::NEG_INFINITY;
+    let mut best_i = 0;
+    for (i, &v) in plate.reference_points.iter().enumerate() {
+        let dot = v.dot(ref_p);
+        if dot > best_dot {
+            best_dot = dot;
+            best_i = i;
+        }
     }
+    plate.crust[best_i].subducted_distance += delta;
 }
 
 #[cfg(test)]
 mod tests {
     use super::super::fibonnaci_spiral::SphericalFibonacci;
     use super::super::plate_initializer::{initialize_plates, InitParams};
-    use super::super::plate_seed_placement::assign_plates;
+    use super::super::plate_seed_placement::{assign_plates, Adjacency};
+    use super::super::spherical_delaunay_triangulation::SphericalDelaunay;
     use super::*;
 
-    fn setup(point_count: u32, plate_count: u32) -> Simulation {
+    fn make_sim(point_count: u32, plate_count: u32) -> Simulation {
         let fib = SphericalFibonacci::new(point_count);
         let points = fib.all_points();
         let del = SphericalDelaunay::from_points(&points);
         let assignment = assign_plates(&points, &fib, &del, plate_count, 42);
-        let plates = initialize_plates(&points, &del, &assignment, &InitParams::default());
-        Simulation::new(points, plates, &del)
+        let (plates, cache) = initialize_plates(&points, &del, &assignment, &InitParams::default());
+        let adj = Adjacency::from_delaunay(points.len(), &del);
+        Simulation::new(points, cache, adj, plates)
     }
 
     #[test]
-    fn single_step_preserves_point_count() {
-        let mut sim = setup(500, 8);
-        let total_before: usize = sim.plates.iter().map(|p| p.point_count()).sum();
-        sim.step();
-        let total_after: usize = sim.plates.iter().map(|p| p.point_count()).sum();
-        // Subduction consumption removes some boundary vertices per step; the
-        // count is bounded above by the initial population and must stay positive.
-        assert!(
-            total_after > 0 && total_after <= total_before,
-            "total_after {total_after} not in (0, {total_before}]"
-        );
-    }
-
-    #[test]
-    fn time_advances() {
-        let mut sim = setup(500, 8);
+    fn time_advances_each_step() {
+        let mut sim = make_sim(500, 8);
         assert_eq!(sim.time, 0.0);
         sim.step();
         assert!((sim.time - DT).abs() < 1e-10);
@@ -1143,65 +779,163 @@ mod tests {
     }
 
     #[test]
-    fn erosion_reduces_average_continental_elevation() {
-        let mut sim = setup(500, 8);
-        let avg_before = avg_continental_elevation(&sim);
-        for plate in &mut sim.plates {
-            plate.angular_speed = 0.0;
-        }
-        sim.run(10);
-        let avg_after = avg_continental_elevation(&sim);
-        assert!(avg_after < avg_before, "erosion should reduce average: {avg_before} -> {avg_after}");
-    }
-
-    fn avg_continental_elevation(sim: &Simulation) -> f64 {
-        let (mut sum, mut count) = (0.0, 0usize);
-        for plate in &sim.plates {
-            for crust in &plate.crust {
-                if crust.crust_type == CrustType::Continental {
-                    sum += crust.elevation;
-                    count += 1;
-                }
+    fn rotation_accumulates_over_steps() {
+        let mut sim = make_sim(500, 8);
+        let initial_rots: Vec<DQuat> = sim.plates.iter().map(|p| p.rotation).collect();
+        sim.step();
+        for (i, plate) in sim.plates.iter().enumerate() {
+            if plate.angular_speed.abs() > MIN_ANGULAR_SPEED {
+                let diff = (plate.rotation - initial_rots[i]).length();
+                assert!(diff > 1e-10, "plate {i} rotation didn't change");
             }
         }
-        sum / count as f64
     }
 
     #[test]
-    fn oceanic_crust_ages() {
-        let mut sim = setup(500, 8);
+    fn advance_rotations_skips_zero_speed() {
+        let mut sim = make_sim(500, 4);
+        for plate in &mut sim.plates {
+            plate.angular_speed = 0.0;
+        }
+        let rots_before: Vec<DQuat> = sim.plates.iter().map(|p| p.rotation).collect();
         sim.step();
-        let any_aged = sim
-            .plates
-            .iter()
-            .any(|p| p.crust.iter().any(|c| c.crust_type == CrustType::Oceanic && c.age > 0.0));
-        assert!(any_aged, "oceanic crust should age each step");
+        for (i, plate) in sim.plates.iter().enumerate() {
+            let diff = (plate.rotation - rots_before[i]).length();
+            assert!(diff < 1e-10, "plate {i} rotated despite zero speed");
+        }
+    }
+
+    #[test]
+    fn all_samples_assigned_after_init() {
+        let sim = make_sim(500, 8);
+        let assigned = sim.sample_cache.iter().filter(|c| c.plate != NO_PLATE).count();
+        assert!(
+            assigned >= 490,
+            "only {assigned}/500 assigned after init"
+        );
+    }
+
+    #[test]
+    fn samples_stay_assigned_after_step() {
+        let mut sim = make_sim(500, 8);
+        sim.step();
+        let assigned = sim.sample_cache.iter().filter(|c| c.plate != NO_PLATE).count();
+        // Boundary gaps between plates leave ~10-20% unassigned.
+        assert!(
+            assigned >= 350,
+            "only {assigned}/500 assigned after one step"
+        );
+    }
+
+    #[test]
+    fn detect_boundaries_finds_cross_plate_edges() {
+        let sim = make_sim(500, 8);
+        let boundaries = sim.detect_boundaries();
+        assert!(!boundaries.is_empty(), "should find plate boundaries");
+        for b in &boundaries {
+            assert_ne!(b.plate_a, b.plate_b);
+        }
+    }
+
+    #[test]
+    fn interpolated_crust_returns_valid_data() {
+        let sim = make_sim(500, 8);
+        for cache in &sim.sample_cache {
+            if cache.plate == NO_PLATE {
+                continue;
+            }
+            let crust = sim.interpolated_crust(cache);
+            assert!(!crust.elevation.is_nan());
+            assert!(!crust.thickness.is_nan());
+            assert!(crust.thickness > 0.0);
+        }
+    }
+
+    #[test]
+    fn dominant_crust_matches_highest_bary_weight() {
+        let sim = make_sim(500, 8);
+        for cache in &sim.sample_cache {
+            if cache.plate == NO_PLATE {
+                continue;
+            }
+            let crust = sim.dominant_crust(cache);
+            let plate = &sim.plates[cache.plate as usize];
+            let [vi, vj, vk] = plate.triangles[cache.triangle as usize];
+            let dom = if cache.bary[0] >= cache.bary[1] && cache.bary[0] >= cache.bary[2] {
+                vi
+            } else if cache.bary[1] >= cache.bary[2] {
+                vj
+            } else {
+                vk
+            };
+            assert_eq!(
+                crust.crust_type,
+                plate.crust[dom as usize].crust_type
+            );
+            break;
+        }
     }
 
     #[test]
     fn run_ten_steps_without_panic() {
-        let mut sim = setup(1000, 12);
+        let mut sim = make_sim(1000, 12);
         sim.run(10);
-        let total: usize = sim.plates.iter().map(|p| p.point_count()).sum();
-        // Subduction removes vertices; oceanic ridge generation adds them.
-        // Count must stay positive and not blow up.
-        assert!(total > 0 && total <= 2000, "total out of expected range: {total}");
-    }
-
-    #[test]
-    fn boundary_edges_found() {
-        let sim = setup(500, 8);
-        let edges = find_boundary_edges(&sim.plates, &sim.points, &sim.adjacency);
-        assert!(!edges.is_empty(), "should find plate boundaries");
+        assert!(sim.plates.len() > 0);
+        assert!((sim.time - 10.0 * DT).abs() < 1e-10);
     }
 
     #[test]
     fn rotation_axes_remain_normalized() {
-        let mut sim = setup(500, 8);
+        let mut sim = make_sim(500, 8);
         sim.run(5);
         for plate in &sim.plates {
             let len = plate.rotation_axis.length();
             assert!((len - 1.0).abs() < 1e-6, "axis not normalized: {len}");
+        }
+    }
+
+    #[test]
+    fn rotation_quaternions_remain_normalized() {
+        let mut sim = make_sim(500, 8);
+        sim.run(5);
+        for plate in &sim.plates {
+            let len = plate.rotation.length();
+            assert!((len - 1.0).abs() < 1e-6, "quat not normalized: {len}");
+        }
+    }
+
+    #[test]
+    fn original_reference_points_unchanged_after_steps() {
+        let mut sim = make_sim(500, 4);
+        let before: Vec<Vec<DVec3>> = sim
+            .plates
+            .iter()
+            .map(|p| p.reference_points.clone())
+            .collect();
+        let before_counts: Vec<usize> = before.iter().map(|v| v.len()).collect();
+        sim.run(5);
+        // Oceanic generation may append new vertices, but original ones must not move.
+        for (i, plate) in sim.plates.iter().enumerate() {
+            for j in 0..before_counts[i] {
+                let diff = (plate.reference_points[j] - before[i][j]).length();
+                assert!(
+                    diff < 1e-15,
+                    "reference point {j} of plate {i} moved by {diff}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn sample_points_unchanged_between_resamples() {
+        let mut sim = make_sim(500, 8);
+        let before = sim.sample_points.clone();
+        sim.step();
+        for (i, &p) in sim.sample_points.iter().enumerate() {
+            assert!(
+                (p - before[i]).length() < 1e-15,
+                "sample point {i} changed"
+            );
         }
     }
 }
