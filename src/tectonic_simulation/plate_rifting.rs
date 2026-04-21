@@ -1,16 +1,16 @@
-use std::collections::BinaryHeap;
+use std::collections::{BinaryHeap, HashSet};
 
 use glam::DVec3;
 use noise::{Fbm, MultiFractal, Perlin};
 
 use super::plate_seed_placement::{warped_edge_cost, Adjacency};
-use super::plates::Plate;
-use super::util::{splitmix64, MinHeapEntry};
+use super::plates::{CrustData, CrustType, Plate};
+use super::util::{arbitrary_tangent, splitmix64, MinHeapEntry};
 
 /// Base Poisson rate λ_0 for rifting probability per check.
 /// With RIFT_CHECK_INTERVAL=20 and area scaling, a 2x-average fully-continental
-/// plate gets P≈18% per check, making supercontinent breakup near-certain.
-const BASE_RIFT_RATE: f64 = 0.08;
+/// plate gets P≈25% per check, making supercontinent breakup near-certain.
+const BASE_RIFT_RATE: f64 = 0.15;
 /// Minimum simulation steps between rifting checks.
 pub(super) const RIFT_CHECK_INTERVAL: usize = 20;
 /// Minimum points a plate must have to be eligible for rifting.
@@ -36,6 +36,10 @@ const TANGENT_AXIS_THRESHOLD: f64 = 0.9;
 /// Speed factor range for sub-plate speed variation: [min, max] = [0.8, 1.2].
 const SPEED_FACTOR_BASE: f64 = 0.8;
 const SPEED_FACTOR_RANGE: f64 = 0.4;
+/// Freshly rifted oceanic crust thickness (km) — thin, newly formed.
+const RIFT_OCEAN_THICKNESS: f64 = 7.0;
+/// Freshly rifted oceanic crust elevation (km) — shallow ridge.
+const RIFT_OCEAN_ELEVATION: f64 = -1.0;
 
 /// Check whether a plate should rift this timestep.
 ///
@@ -90,6 +94,8 @@ pub(super) fn rift_plate(
     let partition = partition_plate(plate, points, adjacency, &seeds, seed);
     let axes = perturb_axes(plate.rotation_axis, plate.angular_speed, sub_count, seed);
 
+    let boundary_set = find_rift_boundary(plate, &partition, adjacency, points);
+
     let mut sub_plates: Vec<Plate> = (0..sub_count)
         .map(|i| Plate {
             point_indices: Vec::new(),
@@ -114,8 +120,17 @@ pub(super) fn rift_plate(
                 .unwrap()
                 .0 as u32;
         }
+
+        let crust = if boundary_set.contains(&local) && plate.crust[local].crust_type == CrustType::Continental {
+            let p = points[global as usize];
+            let tangent = arbitrary_tangent(p);
+            CrustData::oceanic(RIFT_OCEAN_THICKNESS, RIFT_OCEAN_ELEVATION, 0.0, tangent)
+        } else {
+            plate.crust[local].clone()
+        };
+
         sub_plates[sub as usize].point_indices.push(global);
-        sub_plates[sub as usize].crust.push(plate.crust[local].clone());
+        sub_plates[sub as usize].crust.push(crust);
     }
 
     sub_plates.retain(|p| !p.point_indices.is_empty());
@@ -178,6 +193,41 @@ fn pick_rift_seeds(
     }
 
     seeds
+}
+
+/// Identify local indices that sit on the boundary between sub-plates.
+/// A point is on the boundary if any of its neighbors within the same parent
+/// plate was assigned to a different sub-plate.
+fn find_rift_boundary(
+    plate: &Plate,
+    partition: &[u32],
+    adjacency: &Adjacency,
+    points: &[DVec3],
+) -> HashSet<usize> {
+    let mut global_to_local = vec![u32::MAX; points.len()];
+    for (local, &global) in plate.point_indices.iter().enumerate() {
+        global_to_local[global as usize] = local as u32;
+    }
+
+    let mut boundary = HashSet::new();
+    for (local, &global) in plate.point_indices.iter().enumerate() {
+        let my_sub = partition[local];
+        if my_sub == u32::MAX {
+            continue;
+        }
+        for &neighbor_global in adjacency.neighbors_of(global) {
+            let neighbor_local = global_to_local[neighbor_global as usize];
+            if neighbor_local == u32::MAX {
+                continue;
+            }
+            let nl = neighbor_local as usize;
+            if partition[nl] != u32::MAX && partition[nl] != my_sub {
+                boundary.insert(local);
+                break;
+            }
+        }
+    }
+    boundary
 }
 
 /// Dijkstra flood-fill restricted to the plate's points with noise-warped costs.
@@ -357,7 +407,7 @@ mod tests {
             "should rift at least once in 10000 tries"
         );
         assert!(
-            rift_count < 1000,
+            rift_count < 2000,
             "should not rift too often: {rift_count}/10000"
         );
     }

@@ -9,6 +9,7 @@ use super::plate_seed_placement::{assign_plates, PlateAssignment};
 use super::plates::{CrustData, CrustType, Plate};
 use super::resample::compute_triangle_ownership;
 use super::simulate::Simulation;
+use super::sphere_grid::SphereGrid;
 use super::spherical_delaunay_triangulation::SphericalDelaunay;
 
 const IMAGE_WIDTH: u32 = 2048;
@@ -276,51 +277,79 @@ fn draw_line(img: &mut RgbImage, x0: f64, y0: f64, x1: f64, y1: f64, color: [u8;
 }
 
 /// Render the simulation state. Must be called right after a resample so that
-/// points are a clean Fibonacci grid and `nearest_index` works correctly.
+/// Use `clean_grid = true` when points are a fresh Fibonacci grid (right
+/// after resample or at init) for fast Delaunay-based rendering with organic
+/// borders. Use `clean_grid = false` between resamples when plates have
+/// rotated and the global Delaunay is degenerate — falls back to SphereGrid
+/// nearest-point which is slower but always correct.
 pub fn render_simulation(sim: &Simulation) -> RgbImage {
-    let mut img = RgbImage::new(IMAGE_WIDTH, IMAGE_HEIGHT);
+    render_simulation_ex(sim, false)
+}
 
-    let delaunay = SphericalDelaunay::from_points(&sim.points);
+pub fn render_simulation_ex(sim: &Simulation, clean_grid: bool) -> RgbImage {
+    let mut img = RgbImage::new(IMAGE_WIDTH, IMAGE_HEIGHT);
 
     let n = sim.points.len();
     let mut point_plate = vec![0u32; n];
     let mut point_crust = vec![CrustType::Oceanic; n];
-    let mut global_crust = vec![CrustData::oceanic(0.0, 0.0, 0.0, DVec3::X); n];
     for (plate_idx, plate) in sim.plates.iter().enumerate() {
         for (local, &global) in plate.point_indices.iter().enumerate() {
             point_plate[global as usize] = plate_idx as u32;
             point_crust[global as usize] = plate.crust[local].crust_type;
-            global_crust[global as usize] = plate.crust[local].clone();
         }
     }
 
-    // Per-triangle plate owner (majority vote, triple-junction resolution via
-    // subduction precedence). Stable against nearest-vertex flipping at
-    // boundaries.
-    let triangle_owner = compute_triangle_ownership(&delaunay, &point_plate, &global_crust);
-    // Per-triangle dominant crust type so pixels within one triangle get
-    // consistent continental/oceanic coloring.
-    let triangle_crust: Vec<CrustType> = (0..delaunay.triangles.len() / 3)
-        .map(|t| dominant_crust(&delaunay, t, &point_crust))
-        .collect();
-
     let mut pixel_plate = vec![0u32; (IMAGE_WIDTH * IMAGE_HEIGHT) as usize];
-    let mut last_tri = 0;
-    for py in 0..IMAGE_HEIGHT {
-        for px in 0..IMAGE_WIDTH {
-            let dir = pixel_to_direction(px, py);
 
-            let (tri, _b1, _b2, _b3) = delaunay.locate(dir, &sim.points, last_tri);
-            last_tri = tri;
-
-            let idx = (py * IMAGE_WIDTH + px) as usize;
-            pixel_plate[idx] = triangle_owner[tri];
-
-            let color = match triangle_crust[tri] {
-                CrustType::Continental => CONTINENTAL_COLOR,
-                CrustType::Oceanic => OCEANIC_COLOR,
-            };
-            img.put_pixel(px, py, Rgb(color));
+    if clean_grid {
+        // Fast path: Delaunay triangle ownership. Only valid when points form
+        // a clean grid (post-resample) so boundary triangles are well-formed.
+        let delaunay = SphericalDelaunay::from_points(&sim.points);
+        let global_crust: Vec<CrustData> = {
+            let mut gc = vec![CrustData::oceanic(0.0, 0.0, 0.0, DVec3::X); n];
+            for (plate_idx, plate) in sim.plates.iter().enumerate() {
+                for (local, &global) in plate.point_indices.iter().enumerate() {
+                    gc[global as usize] = plate.crust[local].clone();
+                }
+            }
+            gc
+        };
+        let triangle_owner = compute_triangle_ownership(&delaunay, &point_plate, &global_crust);
+        let triangle_crust: Vec<CrustType> = (0..delaunay.triangles.len() / 3)
+            .map(|t| dominant_crust(&delaunay, t, &point_crust))
+            .collect();
+        let mut last_tri = 0;
+        for py in 0..IMAGE_HEIGHT {
+            for px in 0..IMAGE_WIDTH {
+                let dir = pixel_to_direction(px, py);
+                let (tri, _, _, _) = delaunay.locate(dir, &sim.points, last_tri);
+                last_tri = tri;
+                let idx = (py * IMAGE_WIDTH + px) as usize;
+                pixel_plate[idx] = triangle_owner[tri];
+                let color = match triangle_crust[tri] {
+                    CrustType::Continental => CONTINENTAL_COLOR,
+                    CrustType::Oceanic => OCEANIC_COLOR,
+                };
+                img.put_pixel(px, py, Rgb(color));
+            }
+        }
+    } else {
+        // Safe path: SphereGrid nearest-point. Works regardless of grid
+        // quality — no degenerate triangle issues.
+        let grid = SphereGrid::build(&sim.points);
+        for py in 0..IMAGE_HEIGHT {
+            for px in 0..IMAGE_WIDTH {
+                let dir = pixel_to_direction(px, py);
+                let nearest = grid.find_nearest_k(dir, &sim.points, 1);
+                let vi = nearest[0].0 as usize;
+                let idx = (py * IMAGE_WIDTH + px) as usize;
+                pixel_plate[idx] = point_plate[vi];
+                let color = match point_crust[vi] {
+                    CrustType::Continental => CONTINENTAL_COLOR,
+                    CrustType::Oceanic => OCEANIC_COLOR,
+                };
+                img.put_pixel(px, py, Rgb(color));
+            }
         }
     }
 
@@ -358,8 +387,8 @@ mod tests {
         generate_and_save(42, output);
     }
 
-    const TIMELAPSE_POINTS: u32 = 50_000;
-    const TIMELAPSE_STEPS: usize = 400;
+    const TIMELAPSE_POINTS: u32 = 51_000;
+    const TIMELAPSE_STEPS: usize = 100;
     /// Render every N resample cycles. Each cycle = RESAMPLE_INTERVAL steps.
     const TIMELAPSE_RENDER_EVERY_N_RESAMPLES: usize = 1;
 
@@ -402,7 +431,7 @@ mod tests {
             total_frames
         );
         std::io::stdout().flush().unwrap();
-        render_simulation(&sim).save(output_dir.join("frame_000.png")).unwrap();
+        render_simulation_ex(&sim, true).save(output_dir.join("frame_000.png")).unwrap();
 
         for step in 1..=TIMELAPSE_STEPS {
             sim.step();
@@ -411,7 +440,11 @@ mod tests {
                 let pct = (frame * 100).min(100 * total_frames) / total_frames;
                 print!("\r[{:>3}%] Frame {}/{} (t={:.0} Myr)        ", pct, frame, total_frames, sim.time);
                 std::io::stdout().flush().unwrap();
-                render_simulation(&sim).save(output_dir.join(format!("frame_{:03}.png", step))).unwrap();
+                // TODO: pass `true` once resample is re-enabled — frames
+                // on resample boundaries have a clean Fibonacci grid.
+                render_simulation_ex(&sim, false)
+                    .save(output_dir.join(format!("frame_{:03}.png", step)))
+                    .unwrap();
             }
         }
         println!("\r[100%] Done — {} frames in {}        ", total_frames, output_dir.display());

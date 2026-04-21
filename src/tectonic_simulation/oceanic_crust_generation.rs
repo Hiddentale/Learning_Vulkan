@@ -18,15 +18,15 @@ const RIDGE_THICKNESS: f64 = 7.0;
 const COOLING_COEFFICIENT: f64 = 0.503;
 /// Minimum divergence speed (km/Myr) to count as a ridge.
 const MIN_DIVERGENCE_SPEED: f64 = 0.5;
-/// Fastest plates → generate every 10 steps.
-const MIN_GENERATION_INTERVAL: usize = 10;
-/// Slowest plates → generate every 60 steps.
-const MAX_GENERATION_INTERVAL: usize = 60;
+/// Fastest plates → generate every 2 steps.
+const MIN_GENERATION_INTERVAL: usize = 2;
+/// Slowest plates → generate every 10 steps.
+const MAX_GENERATION_INTERVAL: usize = 10;
 /// Angular speed threshold for the interval ramp (rad/Myr).
 const FAST_ANGULAR_SPEED: f64 = 0.02;
 const SLOW_ANGULAR_SPEED: f64 = 0.005;
-/// Minimum angular separation between new ridge points (radians, ~2°).
-const MIN_POINT_SEPARATION: f64 = 0.035;
+/// Minimum angular separation between new ridge points (radians, ~1°).
+const MIN_POINT_SEPARATION: f64 = 0.018;
 /// Squared length below which a vector is treated as degenerate (effectively zero).
 const DEGENERATE_LENGTH_SQ: f64 = 1e-20;
 /// Value below which a scalar denominator is treated as zero.

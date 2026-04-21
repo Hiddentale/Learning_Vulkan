@@ -36,3 +36,26 @@ it on the subducted plate's trajectory, widening the smear each cycle.
 
   No single tectonic plate event causes the plate degeneration bug,
  this is confirmed. Hence the problem lies in how tectonic plates move.
+
+
+Three problems visible in the log:
+
+Continental crust is being destroyed by resample. 
+Continental percentage drops from 32.1% to 13.0% over 400 steps, 
+with no physical process running that could cause this (subduction, collision, erosion are all commented out).
+ Every 20 steps when resample fires, cont->ocean exceeds ocean->cont — 
+ the net effect is continental crust steadily vanishing.
+
+Continental elevation collapses below sea level. Starts at 0.300km uniformly, 
+but after the first resample cont_below_sea jumps to 2,808 and max_cont_elev_drop=4.3km. 
+A continental point at 0.3km is being interpolated with oceanic neighbors at ~-4km, 
+producing negative elevations. By step 400, 100% of remaining continental crust is below sea level.
+
+~50% of points change plate ownership each resample. plate_changed is ~26,000/49,000 at the start, 
+settling to ~18,000. For a simulation where plates only rotate rigidly, this is far too high — 
+it means assign_plates_by_triangle_owner is misassigning a huge fraction of points at plate boundaries 
+(and likely well into plate interiors too).
+
+Plates shrink to 0 points and die. Plate 5 goes to 0 around step 200, 
+plate 3 dwindles to 1 point then 0 — resample is bleeding them dry by assigning their 
+points to neighbors.
