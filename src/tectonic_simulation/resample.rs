@@ -39,6 +39,8 @@ pub fn resample_interval(plates: &[Plate]) -> usize {
 /// Maximum walk steps when locating a new point in an old plate mesh.
 const MAX_WALK_STEPS: u32 = 256;
 const NO_TRIANGLE: u32 = u32::MAX;
+/// K-nearest neighbors for fallback crust type majority vote.
+const FALLBACK_VOTE_K: usize = 6;
 
 struct PointAssignment {
     plate: u32,
@@ -119,6 +121,10 @@ pub fn resample(sim: &mut Simulation) {
 fn assign_from_old_plates(plates: &[Plate], new_points: &[DVec3]) -> Vec<PointAssignment> {
     let mut last_tri = vec![0u32; plates.len()];
 
+    // Build a spatial index of all plate vertices for fast nearest-vertex fallback.
+    let (world_verts, vert_plate, vert_local) = build_vertex_index(plates);
+    let grid = super::sphere_grid::SphereGrid::build(&world_verts);
+
     new_points
         .iter()
         .map(|&p| {
@@ -146,41 +152,68 @@ fn assign_from_old_plates(plates: &[Plate], new_points: &[DVec3]) -> Vec<PointAs
                 }
             }
 
-            // Walk failed — assign to nearest plate vertex, preserving
-            // its crust type. New seafloor at ridges is created by
-            // per-step oceanic crust generation, not here.
-            nearest_vertex_assignment(plates, p)
+            // Walk failed — assign to nearest plate vertex. Use K-nearest
+            // majority vote for crust type to prevent speckle noise at
+            // continent-ocean boundaries where the nearest single vertex
+            // might be across a plate boundary.
+            let neighbors = grid.find_nearest_k(p, &world_verts, FALLBACK_VOTE_K);
+            let gi = neighbors[0].0 as usize;
+            let assigned_plate = vert_plate[gi];
+
+            // Continuous fields from the nearest vertex on the assigned plate.
+            let nearest_crust = &plates[assigned_plate as usize].crust[vert_local[gi]];
+
+            // Majority vote on crust type among K neighbors on the same plate.
+            let same_plate_cont = neighbors
+                .iter()
+                .filter(|(idx, _)| vert_plate[*idx as usize] == assigned_plate)
+                .filter(|(idx, _)| {
+                    plates[assigned_plate as usize].crust[vert_local[*idx as usize]].crust_type
+                        == CrustType::Continental
+                })
+                .count();
+            let same_plate_total = neighbors
+                .iter()
+                .filter(|(idx, _)| vert_plate[*idx as usize] == assigned_plate)
+                .count()
+                .max(1);
+            let voted_type = if same_plate_cont * 2 >= same_plate_total {
+                CrustType::Continental
+            } else {
+                CrustType::Oceanic
+            };
+
+            let mut crust = nearest_crust.clone();
+            crust.crust_type = voted_type;
+            if voted_type == CrustType::Oceanic {
+                crust.orogeny_type = None;
+            }
+            PointAssignment {
+                plate: assigned_plate,
+                crust,
+            }
         })
         .collect()
 }
 
-/// Fallback for samples the walk can't locate.
-///
-/// Finds the nearest world-space plate vertex and copies its crust.
-/// This preserves continental crust for walk failures on continental
-/// interiors, and naturally gives oceanic crust near ocean regions.
-/// Genuine new seafloor at ridges is handled by per-step oceanic
-/// crust generation (Section 4.3), not by the resample fallback.
-fn nearest_vertex_assignment(plates: &[Plate], world_p: DVec3) -> PointAssignment {
-    let mut best_dot = f64::NEG_INFINITY;
-    let mut best_plate = 0u32;
-    let mut best_crust_idx = 0usize;
+/// Build a flat array of all plate vertices in world space, with
+/// parallel arrays mapping back to (plate_index, local_vertex_index).
+/// Used by SphereGrid for O(1) nearest-vertex lookups during fallback.
+fn build_vertex_index(plates: &[Plate]) -> (Vec<DVec3>, Vec<u32>, Vec<usize>) {
+    let total: usize = plates.iter().map(|p| p.point_count()).sum();
+    let mut world_verts = Vec::with_capacity(total);
+    let mut vert_plate = Vec::with_capacity(total);
+    let mut vert_local = Vec::with_capacity(total);
 
     for (k, plate) in plates.iter().enumerate() {
         for (i, &ref_p) in plate.reference_points.iter().enumerate() {
-            let dot = plate.to_world(ref_p).dot(world_p);
-            if dot > best_dot {
-                best_dot = dot;
-                best_plate = k as u32;
-                best_crust_idx = i;
-            }
+            world_verts.push(plate.to_world(ref_p));
+            vert_plate.push(k as u32);
+            vert_local.push(i);
         }
     }
 
-    PointAssignment {
-        plate: best_plate,
-        crust: plates[best_plate as usize].crust[best_crust_idx].clone(),
-    }
+    (world_verts, vert_plate, vert_local)
 }
 
 // ── Step 3: partition the new Delaunay into plates ────────────────────

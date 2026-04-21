@@ -148,8 +148,11 @@ pub struct Plate {
 }
 
 impl Plate {
+    /// Surface velocity in km/Myr (= mm/yr) at a world-space point.
+    /// Converts from angular (rad/Myr) to linear by scaling with planet radius.
     pub fn surface_velocity(&self, world_point: DVec3) -> DVec3 {
-        self.angular_speed * self.rotation_axis.cross(world_point)
+        const PLANET_RADIUS: f64 = 6370.0;
+        self.angular_speed * PLANET_RADIUS * self.rotation_axis.cross(world_point)
     }
 
     pub fn point_count(&self) -> usize {
@@ -218,7 +221,10 @@ impl Plate {
         start_tri: u32,
         max_steps: u32,
     ) -> WalkResult {
-        let mut tri = start_tri as usize;
+        if self.triangles.is_empty() {
+            return WalkResult::MaxStepsReached { last_triangle: 0 };
+        }
+        let mut tri = (start_tri as usize).min(self.triangles.len() - 1);
 
         for _ in 0..max_steps {
             let [vi, vj, vk] = self.triangles[tri];

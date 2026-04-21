@@ -14,7 +14,7 @@ use super::spherical_delaunay_triangulation::SphericalDelaunay;
 const IMAGE_WIDTH: u32 = 2048;
 const IMAGE_HEIGHT: u32 = 1024;
 const POINT_COUNT: u32 = 50_000;
-const PLATE_COUNT: u32 = 20;
+const PLATE_COUNT: u32 = 40;
 
 const MIN_VELOCITY: f64 = 1e-12;
 const LINE_THICKNESS: u32 = 2;
@@ -159,7 +159,19 @@ pub fn render_simulation(sim: &Simulation) -> RgbImage {
             pixel_plate[idx] = cache.plate;
 
             let crust_type = if cache.plate != NO_PLATE {
-                sim.dominant_crust(cache).crust_type
+                // Majority vote among triangle's 3 vertices to suppress
+                // speckle noise at continent-ocean boundaries.
+                let plate = &sim.plates[cache.plate as usize];
+                let [va, vb, vc] = plate.triangles[cache.triangle as usize];
+                let cont = [va, vb, vc]
+                    .iter()
+                    .filter(|&&v| plate.crust[v as usize].crust_type == CrustType::Continental)
+                    .count();
+                if cont >= 2 {
+                    CrustType::Continental
+                } else {
+                    CrustType::Oceanic
+                }
             } else {
                 CrustType::Oceanic
             };
@@ -172,7 +184,7 @@ pub fn render_simulation(sim: &Simulation) -> RgbImage {
         }
     }
 
-    draw_borders(&mut img, &pixel_plate);
+    //draw_borders(&mut img, &pixel_plate);
 
     for plate in &sim.plates {
         if plate.reference_points.is_empty() {
@@ -273,8 +285,8 @@ mod tests {
         generate_and_save(42, output);
     }
 
-    const TIMELAPSE_POINTS: u32 = 51_000;
-    const TIMELAPSE_STEPS: usize = 100;
+    const TIMELAPSE_POINTS: u32 = 500_000;
+    const TIMELAPSE_STEPS: usize = 125;
     const TIMELAPSE_RENDER_EVERY_N_RESAMPLES: usize = 1;
 
     #[test]
@@ -310,9 +322,7 @@ mod tests {
             total_frames
         );
         std::io::stdout().flush().unwrap();
-        render_simulation(&sim)
-            .save(output_dir.join("frame_000.png"))
-            .unwrap();
+        render_simulation(&sim).save(output_dir.join("frame_000.png")).unwrap();
 
         for step in 1..=TIMELAPSE_STEPS {
             sim.step();
@@ -320,20 +330,11 @@ mod tests {
                 resample::resample(&mut sim);
                 frame += 1;
                 let pct = (frame * 100).min(100 * total_frames) / total_frames;
-                print!(
-                    "\r[{:>3}%] Frame {}/{} (t={:.0} Myr)        ",
-                    pct, frame, total_frames, sim.time
-                );
+                print!("\r[{:>3}%] Frame {}/{} (t={:.0} Myr)        ", pct, frame, total_frames, sim.time);
                 std::io::stdout().flush().unwrap();
-                render_simulation(&sim)
-                    .save(output_dir.join(format!("frame_{:03}.png", step)))
-                    .unwrap();
+                render_simulation(&sim).save(output_dir.join(format!("frame_{:03}.png", step))).unwrap();
             }
         }
-        println!(
-            "\r[100%] Done — {} frames in {}        ",
-            total_frames,
-            output_dir.display()
-        );
+        println!("\r[100%] Done — {} frames in {}        ", total_frames, output_dir.display());
     }
 }

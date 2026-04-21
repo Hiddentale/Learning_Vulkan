@@ -4,8 +4,6 @@ use super::plates::{CrustData, Plate};
 use super::simulate::BoundarySample;
 use super::util::arbitrary_tangent;
 
-/// Planet radius in km.
-const PLANET_RADIUS: f64 = 6370.0;
 /// Mid-ocean ridge axis depth in km.
 const RIDGE_AXIS_DEPTH: f64 = -1.0;
 /// Oceanic crust thickness at ridge in km.
@@ -101,7 +99,7 @@ fn find_ridge_points(boundary: &[BoundarySample], plates: &[Plate]) -> Vec<Ridge
         if apart_dir.length_squared() < DEGENERATE_LENGTH_SQ {
             continue;
         }
-        let divergence = tangent_vel.dot(apart_dir.normalize()) * PLANET_RADIUS;
+        let divergence = tangent_vel.dot(apart_dir.normalize());
         if divergence < MIN_DIVERGENCE_SPEED {
             continue;
         }

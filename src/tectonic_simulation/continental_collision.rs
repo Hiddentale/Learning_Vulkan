@@ -125,17 +125,84 @@ pub fn find_terranes(plate: &Plate) -> Vec<Terrane> {
     terranes
 }
 
-/// Transfer a terrane between plate meshes.
+/// Transfer a terrane's vertices and crust from source to target plate.
 ///
-/// TODO: this requires mesh surgery — removing triangles from source,
-/// adding vertices+triangles to target, rebuilding adjacency for both.
-/// For now this is a placeholder.
-pub fn transfer_terrane(
-    _terrane: &Terrane,
-    _source: &mut Plate,
-    _target: &mut Plate,
-) {
-    todo!("transfer_terrane needs mesh surgery for per-plate sub-mesh model")
+/// Moves vertex data without full mesh surgery — triangles referencing
+/// transferred vertices are removed from the source but NOT added to the
+/// target. Both plates' meshes become incomplete, but the next resample
+/// rebuilds them from scratch. Adjacency is patched conservatively
+/// (removed triangles' neighbors get None edges).
+pub fn transfer_terrane(terrane: &Terrane, source: &mut Plate, target: &mut Plate) {
+    let terrane_set: std::collections::HashSet<u32> =
+        terrane.vertices.iter().copied().collect();
+
+    // Build old→new index mapping for vertices that stay in source.
+    let old_len = source.reference_points.len();
+    let mut old_to_new = vec![u32::MAX; old_len];
+    let mut kept_ref = Vec::new();
+    let mut kept_crust = Vec::new();
+    let mut transferred_ref = Vec::new();
+    let mut transferred_crust = Vec::new();
+
+    for i in 0..old_len {
+        if terrane_set.contains(&(i as u32)) {
+            let world_pos = source.to_world(source.reference_points[i]);
+            // Store in target's reference frame.
+            transferred_ref.push(target.to_reference(world_pos).normalize());
+            let mut crust = source.crust[i].clone();
+            crust.orogeny_type = Some(super::plates::OrogenyType::Himalayan);
+            transferred_crust.push(crust);
+        } else {
+            old_to_new[i] = kept_ref.len() as u32;
+            kept_ref.push(source.reference_points[i]);
+            kept_crust.push(source.crust[i].clone());
+        }
+    }
+
+    // Remove triangles that reference any transferred vertex.
+    // Remap surviving triangles to new vertex indices.
+    let mut kept_tris = Vec::new();
+    let mut kept_adj = Vec::new();
+    let mut old_tri_to_new: Vec<u32> = vec![u32::MAX; source.triangles.len()];
+
+    for (t, tri) in source.triangles.iter().enumerate() {
+        let any_transferred = tri.iter().any(|&v| terrane_set.contains(&v));
+        if any_transferred {
+            continue;
+        }
+        old_tri_to_new[t] = kept_tris.len() as u32;
+        kept_tris.push([
+            old_to_new[tri[0] as usize],
+            old_to_new[tri[1] as usize],
+            old_to_new[tri[2] as usize],
+        ]);
+        kept_adj.push(source.adjacency[t]);
+    }
+
+    // Patch adjacency: remap neighbor indices and null out removed neighbors.
+    for adj in &mut kept_adj {
+        for edge in adj.iter_mut() {
+            if let Some(old_neighbor) = *edge {
+                let new_neighbor = old_tri_to_new[old_neighbor as usize];
+                *edge = if new_neighbor == u32::MAX {
+                    None
+                } else {
+                    Some(new_neighbor)
+                };
+            }
+        }
+    }
+
+    source.reference_points = kept_ref;
+    source.crust = kept_crust;
+    source.triangles = kept_tris;
+    source.adjacency = kept_adj;
+    source.recompute_bounding_cap();
+
+    // Append to target (no triangles — resample will retriangulate).
+    target.reference_points.extend(transferred_ref);
+    target.crust.extend(transferred_crust);
+    target.recompute_bounding_cap();
 }
 
 #[cfg(test)]
