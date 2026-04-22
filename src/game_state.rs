@@ -21,7 +21,6 @@ pub enum GameState {
         erosion_worker: Option<ErosionWorker>,
         erosion_map: Option<Arc<ErosionMap>>,
     },
-    /// Enter an existing world without pre-generation.
     EnteringWorld {
         world_dir: PathBuf,
         seed: u32,

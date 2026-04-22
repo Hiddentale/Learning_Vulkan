@@ -8,4 +8,5 @@ worlds
 debug_log.txt
 tools
 data
-src/tectonic_simulation/js
+js
+.manifold-intel.db

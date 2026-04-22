@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Coarse Heightmap Globe</title>
+<style>body{margin:0;overflow:hidden;background:#111}canvas{display:block}</style>
+</head><body>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}</script>
+<script type="module">
+import*as THREE from'three';
+import{OrbitControls}from'three/addons/controls/OrbitControls.js';
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x111122);
+const camera=new THREE.PerspectiveCamera(50,innerWidth/innerHeight,0.01,100);
+camera.position.set(0,0,3);
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth,innerHeight);
+renderer.setPixelRatio(devicePixelRatio);
+document.body.appendChild(renderer.domElement);
+const controls=new OrbitControls(camera,renderer.domElement);
+controls.enableDamping=true;controls.dampingFactor=0.08;
+scene.add(new THREE.AmbientLight(0xffffff,0.4));
+const sun=new THREE.DirectionalLight(0xffffff,1.0);
+sun.position.set(5,3,4);scene.add(sun);
+const positions=new Float32Array([POSITIONS_DATA]);
+const colorsArr=new Float32Array([COLORS_DATA]);
+const indices=new Uint32Array([INDICES_DATA]);
+const geo=new THREE.BufferGeometry();
+geo.setAttribute('position',new THREE.BufferAttribute(positions,3));
+geo.setAttribute('color',new THREE.BufferAttribute(colorsArr,3));
+geo.setIndex(new THREE.BufferAttribute(indices,1));
+geo.computeVertexNormals();
+const mat=new THREE.MeshLambertMaterial({vertexColors:true});
+const mesh=new THREE.Mesh(geo,mat);scene.add(mesh);
+let wire=null;
+window.addEventListener('keydown',e=>{
+if(e.key==='w'){if(wire){scene.remove(wire);wire=null}
+else{wire=new THREE.LineSegments(new THREE.WireframeGeometry(geo),new THREE.LineBasicMaterial({color:0x000000,opacity:0.15,transparent:true}));scene.add(wire)}}});
+const info=document.createElement('div');
+info.style.cssText='position:fixed;top:10px;left:10px;color:#aaa;font:14px monospace;pointer-events:none';
+info.textContent='INFO_TEXT';
+document.body.appendChild(info);
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});
+(function animate(){requestAnimationFrame(animate);controls.update();renderer.render(scene,camera)})();
+</script></body></html>

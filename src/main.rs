@@ -2,8 +2,8 @@
 mod game_state;
 mod graphical_core;
 mod storage;
-mod tectonic_simulation;
 mod voxel;
+mod world_generation;
 mod vr;
 use anyhow::Result;
 use game_state::GameState;
