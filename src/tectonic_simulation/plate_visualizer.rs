@@ -287,7 +287,7 @@ mod tests {
 
     const TIMELAPSE_POINTS: u32 = 500_000;
     const TIMELAPSE_STEPS: usize = 125;
-    const TIMELAPSE_RENDER_EVERY_N_RESAMPLES: usize = 1;
+    const TIMELAPSE_RENDER_EVERY_N_RESAMPLES: usize = 5;
 
     #[test]
     #[ignore]
