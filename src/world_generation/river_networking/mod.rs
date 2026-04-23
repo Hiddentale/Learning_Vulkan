@@ -52,6 +52,39 @@ pub struct FlowData {
     pub height: u32,
 }
 
+impl FlowData {
+    /// Sample stream order (Strahler order) at a unit-direction sphere point.
+    /// Returns 0 for non-river pixels, 1+ for river/stream pixels.
+    /// Uses nearest-neighbor (floor) for discrete lookup.
+    pub fn stream_order_at_dir(&self, dir: glam::DVec3) -> u8 {
+        use crate::world_generation::terrain_amplification::cross_layout;
+        use glam::DVec3;
+
+        let dir = dir.normalize_or(DVec3::Y);
+        let fs = self.width as f64 / 4.0;
+        let s = (fs as u32 - 1).max(1) as f64;
+
+        // Determine dominant face
+        let face_id = if dir.x.abs() >= dir.y.abs() && dir.x.abs() >= dir.z.abs() {
+            if dir.x >= 0.0 { 0 } else { 1 }
+        } else if dir.y.abs() >= dir.z.abs() {
+            if dir.y >= 0.0 { 2 } else { 3 }
+        } else {
+            if dir.z >= 0.0 { 4 } else { 5 }
+        };
+
+        // Map direction to cross-layout coordinates
+        let (i_f, j_f) = cross_layout::sphere_to_cross_atlas(face_id, dir.x, dir.y, dir.z, fs, s);
+
+        // Nearest-neighbor lookup
+        let width = self.width as usize;
+        let i = (i_f.round() as usize).min(self.height as usize - 1);
+        let j = (j_f.round() as usize).min(width - 1);
+
+        self.stream_order[i * width + j]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::world_generation::coarse_heightmap;

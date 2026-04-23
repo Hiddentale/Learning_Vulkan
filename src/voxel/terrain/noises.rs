@@ -43,7 +43,7 @@ pub(crate) const OVERHANG_STRENGTH_FACTOR: f64 = OVERHANG_STRENGTH;
 pub(crate) const OVERHANG_BAND_SIZE: usize = OVERHANG_BAND;
 pub(crate) const DIRT_DEPTH: usize = 4;
 pub(crate) const MIN_HEIGHT: usize = 4;
-pub(crate) const MAX_HEIGHT: usize = 700;
+pub(crate) const MAX_HEIGHT: usize = 760;
 
 pub(crate) struct WorldNoises {
     pub(crate) continentalness: Fbm<Perlin>,

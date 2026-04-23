@@ -1,5 +1,4 @@
 use super::block::BlockType;
-use super::erosion::ErosionMap;
 use super::heightmap_quadtree::{QuadNode, HEIGHT_PAGE_SIZE};
 use super::sphere::{self, CUBE_HALF_BLOCKS, PLANET_RADIUS_BLOCKS};
 use super::terrain::{self, WorldNoises, SEA_LEVEL};
@@ -16,7 +15,7 @@ const WORKER_COUNT: usize = 8;
 /// Interior texels `[1..TILE_GRID_POSTS]` map to the tile's face-local
 /// block range; border texels 0 and `TILE_GRID_POSTS + 1` oversample by
 /// one post step into the neighboring tile's territory.
-pub fn generate_tile_heights(node: QuadNode, seed: u32, erosion_map: Option<&ErosionMap>) -> TileHeightsData {
+pub fn generate_tile_heights(node: QuadNode, seed: u32, terrain: Option<&super::terrain::TerrainData>) -> TileHeightsData {
     use super::heightmap_quadtree::TILE_GRID_POSTS;
     let noises = WorldNoises::new(seed);
     let stride = HEIGHT_PAGE_SIZE as usize;
@@ -37,7 +36,7 @@ pub fn generate_tile_heights(node: QuadNode, seed: u32, erosion_map: Option<&Ero
             let u = u0 + (gx as f64 - 1.0) * post_step;
             let v = v0 + (gz as f64 - 1.0) * post_step;
             let probe = sphere::face_local_to_world(node.face, u, v, 0.0);
-            let (seabed_radius, block_type) = terrain::surface_radius_at_world(&noises, probe, erosion_map);
+            let (seabed_radius, block_type) = terrain::surface_radius_at_world(&noises, probe, terrain);
             let (visible, mat) = if seabed_radius < sea_level_radius {
                 (sea_level_radius, BlockType::Water)
             } else {
@@ -80,17 +79,17 @@ pub struct HeightsGenerator {
 }
 
 impl HeightsGenerator {
-    pub fn new(erosion_map: Option<Arc<ErosionMap>>) -> Self {
+    pub fn new(terrain: Option<Arc<super::terrain::TerrainData>>) -> Self {
         let (request_tx, request_rx) = crossbeam_channel::unbounded::<HeightsRequest>();
         let (result_tx, result_rx) = crossbeam_channel::unbounded::<HeightsResult>();
         let mut workers = Vec::with_capacity(WORKER_COUNT);
         for _ in 0..WORKER_COUNT {
             let rx = request_rx.clone();
             let tx = result_tx.clone();
-            let emap = erosion_map.clone();
+            let terrain_data = terrain.clone();
             workers.push(thread::spawn(move || {
                 while let Ok(req) = rx.recv() {
-                    let data = generate_tile_heights(req.node, req.seed, emap.as_deref());
+                    let data = generate_tile_heights(req.node, req.seed, terrain_data.as_deref());
                     if tx
                         .send(HeightsResult {
                             node: req.node,

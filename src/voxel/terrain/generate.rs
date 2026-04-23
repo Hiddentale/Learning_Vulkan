@@ -16,22 +16,21 @@ pub const CHUNK_LAYERS: usize = (TERRAIN_MAX_CY - TERRAIN_MIN_CY + 1) as usize;
 /// is water; otherwise air. Because density is purely a function of world
 /// position (and noise on direction), terrain is seamless across face edges.
 ///
-/// If `detail_col` is provided, uses pre-computed detail noise offsets instead
-/// of generating them on-the-fly. This avoids frame stutter during chunk loads.
+/// When `terrain` is provided, uses pre-computed detail noise offsets from the
+/// terrain cache, avoiding frame stutter during chunk loads.
 pub fn generate_column(
     face: Face,
     chunk_x: i32,
     chunk_z: i32,
     seed: u32,
-    erosion_map: Option<&super::super::erosion::ErosionMap>,
-    detail_col: Option<&crate::world_generation::detail_noise::DetailColumn>,
+    terrain: Option<&super::terrain_data::TerrainData>,
 ) -> Vec<Chunk> {
     let noises = WorldNoises::new(seed);
     let mut chunks: Vec<Chunk> = (0..CHUNK_LAYERS).map(|_| Chunk::new(BlockType::Air)).collect();
 
     for z in 0..CHUNK_SIZE {
         for x in 0..CHUNK_SIZE {
-            fill_density_column(&mut chunks, face, chunk_x, chunk_z, x, z, &noises, erosion_map, detail_col);
+            fill_density_column(&mut chunks, face, chunk_x, chunk_z, x, z, &noises, terrain);
         }
     }
 
@@ -54,8 +53,7 @@ fn fill_density_column(
     x: usize,
     z: usize,
     noises: &WorldNoises,
-    erosion_map: Option<&super::super::erosion::ErosionMap>,
-    detail_col: Option<&crate::world_generation::detail_noise::DetailColumn>,
+    terrain: Option<&super::terrain_data::TerrainData>,
 ) {
     // Sample one representative point in the column to fix the direction.
     let probe = sphere::chunk_to_world(
@@ -68,17 +66,18 @@ fn fill_density_column(
         glam::Vec3::new(x as f32 + 0.5, 0.5, z as f32 + 0.5),
     );
 
-    // Get pre-computed detail offset if available
-    let detail_offset = detail_col.map(|col| col[z * 16 + x]).unwrap_or(0.0);
+    let mut params = sample_params_at_world(noises, probe, terrain);
 
-    let mut params = sample_params_at_world(noises, probe, erosion_map);
-
-    // Apply pre-computed detail offset instead of computing it on-the-fly
-    if let Some(_) = detail_col {
-        // If we have pre-computed detail, we've already incorporated domain warp
-        // and slope-gated amplitude, so we just apply the offset
-        params.height = (params.height as f64 + detail_offset as f64)
-            .clamp(super::noises::MIN_HEIGHT as f64, super::noises::MAX_HEIGHT as f64) as usize;
+    // Apply pre-computed detail offset if terrain data provides a cache
+    if let Some(terrain_data) = terrain {
+        if let Ok(mut cache) = terrain_data.detail_cache.lock() {
+            let detail_col = cache.get_or_compute(face, chunk_x, chunk_z);
+            let detail_offset = detail_col[z * 16 + x];
+            // We've already incorporated domain warp and slope-gated amplitude
+            // in the pre-computed detail, so just apply the offset
+            params.height = (params.height as f64 + detail_offset as f64)
+                .clamp(super::noises::MIN_HEIGHT as f64, super::noises::MAX_HEIGHT as f64) as usize;
+        }
     }
 
     let surface_radius = sphere::PLANET_RADIUS_BLOCKS as f64 + params.height as f64;
@@ -147,7 +146,7 @@ fn sample_block(y: usize, height: usize, surface: BlockType, subsurface: BlockTy
 }
 
 /// Generate a 64³ LOD super-chunk by sampling terrain noise at `voxel_size` spacing.
-pub fn generate_lod_super_chunk(origin: [i32; 3], voxel_size: u32, seed: u32, erosion_map: Option<&super::super::erosion::ErosionMap>) -> LodVoxelGrid {
+pub fn generate_lod_super_chunk(origin: [i32; 3], voxel_size: u32, seed: u32, terrain: Option<&super::terrain_data::TerrainData>) -> LodVoxelGrid {
     let noises = WorldNoises::new(seed);
     let vs = voxel_size as f64;
     let grid_size = CHUNK_SIZE * 4; // 64
@@ -157,8 +156,9 @@ pub fn generate_lod_super_chunk(origin: [i32; 3], voxel_size: u32, seed: u32, er
         for gx in 0..grid_size {
             let wx = origin[0] as f64 + gx as f64 * vs;
             let wz = origin[2] as f64 + gz as f64 * vs;
-            // Phase C: LOD super-chunk path is disabled. Hardcode +Y face.
-            let params = super::height::sample_params(&noises, Face::PosY, wx, wz, erosion_map);
+            let wy_mid = origin[1] as f64 + (grid_size / 2) as f64 * vs;
+            let world = glam::DVec3::new(wx, wy_mid, wz);
+            let params = super::height::sample_params_at_world(&noises, world, terrain);
             let surface = biome::surface_block(params.biome);
             let subsurface = biome::subsurface_block(params.biome);
 

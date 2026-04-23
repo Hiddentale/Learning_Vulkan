@@ -1,18 +1,31 @@
-use super::noises::{WorldNoises, WARP_STRENGTH, MOUNTAIN_AMPLITUDE, DETAIL_AMPLITUDE, WEIRDNESS_AMPLITUDE, SEA_LEVEL, MIN_HEIGHT, MAX_HEIGHT, CAVE_THRESHOLD, CAVE_MIN_DEPTH, CAVE_SCALE_FACTOR, DIRT_DEPTH, OVERHANG_SCALE_FACTOR, OVERHANG_STRENGTH_FACTOR, OVERHANG_BAND_SIZE};
+use super::noises::{WorldNoises, WARP_STRENGTH, MOUNTAIN_AMPLITUDE, DETAIL_AMPLITUDE, WEIRDNESS_AMPLITUDE, SEA_LEVEL, MIN_HEIGHT, MAX_HEIGHT, CAVE_THRESHOLD, CAVE_MIN_DEPTH, CAVE_SCALE_FACTOR, DIRT_DEPTH};
 use super::super::biome::{self, Biome};
 use super::super::block::BlockType;
 use super::super::sphere::{self, Face};
 use noise::NoiseFn;
 
-/// All noise router parameters for a single (x, z) position.
+/// All terrain parameters for a single world direction/position.
+/// Combines noise-driven shape (continentalness, erosion, weirdness) with
+/// climate data (temperature, precipitation, continentality) and river presence.
 #[allow(dead_code)]
 pub(crate) struct TerrainParams {
+    /// Noise-derived continentality [-1, 1], drives base height shape.
     pub(crate) continentalness: f64,
+    /// Noise-derived erosion [-1, 1], modulates mountain/detail amplitude.
     pub(crate) erosion: f64,
+    /// Noise-derived weirdness [-1, 1], gates fantasy features (overhangs, caves).
     pub(crate) weirdness: f64,
+    /// Temperature in degrees Celsius (from climate map or noise fallback).
     pub(crate) temperature: f64,
-    pub(crate) humidity: f64,
+    /// Precipitation in mm/year (from climate map or noise fallback).
+    pub(crate) precipitation: f64,
+    /// Continentality [0, 1] from ocean distance (from climate map or noise fallback).
+    pub(crate) continentality: f64,
+    /// River Strahler order (0 = not a river, 1+ = stream order).
+    pub(crate) river_order: u8,
+    /// Final surface height in blocks above sea level.
     pub(crate) height: usize,
+    /// Biome classification from temperature, precipitation, elevation, river presence.
     pub(crate) biome: Biome,
 }
 
@@ -42,14 +55,20 @@ pub(crate) fn sample_params(noises: &WorldNoises, face: Face, u: f64, v: f64, er
         height = (height as f64 + delta).clamp(MIN_HEIGHT as f64, MAX_HEIGHT as f64) as usize;
     }
 
-    let biome = biome::determine_biome(continentalness, temperature, humidity, erosion, weirdness, height, SEA_LEVEL);
+    let temperature_c = temperature * 35.0 + 10.0;
+    let precipitation_mm = (humidity + 1.0) * 750.0;
+    let continentality_norm = (continentalness + 1.0) * 0.5;
+
+    let biome = biome::determine_biome(temperature_c, precipitation_mm, continentality_norm, height, SEA_LEVEL, 0, weirdness);
 
     TerrainParams {
         continentalness,
         erosion,
         weirdness,
-        temperature,
-        humidity,
+        temperature: temperature_c,
+        precipitation: precipitation_mm,
+        continentality: continentality_norm,
+        river_order: 0,
         height,
         biome,
     }
@@ -106,7 +125,25 @@ pub fn compute_height_from_params(
 /// `sample_params(face, u, v)` for the density-based pipeline. Two world
 /// points sharing a radial direction produce identical params, which is
 /// what makes the terrain seamless across cube faces.
-pub(crate) fn sample_params_at_world(noises: &WorldNoises, world: glam::DVec3, erosion_map: Option<&super::super::erosion::ErosionMap>) -> TerrainParams {
+/// Constants for elevation-to-blocks conversion.
+const ELEV_SCALE: f64 = 0.07;  // blocks per meter
+const RIVER_CARVE_MAX_BLOCKS: f64 = 12.0;  // max depth river carves
+
+fn elev_to_height(elev_m: f32) -> usize {
+    let blocks = (elev_m as f64) * ELEV_SCALE;
+    ((SEA_LEVEL as f64 + blocks).clamp(MIN_HEIGHT as f64, MAX_HEIGHT as f64)) as usize
+}
+
+fn apply_river_carving(height: usize, order: u8) -> usize {
+    if order > 0 {
+        let carve_depth = (RIVER_CARVE_MAX_BLOCKS * (order as f64 / 10.0).min(1.0)) as usize;
+        height.saturating_sub(carve_depth).max(MIN_HEIGHT as usize)
+    } else {
+        height
+    }
+}
+
+pub(crate) fn sample_params_at_world(noises: &WorldNoises, world: glam::DVec3, terrain: Option<&super::terrain_data::TerrainData>) -> TerrainParams {
     // Continuous 3D domain warp. Sampling three noise channels gives a vector
     // offset in world space; subtracting its radial component projects it onto
     // the local tangent plane without ever picking a basis (no hairy-ball
@@ -123,38 +160,54 @@ pub(crate) fn sample_params_at_world(noises: &WorldNoises, world: glam::DVec3, e
         warped_dir.z * sphere::SURFACE_RADIUS_BLOCKS as f64,
     ];
 
+    // Always sample noise-derived shape parameters
     let continentalness = noises.continentalness.get(p);
     let erosion = noises.erosion_noise.get(p);
     let weirdness = noises.weirdness.get(p);
-    let temperature = noises.temperature.get(p);
-    let humidity = noises.humidity.get(p);
+    let detail_noise = noises.detail.get(p);
 
-    let base = continental_curve(continentalness);
-    let erosion_factor = (0.3 + erosion * 0.7).clamp(0.3, 1.0);
-    let mountain = noises.mountain.get(p) * MOUNTAIN_AMPLITUDE * erosion_factor;
-    let detail = noises.detail.get(p) * DETAIL_AMPLITUDE * erosion_factor;
-    let weirdness_offset = weirdness * WEIRDNESS_AMPLITUDE;
-    let mut height = (SEA_LEVEL as f64 + base + mountain + detail + weirdness_offset).clamp(MIN_HEIGHT as f64, MAX_HEIGHT as f64) as usize;
+    // Sample climate and height from terrain data if available; fallback to noise
+    let (temperature, precipitation, continentality, river_order, mut height) = if let Some(terrain_data) = terrain {
+        let (temp, precip, cont) = terrain_data.climate.sample_at_dir(warped_dir);
+        let order = terrain_data.flow.stream_order_at_dir(warped_dir);
+        let mut h = elev_to_height(terrain_data.amplified.elevation_at_dir(warped_dir));
 
-    if let Some(emap) = erosion_map {
-        // Erosion map is still indexed in face-local cube coords; sample with
-        // the dominant face's projection of the warped direction.
-        let face = sphere::face_for_cube_point(warped_dir);
-        let (tu, tv, _) = sphere::face_basis(face);
-        let cube_pt = warped_dir * sphere::CUBE_HALF_BLOCKS;
-        let u = cube_pt.dot(tu.as_dvec3());
-        let v = cube_pt.dot(tv.as_dvec3());
-        let delta = emap.sample(u, v);
-        height = (height as f64 + delta).clamp(MIN_HEIGHT as f64, MAX_HEIGHT as f64) as usize;
-    }
+        // Apply procedural detail noise to add surface variation (gated by erosion)
+        let erosion_factor = (0.3 + erosion * 0.7).clamp(0.3, 1.0);
+        let detail_blocks = (detail_noise * DETAIL_AMPLITUDE * erosion_factor) as i32;
+        h = ((h as i32 + detail_blocks).clamp(MIN_HEIGHT as i32, MAX_HEIGHT as i32)) as usize;
 
-    let biome = biome::determine_biome(continentalness, temperature, humidity, erosion, weirdness, height, SEA_LEVEL);
+        let h = apply_river_carving(h, order);
+        (temp as f64, precip as f64, cont as f64, order, h)
+    } else {
+        // Noise fallback: map noise values to realistic ranges
+        let temp_noise = noises.temperature.get(p);
+        let humid_noise = noises.humidity.get(p);
+        let temp = temp_noise * 35.0 + 10.0;  // Celsius
+        let precip = (humid_noise + 1.0) * 750.0;  // mm/yr
+        let cont = (continentalness + 1.0) * 0.5;  // [0, 1]
+
+        let base = continental_curve(continentalness);
+        let erosion_factor = (0.3 + erosion * 0.7).clamp(0.3, 1.0);
+        let mountain = noises.mountain.get(p) * MOUNTAIN_AMPLITUDE * erosion_factor;
+        let detail = noises.detail.get(p) * DETAIL_AMPLITUDE * erosion_factor;
+        let weirdness_offset = weirdness * WEIRDNESS_AMPLITUDE;
+        let h = (SEA_LEVEL as f64 + base + mountain + detail + weirdness_offset).clamp(MIN_HEIGHT as f64, MAX_HEIGHT as f64) as usize;
+
+        (temp, precip, cont, 0, h)
+    };
+
+    height = height;
+
+    let biome = biome::determine_biome(temperature, precipitation, continentality, height, SEA_LEVEL, river_order, weirdness);
     TerrainParams {
         continentalness,
         erosion,
         weirdness,
         temperature,
-        humidity,
+        precipitation,
+        continentality,
+        river_order,
         height,
         biome,
     }
@@ -166,8 +219,8 @@ pub(crate) fn sample_params_at_world(noises: &WorldNoises, world: glam::DVec3, e
 /// so heightmap tiles using this stay consistent with the mesh-shader chunks
 /// at every world point. The returned block is the surface biome block at
 /// the same point.
-pub fn surface_radius_at_world(noises: &WorldNoises, world: glam::DVec3, erosion_map: Option<&super::super::erosion::ErosionMap>) -> (f64, BlockType) {
-    let params = sample_params_at_world(noises, world, erosion_map);
+pub fn surface_radius_at_world(noises: &WorldNoises, world: glam::DVec3, terrain: Option<&super::terrain_data::TerrainData>) -> (f64, BlockType) {
+    let params = sample_params_at_world(noises, world, terrain);
     let radius = sphere::PLANET_RADIUS_BLOCKS as f64 + params.height as f64;
     let block = biome::surface_block(params.biome);
     (radius, block)

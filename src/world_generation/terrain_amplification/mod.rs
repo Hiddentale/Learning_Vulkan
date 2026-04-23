@@ -58,6 +58,46 @@ impl AmplifiedTerrain {
             self.faces[i].elevation = faces[i].elevation.clone();
         }
     }
+
+    /// Sample elevation (in meters) at a unit-direction sphere point.
+    /// Uses bilinear interpolation on the cross-layout grid.
+    pub fn elevation_at_dir(&self, dir: DVec3) -> f32 {
+        let dir = dir.normalize_or(DVec3::Y);
+        let fs = self.cross_width as f64 / 4.0;
+        let s = (fs as u32 - 1).max(1) as f64;
+
+        // Determine dominant face
+        let face_id = if dir.x.abs() >= dir.y.abs() && dir.x.abs() >= dir.z.abs() {
+            if dir.x >= 0.0 { 0 } else { 1 }
+        } else if dir.y.abs() >= dir.z.abs() {
+            if dir.y >= 0.0 { 2 } else { 3 }
+        } else {
+            if dir.z >= 0.0 { 4 } else { 5 }
+        };
+
+        // Map direction to cross-layout coordinates
+        let (i_f, j_f) = cross_layout::sphere_to_cross_atlas(face_id, dir.x, dir.y, dir.z, fs, s);
+
+        // Bilinear sample from row-major cross_elevation grid
+        let width = self.cross_width as usize;
+        let height = self.cross_height as usize;
+        let i0 = (i_f.floor() as usize).min(height - 1);
+        let i1 = (i0 + 1).min(height - 1);
+        let j0 = (j_f.floor() as usize).min(width - 1);
+        let j1 = (j0 + 1).min(width - 1);
+        let fi = (i_f - i0 as f64) as f32;
+        let fj = (j_f - j0 as f64) as f32;
+
+        let v00 = self.cross_elevation[i0 * width + j0];
+        let v01 = self.cross_elevation[i0 * width + j1];
+        let v10 = self.cross_elevation[i1 * width + j0];
+        let v11 = self.cross_elevation[i1 * width + j1];
+
+        v00 * (1.0 - fi) * (1.0 - fj)
+            + v01 * (1.0 - fi) * fj
+            + v10 * fi * (1.0 - fj)
+            + v11 * fi * fj
+    }
 }
 
 /// Target resolution per cube face for the diffusion output.

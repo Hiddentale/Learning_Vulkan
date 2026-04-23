@@ -371,8 +371,8 @@ impl VulkanApplication {
     ///
     /// # Safety
     /// Calls unsafe Vulkan APIs.
-    pub unsafe fn enter_world(&mut self, world_dir: &std::path::Path, seed: u32, erosion_map: Option<Arc<ErosionMap>>) -> anyhow::Result<()> {
-        let mut world = World::new(WORLD_DISTANCE, seed, erosion_map.clone());
+    pub unsafe fn enter_world(&mut self, world_dir: &std::path::Path, seed: u32, terrain: Option<Arc<crate::voxel::terrain::TerrainData>>) -> anyhow::Result<()> {
+        let mut world = World::new(WORLD_DISTANCE, seed, terrain.clone());
         // Spawn point is just above the +Y pole; the streamer needs a real
         // world position so it knows which face neighborhood to load.
         let spawn = glam::DVec3::new(0.0, crate::voxel::sphere::SURFACE_RADIUS_BLOCKS as f64, 0.0);
@@ -392,7 +392,7 @@ impl VulkanApplication {
 
         let svdag_pool = SvdagPool::new(MAX_SVDAG_CHUNKS, &self.device, &self.vulkan_instance, &mut self.vulkan_application_data)?;
         let svdag_pipeline = SvdagPipeline::create(&self.device, &self.vulkan_instance, &mut self.vulkan_application_data, &svdag_pool)?;
-        let svdag_compressor = SvdagCompressor::new(erosion_map.clone());
+        let svdag_compressor = SvdagCompressor::new(terrain.clone());
         let mut svdag_caches = Vec::new();
         for lod in 0..=LOD_BANDS.len() as u32 {
             svdag_caches.push(RegionStore::new(&crate::storage::world_meta::svdag_lod_dir(world_dir, lod))?);
@@ -402,7 +402,7 @@ impl VulkanApplication {
         let heightmap_tile_pipeline =
             HeightmapTilePipeline::create(&self.device, &self.vulkan_instance, &mut self.vulkan_application_data, &heightmap_atlas)?;
         let heightmap_quadtree = Quadtree::new();
-        let heights_generator = HeightsGenerator::new(erosion_map.clone());
+        let heights_generator = HeightsGenerator::new(terrain.clone());
 
         self.wr = Some(WorldResources {
             world,
@@ -426,7 +426,7 @@ impl VulkanApplication {
             heights_generator,
             heights_in_flight: std::collections::HashSet::new(),
             heightmap_tile_pipeline_active_count: 0,
-            erosion_map,
+            erosion_map: None,
         });
         self.depth_pyramid_needs_init = true;
         Ok(())

@@ -36,7 +36,7 @@ mod tests {
     /// Returns its world-space radius. This is what the player actually sees.
     /// Slow (one full column generation per call) — use sparingly.
     fn topmost_solid_radius_via_generator(face: Face, cx: i32, cz: i32, x: usize, z: usize, seed: u32) -> f64 {
-        let chunks = generate_column(face, cx, cz, seed, None, None);
+        let chunks = generate_column(face, cx, cz, seed, None);
         // chunks[cy] indexes from the bottom up. Walk top→bottom.
         for cy_rev in (0..CHUNK_LAYERS).rev() {
             for ly_rev in (0..CHUNK_SIZE).rev() {
@@ -221,7 +221,7 @@ mod tests {
                 if cx < 0 || cz < 0 || cx >= FACE_SIDE_CHUNKS || cz >= FACE_SIDE_CHUNKS {
                     continue;
                 }
-                let chunks = generate_column(face, cx, cz, 42, None, None);
+                let chunks = generate_column(face, cx, cz, 42, None);
                 for (cy, chunk) in chunks.iter().enumerate().take(CHUNK_LAYERS) {
                     for ly in 0..CHUNK_SIZE {
                         for lx in 0..16 {
@@ -442,7 +442,7 @@ mod tests {
             for dz in 0..3 {
                 let cx = mid - 1 + dx as i32;
                 let cz = mid - 1 + dz as i32;
-                let chunks = generate_column(face, cx, cz, 42, None, None);
+                let chunks = generate_column(face, cx, cz, 42, None);
                 for (cy, chunk) in chunks.iter().enumerate().take(CHUNK_LAYERS) {
                     for ly in 0..CHUNK_SIZE {
                         for lx in 0..16 {

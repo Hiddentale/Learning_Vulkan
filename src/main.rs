@@ -275,16 +275,38 @@ fn main() -> Result<()> {
                     }
                     GameState::EnteringWorld { .. } => {
                         if let GameState::EnteringWorld { world_dir, seed } = std::mem::replace(&mut game_state, GameState::Playing) {
-                            let erosion_map = voxel::erosion::ErosionMap::load(&world_dir.join("erosion_map.bin"))
-                                .ok()
-                                .map(std::sync::Arc::new);
-                            if let Err(e) = unsafe { application.enter_world(&world_dir, seed, erosion_map) } {
-                                eprintln!("Failed to enter world: {e}");
-                                game_state = GameState::TitleScreen;
-                            } else {
-                                grab_cursor(&user_window);
-                                camera = Camera::default();
-                                player = Player::new();
+                            // Generate terrain data from pipeline (Steps 0-6)
+                            let model_dir = std::path::Path::new("data/models/terrain-diffusion-30m");
+                            let terrain_result = crate::world_generation::generate_world_terrain(
+                                seed as u64,
+                                model_dir,
+                                10_000,  // point count
+                                40,      // plate count
+                            ).map(|wtd| {
+                                // Bundle into TerrainData for voxel world
+                                std::sync::Arc::new(voxel::terrain::TerrainData {
+                                    amplified: wtd.amplified,
+                                    climate: wtd.climate,
+                                    flow: wtd.flow,
+                                    detail_cache: wtd.detail_cache,
+                                })
+                            });
+
+                            match terrain_result {
+                                Ok(terrain) => {
+                                    if let Err(e) = unsafe { application.enter_world(&world_dir, seed, Some(terrain)) } {
+                                        eprintln!("Failed to enter world: {e}");
+                                        game_state = GameState::TitleScreen;
+                                    } else {
+                                        grab_cursor(&user_window);
+                                        camera = Camera::default();
+                                        player = Player::new();
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!("Failed to generate world terrain: {e}");
+                                    game_state = GameState::TitleScreen;
+                                }
                             }
                         }
                     }
@@ -508,30 +530,19 @@ fn tick_pregen(state: &mut GameState, application: &mut VulkanApplication, windo
         return;
     };
 
-    // Poll erosion worker
-    if erosion_map.is_none() {
-        if let Some(worker) = erosion_worker.as_ref() {
-            if let Some(map) = worker.try_receive() {
-                *erosion_map = Some(std::sync::Arc::new(map));
-                *erosion_worker = None; // Worker done, drop it
-            }
-        }
-    }
-
-    // Don't enter world until erosion map is ready
-    if erosion_map.is_none() {
-        return;
-    }
+    // For Step 7, terrain generation happens in EnteringWorld state, not here.
+    // Just transition to EnteringWorld when ready.
+    // (erosion_worker and erosion_map are kept for backward compatibility but unused)
 
     if !application.has_world() {
         let dir = world_dir.clone();
         let s = *seed;
-        let emap = erosion_map.clone();
-        if let Err(e) = unsafe { application.enter_world(&dir, s, emap) } {
-            eprintln!("Failed to enter world: {e}");
-            *state = GameState::TitleScreen;
-            return;
-        }
+        // Transition to EnteringWorld which will run the full pipeline
+        *state = GameState::EnteringWorld {
+            world_dir: dir,
+            seed: s,
+        };
+        return;
     }
     let col_count = if let Some(world) = application.world() {
         let mut seen = std::collections::HashSet::new();

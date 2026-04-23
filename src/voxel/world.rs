@@ -1,7 +1,7 @@
 use super::block::BlockType;
 use super::chunk::{Chunk, CHUNK_SIZE};
 use super::chunk_generator::ChunkGenerator;
-use super::erosion::ErosionMap;
+use super::terrain::TerrainData;
 use super::metric::MetricField;
 use super::sphere::{self, ChunkPos, PLANET_RADIUS_BLOCKS};
 use glam::DVec3;
@@ -32,28 +32,28 @@ pub struct WorldDelta {
 }
 
 impl World {
-    pub fn new(render_distance: i32, seed: u32, erosion_map: Option<Arc<ErosionMap>>) -> Self {
+    pub fn new(render_distance: i32, seed: u32, terrain: Option<Arc<TerrainData>>) -> Self {
         Self {
             chunks: HashMap::new(),
             render_distance,
-            generator: ChunkGenerator::new(seed, erosion_map, None),
+            generator: ChunkGenerator::new(seed, terrain, None),
             metric: MetricField::new(),
         }
     }
 
-    /// Create a new world with pre-computed detail noise cache.
-    /// This is called during world generation after Steps 0-5 (amplified terrain ready).
+    /// Create a new world with pre-computed detail noise cache and terrain data.
+    /// This is called during world generation after Steps 0-6 (amplified terrain + climate + rivers ready).
     #[allow(dead_code)]
     pub fn with_detail_cache(
         render_distance: i32,
         seed: u32,
-        erosion_map: Option<Arc<ErosionMap>>,
+        terrain: Option<Arc<TerrainData>>,
         detail_cache: Option<crate::world_generation::detail_noise::DetailCache>,
     ) -> Self {
         Self {
             chunks: HashMap::new(),
             render_distance,
-            generator: ChunkGenerator::new(seed, erosion_map, detail_cache),
+            generator: ChunkGenerator::new(seed, terrain, detail_cache),
             metric: MetricField::new(),
         }
     }

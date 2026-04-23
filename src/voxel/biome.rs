@@ -17,76 +17,74 @@ pub enum Biome {
     IceSpikes,
 }
 
-/// Selects a biome from the 6-parameter noise router.
-/// `continentalness`, `temperature`, `humidity`, `erosion`, `weirdness` are in [-1, 1].
-/// `height` is the terrain surface Y, `sea_level` is the water line.
+/// Selects a biome from climate and terrain parameters.
+/// - `temperature`: degrees Celsius (real climate or noise-mapped)
+/// - `precipitation`: mm/year (real climate or noise-mapped)
+/// - `continentality`: [0, 1] coastal-to-inland (real climate or noise-mapped)
+/// - `height`: terrain surface Y
+/// - `sea_level`: water line
+/// - `river_order`: Strahler stream order (0 = no river, 1+ = river)
+/// - `weirdness`: noise [-1, 1], gates fantasy features
 pub fn determine_biome(
-    continentalness: f64,
     temperature: f64,
-    humidity: f64,
-    erosion: f64,
-    weirdness: f64,
+    precipitation: f64,
+    continentality: f64,
     height: usize,
     sea_level: usize,
+    river_order: u8,
+    weirdness: f64,
 ) -> Biome {
-    // Ocean biomes by continentalness
-    if continentalness < -0.4 {
-        return Biome::DeepOcean;
-    }
-    if continentalness < -0.2 || height + 3 < sea_level {
+    // Oceanic biomes
+    if height + 3 < sea_level {
         return Biome::Ocean;
     }
-
-    // Beach at coastlines
-    let near_sea = height <= sea_level + 3;
-    if near_sea && continentalness < 0.05 {
-        return if temperature < -0.3 { Biome::Tundra } else { Biome::Beach };
+    if height < sea_level {
+        return Biome::DeepOcean;
     }
 
-    // Extreme cold
-    if temperature < -0.5 {
+    // River/stream biomes
+    if river_order > 0 {
+        return if temperature < 0.0 { Biome::Tundra } else { Biome::Forest };
+    }
+
+    // Beach/coastal
+    let near_sea = height <= sea_level + 3;
+    if near_sea && continentality < 0.2 {
+        return if temperature < -3.0 { Biome::Tundra } else { Biome::Beach };
+    }
+
+    // Temperature-based biomes
+    if temperature < -10.0 {
         return if weirdness > 0.3 { Biome::IceSpikes } else { Biome::Tundra };
     }
-
-    // Cold + high erosion = snowy mountains
-    if temperature < -0.1 && erosion > 0.2 {
-        return Biome::SnowyMountains;
-    }
-    if temperature < -0.1 {
-        return Biome::Tundra;
+    if temperature < 0.0 {
+        return if height > sea_level + 200 { Biome::SnowyMountains } else { Biome::Tundra };
     }
 
-    // Hot + dry + high erosion = badlands
-    if temperature > 0.3 && humidity < -0.3 && erosion > 0.2 {
-        return Biome::Badlands;
+    // Precipitation/humidity based
+    if precipitation < 250.0 {
+        if temperature > 20.0 {
+            return Biome::Desert;
+        } else if height > sea_level + 300 {
+            return Biome::Badlands;
+        } else {
+            return Biome::Savanna;
+        }
     }
 
-    // Hot + dry = desert
-    if temperature > 0.3 && humidity < -0.1 {
-        return Biome::Desert;
-    }
-
-    // Hot + moderate humidity = savanna
-    if temperature > 0.2 && humidity < 0.2 {
-        return Biome::Savanna;
-    }
-
-    // Wet + low-lying = swamp
-    if humidity > 0.4 && erosion < -0.1 && height < sea_level + 10 {
-        return Biome::Swamp;
-    }
-
-    // Humid = forest
-    if humidity > 0.1 {
-        return Biome::Forest;
-    }
-
-    // High erosion = mountains
-    if erosion > 0.3 {
+    // Elevation-based
+    if height > sea_level + 300 {
         return Biome::Mountains;
     }
 
-    Biome::Plains
+    // Default: moderate temperature and precipitation
+    if precipitation > 1000.0 {
+        Biome::Swamp
+    } else if precipitation > 600.0 {
+        Biome::Forest
+    } else {
+        Biome::Plains
+    }
 }
 
 /// The block placed on the terrain surface.

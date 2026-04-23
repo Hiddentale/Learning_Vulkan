@@ -17,6 +17,55 @@ pub struct ClimateMap {
     pub height: u32,
 }
 
+impl ClimateMap {
+    /// Sample climate data (temperature, precipitation, continentality) at a unit-direction sphere point.
+    /// Uses bilinear interpolation on the cross-layout grid.
+    pub fn sample_at_dir(&self, dir: glam::DVec3) -> (f32, f32, f32) {
+        use crate::world_generation::terrain_amplification::cross_layout;
+        use glam::DVec3;
+
+        let dir = dir.normalize_or(DVec3::Y);
+        let fs = self.width as f64 / 4.0;
+        let s = (fs as u32 - 1).max(1) as f64;
+
+        // Determine dominant face
+        let face_id = if dir.x.abs() >= dir.y.abs() && dir.x.abs() >= dir.z.abs() {
+            if dir.x >= 0.0 { 0 } else { 1 }
+        } else if dir.y.abs() >= dir.z.abs() {
+            if dir.y >= 0.0 { 2 } else { 3 }
+        } else {
+            if dir.z >= 0.0 { 4 } else { 5 }
+        };
+
+        // Map direction to cross-layout coordinates
+        let (i_f, j_f) = cross_layout::sphere_to_cross_atlas(face_id, dir.x, dir.y, dir.z, fs, s);
+
+        // Bilinear sample from row-major cross-layout grids
+        let width = self.width as usize;
+        let height = self.height as usize;
+        let i0 = (i_f.floor() as usize).min(height - 1);
+        let i1 = (i0 + 1).min(height - 1);
+        let j0 = (j_f.floor() as usize).min(width - 1);
+        let j1 = (j0 + 1).min(width - 1);
+        let fi = (i_f - i0 as f64) as f32;
+        let fj = (j_f - j0 as f64) as f32;
+
+        let sample_channel = |data: &[f32]| {
+            let v00 = data[i0 * width + j0];
+            let v01 = data[i0 * width + j1];
+            let v10 = data[i1 * width + j0];
+            let v11 = data[i1 * width + j1];
+            v00 * (1.0 - fi) * (1.0 - fj) + v01 * (1.0 - fi) * fj + v10 * fi * (1.0 - fj) + v11 * fi * fj
+        };
+
+        (
+            sample_channel(&self.temperature),
+            sample_channel(&self.precipitation),
+            sample_channel(&self.continentality),
+        )
+    }
+}
+
 /// Compute climate at every cross-grid pixel.
 ///
 /// Runs after river networking. Takes elevation (post-carving) and returns

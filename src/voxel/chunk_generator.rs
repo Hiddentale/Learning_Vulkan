@@ -1,7 +1,6 @@
 use super::chunk::Chunk;
-use super::erosion::ErosionMap;
 use super::sphere::Face;
-use super::terrain;
+use super::terrain::{self, TerrainData};
 use crate::world_generation::detail_noise::DetailCache;
 use crossbeam_channel::{Receiver, Sender};
 use std::collections::HashSet;
@@ -30,6 +29,7 @@ pub struct ChunkGenerator {
     request_tx: Sender<ColumnKey>,
     result_rx: Receiver<GeneratedColumn>,
     pending: HashSet<ColumnKey>,
+    terrain: Option<Arc<TerrainData>>,
     detail_cache: Arc<Mutex<Option<DetailCache>>>,
     _workers: Vec<thread::JoinHandle<()>>,
 }
@@ -37,7 +37,7 @@ pub struct ChunkGenerator {
 impl ChunkGenerator {
     pub fn new(
         seed: u32,
-        erosion_map: Option<Arc<ErosionMap>>,
+        terrain: Option<Arc<TerrainData>>,
         detail_cache: Option<DetailCache>,
     ) -> Self {
         let (request_tx, request_rx) = crossbeam_channel::unbounded::<ColumnKey>();
@@ -48,22 +48,16 @@ impl ChunkGenerator {
         for _ in 0..WORKER_COUNT {
             let rx = request_rx.clone();
             let tx = result_tx.clone();
-            let emap = erosion_map.clone();
+            let terrain_data = terrain.clone();
             let dcache = detail_cache.clone();
             workers.push(thread::spawn(move || {
                 while let Ok(ColumnKey { face, cx, cz }) = rx.recv() {
-                    // Get pre-computed detail column if available
-                    let detail_col = dcache.lock().ok().and_then(|mut cache| {
-                        cache.as_mut().map(|c| c.get_or_compute(face, cx, cz))
-                    });
-
                     let chunks = terrain::generate_column(
                         face,
                         cx,
                         cz,
                         seed,
-                        emap.as_deref(),
-                        detail_col.as_deref(),
+                        terrain_data.as_deref(),
                     );
                     if tx.send(GeneratedColumn { face, cx, cz, chunks }).is_err() {
                         break;
@@ -76,6 +70,7 @@ impl ChunkGenerator {
             request_tx,
             result_rx,
             pending: HashSet::new(),
+            terrain,
             detail_cache,
             _workers: workers,
         }

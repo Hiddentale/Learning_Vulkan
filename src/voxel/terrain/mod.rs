@@ -1,6 +1,7 @@
 pub(crate) mod noises;
 pub(crate) mod height;
 pub(crate) mod generate;
+pub(crate) mod terrain_data;
 mod surface_diagnostics;
 
 // Re-export public API
@@ -10,3 +11,4 @@ pub use height::{surface_radius_at_world, compute_height_from_params};
 
 pub(crate) use height::{sample_params_at_world, TerrainParams};
 pub(crate) use generate::CHUNK_LAYERS;
+pub(crate) use terrain_data::TerrainData;

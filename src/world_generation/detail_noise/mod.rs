@@ -300,27 +300,12 @@ fn sphere_direction_from_face_cube(
     face: Face,
     cube_x: f64,
     cube_z: f64,
-    cross: &CrossLayout,
+    _cross: &CrossLayout,
 ) -> Option<glam::DVec3> {
-    // Convert cube coords to cross-grid pixel coordinates
-    let (tu, tv, _) = sphere::face_basis(face);
-
-    // This is a simplified approach; for full correctness would need
-    // face-to-cross coordinate mapping. For now, use a direct approach.
-    let face_size = cross.face_size as f64;
-    let u = cube_x / 16.0;  // Block coords to chunk-relative
-    let v = cube_z / 16.0;
-
-    // Map chunk coords to face pixel coords (16 blocks per chunk)
-    let pixel_u = u * 16.0;
-    let pixel_v = v * 16.0;
-
-    // Use CrossLayout to get sphere direction
-    let Some(dir) = cross.pixel_to_sphere(pixel_u.round() as u32, pixel_v.round() as u32) else {
-        return None;
-    };
-
-    Some(dir.normalize())
+    // Use face_local_to_world to convert face cube coords to world position,
+    // then normalize to get direction.
+    let world_pos = sphere::face_local_to_world(face, cube_x, cube_z, 0.0);
+    Some(world_pos.normalize())
 }
 
 /// Sample elevation, Sobel gradient, and roughness from amplified terrain.
@@ -383,6 +368,47 @@ pub struct DetailCache {
     terrain: std::sync::Arc<AmplifiedTerrain>,
     cache_dir: Option<PathBuf>,
     seed: u32,
+}
+
+/// Pre-compute all detail columns for the entire amplified terrain and cache them.
+/// This is Step 6 of world generation: pre-computing detail noise to avoid stutter
+/// during gameplay chunk loads.
+pub fn precompute_all(
+    terrain: std::sync::Arc<AmplifiedTerrain>,
+    seed: u32,
+    cache_dir: Option<PathBuf>,
+) -> DetailCache {
+    let mut cache = DetailCache::new(terrain.clone(), seed, cache_dir);
+
+    let face_size = terrain.cross_width / 4;
+    let chunk_grid_size = (face_size + 15) / 16;  // Round up to chunk boundaries
+
+    eprintln!("[detail_noise] Pre-computing all detail columns ({} chunks per face)...", chunk_grid_size * chunk_grid_size);
+
+    // Pre-compute for all 6 faces
+    for face_idx in 0..6 {
+        let face = match face_idx {
+            0 => Face::PosX,
+            1 => Face::NegX,
+            2 => Face::PosY,
+            3 => Face::NegY,
+            4 => Face::PosZ,
+            5 => Face::NegZ,
+            _ => unreachable!(),
+        };
+
+        for cx in 0..chunk_grid_size as i32 {
+            for cz in 0..chunk_grid_size as i32 {
+                // This will compute and cache (with disk save if cache_dir is set)
+                let _ = cache.get_or_compute(face, cx, cz);
+            }
+        }
+
+        eprintln!("[detail_noise] Face {} complete", face_idx);
+    }
+
+    eprintln!("[detail_noise] Detail noise pre-computation complete!");
+    cache
 }
 
 impl DetailCache {

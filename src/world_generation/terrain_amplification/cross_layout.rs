@@ -189,7 +189,7 @@ impl CrossLayout {
 
 /// Map a 3D direction to cross-layout (i_float, j_float).
 /// Port of sphere_export.py _cross_face_atlas.
-pub(super) fn sphere_to_cross_atlas(
+pub(crate) fn sphere_to_cross_atlas(
     face_id: usize,
     x: f64, y: f64, z: f64,
     fs: f64, s: f64,
