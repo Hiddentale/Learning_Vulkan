@@ -19,6 +19,9 @@ const OUTPUT_CHANNELS: u32 = 6;
 /// matching Java WorldPipeline.coarseTile() — NOT the COND_MEANS used in latent stage.
 const COND_NORM_MEANS: [f64; 5] = [-37.679, 18.030, 333.844, 1350.126, 52.444];
 const COND_NORM_STDS: [f64; 5] = [39.685, 8.940, 322.252, 856.343, 30.983];
+// Higher SNR = model follows conditioning more strictly.
+// Default: [0.3, 0.1, 1.0, 0.1, 1.0] — very loose, model deviates freely.
+// Cranked up: elevation 0.3→3.0, temp 0.1→1.0, to force the model to respect our input.
 const COND_SNR: [f64; 5] = [0.3, 0.1, 1.0, 0.1, 1.0];
 
 // Coarse model output denormalization (6 channels)

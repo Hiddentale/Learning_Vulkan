@@ -174,7 +174,7 @@ impl SyntheticConditioner {
             }
         }
 
-        // Override channels 0, 1, 3 with our coarse heightmap data
+        // Override channels 0, 1, 3 with our coarse heightmap data.
         for r in 0..th {
             for c in 0..tw {
                 let gy = (ty as usize + r).min(grid_h - 1);
@@ -182,7 +182,9 @@ impl SyntheticConditioner {
                 let src = gy * grid_w + gx;
                 let px = r * tw + c;
 
-                raw[px][0] = face.elevation[src] as f64 * 1000.0;
+                let our_elev_m = face.elevation[src] as f64 * 1000.0;
+                raw[px][0] = our_elev_m;
+
                 raw[px][1] = face.temperature[src] as f64;
                 raw[px][3] = face.precipitation[src] as f64;
             }

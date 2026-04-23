@@ -79,6 +79,17 @@ pub fn amplify(
     let synth_cond = synthetic_cond::SyntheticConditioner::new(seed);
     session::log_to_file(&format!("[pipeline] synthetic conditioner: {:.3}s", t0.elapsed().as_secs_f64()));
 
+    // Dump cross-layout input for debugging
+    dump_cross_channel(
+        &cross_grid.elevation, cross_w, cross_h,
+        "src/world_generation/terrain_amplification/debug_input_elev.bin",
+    );
+    session::log_to_file(&format!(
+        "[debug] input elev cross: [{:.0}, {:.0}]",
+        cross_grid.elevation.iter().cloned().fold(f32::INFINITY, f32::min),
+        cross_grid.elevation.iter().cloned().fold(f32::NEG_INFINITY, f32::max),
+    ));
+
     // Stage 1: coarse model on the full cross layout
     let coarse_cross;
     {
@@ -114,6 +125,32 @@ pub fn amplify(
         session::log_to_file(&format!("[pipeline] decoder cross: {:.3}s", t0.elapsed().as_secs_f64()));
     }
 
+    // Dump coarse model output (channel 0 = elevation sqrt-encoded)
+    {
+        let px = (cross_w * cross_h) as usize;
+        dump_cross_channel(
+            &coarse_cross[..px], cross_w, cross_h,
+            "src/world_generation/terrain_amplification/debug_coarse_ch0.bin",
+        );
+        session::log_to_file(&format!(
+            "[debug] coarse ch0 cross: [{:.1}, {:.1}]",
+            coarse_cross[..px].iter().cloned().fold(f32::INFINITY, f32::min),
+            coarse_cross[..px].iter().cloned().fold(f32::NEG_INFINITY, f32::max),
+        ));
+    }
+
+    // Dump latent channel 4 (low-freq elevation)
+    {
+        let px = (cross_w * cross_h) as usize;
+        dump_cross_channel(
+            &latent_cross[4 * px..5 * px], cross_w, cross_h,
+            "src/world_generation/terrain_amplification/debug_latent_ch4.bin",
+        );
+    }
+
+    // Dump final elevation cross
+    // (done after combine below)
+
     // Combine elevation on the cross grid: laplacian denoise + decode + sqrt reversal
     let t0 = std::time::Instant::now();
     let elevation_cross = combine_cross_elevation(
@@ -121,6 +158,16 @@ pub fn amplify(
         &residual_cross, native_w, native_h,
     );
     session::log_to_file(&format!("[pipeline] combine elevation: {:.3}s", t0.elapsed().as_secs_f64()));
+
+    dump_cross_channel(
+        &elevation_cross, native_w, native_h,
+        "src/world_generation/terrain_amplification/debug_elevation_cross.bin",
+    );
+    session::log_to_file(&format!(
+        "[debug] final elev cross: [{:.0}, {:.0}]",
+        elevation_cross.iter().cloned().fold(f32::INFINITY, f32::min),
+        elevation_cross.iter().cloned().fold(f32::NEG_INFINITY, f32::max),
+    ));
 
     // Sample per-face output from the cross grid using blend-weighted projection
     let t0 = std::time::Instant::now();
@@ -667,6 +714,14 @@ fn bilinear_upsample_rect(src: &[f32], sw: u32, sh: u32, dw: u32, dh: u32) -> Ve
         }
     }
     dst
+}
+
+fn dump_cross_channel(data: &[f32], w: u32, h: u32, path: &str) {
+    let bytes: Vec<u8> = data.iter().flat_map(|v| v.to_le_bytes()).collect();
+    std::fs::write(path, &bytes).unwrap_or_else(|e| {
+        session::log_to_file(&format!("[debug] failed to write {path}: {e}"));
+    });
+    session::log_to_file(&format!("[debug] wrote {} ({}×{}, {} bytes)", path, w, h, bytes.len()));
 }
 
 fn splitmix64(mut x: u64) -> u64 {
