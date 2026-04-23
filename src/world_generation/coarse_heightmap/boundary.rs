@@ -1,4 +1,4 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::VecDeque;
 
 use crate::world_generation::sphere_geometry::plate_seed_placement::{Adjacency, PlateAssignment};
 
@@ -14,7 +14,7 @@ pub(super) struct BoundarySeeds {
 pub(super) fn classify(
     adjacency: &Adjacency,
     assignment: &PlateAssignment,
-    continental: &HashSet<u32>,
+    is_continental: &[bool],
     seed: u64,
 ) -> BoundarySeeds {
     let n = assignment.plate_ids.len();
@@ -36,14 +36,14 @@ pub(super) fn classify(
 
     for i in 0..n {
         let my_plate = assignment.plate_ids[i];
-        let my_cont = continental.contains(&my_plate);
+        let my_cont = is_continental[i];
 
         for &nb in adjacency.neighbors_of(i as u32) {
             let nb_plate = assignment.plate_ids[nb as usize];
             if my_plate == nb_plate {
                 continue;
             }
-            let nb_cont = continental.contains(&nb_plate);
+            let nb_cont = is_continental[nb as usize];
 
             if my_cont != nb_cont {
                 seeds.coast_seeds.push(i as u32);

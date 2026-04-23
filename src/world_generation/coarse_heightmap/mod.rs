@@ -40,7 +40,8 @@ pub fn generate(
     let plate_count = assignment.plate_count() as usize;
 
     let is_continental = select_continents(points, assignment, adjacency, plate_count, n, seed);
-    let boundaries = boundary::classify(adjacency, assignment, &continental_set(&assignment.plate_ids, &is_continental), seed);
+    let is_continental = fractalize_coastline(points, &is_continental, adjacency, n, seed);
+    let boundaries = boundary::classify(adjacency, assignment, &is_continental, seed);
     let dist_fields = compute_distance_fields(n, adjacency, &boundaries);
     let (stress, stress_dir) = stress::propagate(
         n, points, adjacency, &assignment.plate_ids,
@@ -121,8 +122,76 @@ fn select_continents(
     assignment.plate_ids.iter().map(|pid| continental.contains(pid)).collect()
 }
 
-fn continental_set(plate_ids: &[u32], is_continental: &[bool]) -> std::collections::HashSet<u32> {
-    plate_ids.iter().zip(is_continental).filter(|(_, &c)| c).map(|(&pid, _)| pid).collect()
+const FRACTAL_REACH: u32 = 3;
+const FRACTAL_BASE_THRESHOLD: f64 = 0.25;
+const FRACTAL_FALLOFF: f64 = 0.35;
+
+fn fractalize_coastline(
+    points: &[DVec3],
+    is_continental: &[bool],
+    adjacency: &Adjacency,
+    n: usize,
+    seed: u64,
+) -> Vec<bool> {
+    use noise::{Fbm, MultiFractal, NoiseFn};
+
+    let fbm_fractal: Fbm<Perlin> = Fbm::new(seed.wrapping_add(20) as u32);
+
+    // BFS from coast to find points within FRACTAL_REACH hops
+    let coast_seeds: Vec<u32> = (0..n)
+        .filter(|&i| {
+            if !is_continental[i] {
+                return false;
+            }
+            adjacency
+                .neighbors_of(i as u32)
+                .iter()
+                .any(|&nb| !is_continental[nb as usize])
+        })
+        .map(|i| i as u32)
+        .collect();
+
+    let dist_coast = boundary::bfs_distance_capped(n, adjacency, &coast_seeds, FRACTAL_REACH);
+
+    let mut result = is_continental.to_vec();
+
+    for i in 0..n {
+        let dc = dist_coast[i];
+        if dc == u32::MAX || dc == 0 || dc > FRACTAL_REACH {
+            continue;
+        }
+
+        let p = points[i];
+        let noise_lo = fbm_fractal.get([p.x * 4.0 + 11.3, p.y * 4.0 + 7.7, p.z * 4.0 + 3.1]);
+        let noise_hi = fbm_fractal.get([p.x * 12.0 + 5.9, p.y * 12.0 + 2.3, p.z * 12.0 + 8.7]);
+        let noise = noise_lo * 0.7 + noise_hi * 0.3;
+
+        let proximity = 1.0 - (dc as f64 / (FRACTAL_REACH as f64 + 1.0));
+        let threshold = FRACTAL_BASE_THRESHOLD + (1.0 - proximity) * FRACTAL_FALLOFF;
+
+        if is_continental[i] && noise < -threshold {
+            result[i] = false; // bay/gulf
+        } else if !is_continental[i] && noise > threshold {
+            result[i] = true; // peninsula/cape
+        }
+    }
+
+    // Cleanup: revert isolated single-point flips
+    let cleaned = result.clone();
+    for i in 0..n {
+        if result[i] == is_continental[i] {
+            continue;
+        }
+        let all_opposite = adjacency
+            .neighbors_of(i as u32)
+            .iter()
+            .all(|&nb| cleaned[nb as usize] != result[i]);
+        if all_opposite {
+            result[i] = is_continental[i];
+        }
+    }
+
+    result
 }
 
 fn compute_distance_fields(
@@ -246,11 +315,11 @@ mod tests {
     }
 
     #[test]
-    fn continental_fraction_near_30_percent() {
+    fn continental_fraction_reasonable() {
         let (_, hm) = make_heightmap(5000, 20, 42);
         let count = hm.is_continental.iter().filter(|&&c| c).count();
         let fraction = count as f64 / hm.is_continental.len() as f64;
-        assert!(fraction > 0.15 && fraction < 0.45, "continental fraction {fraction:.2}");
+        assert!(fraction > 0.20 && fraction < 0.55, "continental fraction {fraction:.2}");
     }
 
     #[test]

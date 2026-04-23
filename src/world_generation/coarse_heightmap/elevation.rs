@@ -1,7 +1,7 @@
 use glam::DVec3;
 use noise::{Fbm, NoiseFn, Perlin};
 
-const CONTINENTAL_SHELF: f64 = 0.02;
+const CONTINENTAL_SHELF: f64 = 0.00;
 const MOUNTAIN_BASE_PEAK: f64 = 1.8;
 const MOUNTAIN_NOISE_RANGE: f64 = 1.7;
 const MOUNTAIN_SIGMA: f64 = 2.0;
@@ -13,7 +13,7 @@ const BASIN_DEPTH: f64 = 0.4;
 const SHIELD_BASE: f64 = 0.25;
 const BASIN_INTERIOR_BASE: f64 = 0.08;
 
-const OCEAN_SHELF_DEPTH: f64 = -0.15;
+const OCEAN_SHELF_DEPTH: f64 = -0.10;
 const OCEAN_ABYSS_DEPTH: f64 = -4.8;
 const RIDGE_CREST: f64 = -2.0;
 const RIDGE_SIGMA: f64 = 4.0;
@@ -106,7 +106,14 @@ pub(super) fn oceanic(
     noise_val: f64,
     fbm_arc: &Fbm<Perlin>,
 ) -> f64 {
-    let depth_profile = smoothstep(0.0, 5.0, dist_coast);
+    // Two-stage profile: flat shelf then steep continental slope to abyss
+    let shelf_width = 4.0;
+    let slope_width = 8.0;
+    let depth_profile = if dist_coast <= shelf_width {
+        0.0
+    } else {
+        smoothstep(shelf_width, shelf_width + slope_width, dist_coast)
+    };
     let mut elev = OCEAN_SHELF_DEPTH
         + (OCEAN_ABYSS_DEPTH - OCEAN_SHELF_DEPTH) * depth_profile
         + noise_val * 0.2;

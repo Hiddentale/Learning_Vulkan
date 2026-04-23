@@ -25,7 +25,13 @@ pub fn overlay(
 
     let placements = generate_placements(coarse, points, seed, &atlas);
 
-    stamp::stamp_all(terrain, &placements, &atlas);
+    stamp::stamp_all(
+        &mut terrain.cross_elevation,
+        terrain.cross_width,
+        terrain.cross_height,
+        &placements,
+        &atlas,
+    );
 
     eprintln!(
         "[volcanic_overlay] stamped {} volcanic features",
@@ -288,7 +294,7 @@ mod tests {
         let fib = SphericalFibonacci::new(10_000);
         let points = fib.all_points();
         let del = SphericalDelaunay::from_points(&points);
-        let assignment = assign_plates(&points, &fib, &del, 20, seed);
+        let assignment = assign_plates(&points, &fib, &del, 40, seed);
         let adjacency = Adjacency::from_delaunay(points.len(), &del);
         let coarse = coarse_heightmap::generate(&points, &assignment, &adjacency, seed);
 

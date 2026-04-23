@@ -4,8 +4,9 @@ use glam::DVec3;
 
 use crate::world_generation::sphere_geometry::plate_seed_placement::Adjacency;
 
-const CONTINENTAL_FRACTION: f64 = 0.30;
-const NUM_CONTINENTS: usize = 3;
+const CONTINENTAL_FRACTION: f64 = 0.40;
+const NUM_CONTINENTS: usize = 5;
+const MIN_CONTINENT_PLATES: usize = 1;
 
 pub(super) fn build_plate_adjacency(
     adjacency: &Adjacency,
@@ -74,6 +75,7 @@ pub(super) fn pick_continental_plates(
         .map(|(pid, _)| plate_sizes[pid])
         .sum();
 
+    dissolve_tiny_continents(plate_adj, plate_sizes, &mut plate_continent, &mut total_land);
     absorb_interior_seas(plate_adj, plate_sizes, &mut plate_continent, &mut total_land, target);
 
     plate_continent
@@ -109,7 +111,9 @@ fn select_continent_seeds(
                 .fold(f64::INFINITY, f64::min);
             *rng = super::splitmix64(*rng);
             let jitter = 1.0 + (*rng as f64 / u64::MAX as f64) * 0.1;
-            let score = min_dist_sq * jitter;
+            // Penalise polar plates: y is the up-axis, so |y| > 0.7 means > ~45° latitude
+            let lat_penalty = 1.0 - 0.6 * (c.y.abs() - 0.7).max(0.0) / 0.3;
+            let score = min_dist_sq * jitter * lat_penalty;
             if score > best_score {
                 best_score = score;
                 best_pid = pid;
@@ -134,7 +138,18 @@ fn grow_continents(
     rng: &mut u64,
 ) -> Vec<Option<usize>> {
     let num_c = continent_seeds.len();
-    let per_continent_target = target / num_c;
+
+    // Randomized per-continent targets for size variation (3:1 ratio max)
+    let mut weights = Vec::with_capacity(num_c);
+    for _ in 0..num_c {
+        *rng = super::splitmix64(*rng);
+        weights.push(0.5 + (*rng as f64 / u64::MAX as f64));
+    }
+    let total_w: f64 = weights.iter().sum();
+    let per_continent_targets: Vec<usize> = weights
+        .iter()
+        .map(|w| ((w / total_w) * target as f64) as usize)
+        .collect();
 
     let mut plate_continent: Vec<Option<usize>> = vec![None; plate_count];
     let mut continent_area = vec![0usize; num_c];
@@ -150,7 +165,7 @@ fn grow_continents(
     while progress && total_land < target {
         progress = false;
         for c in 0..num_c {
-            if continent_area[c] >= per_continent_target || total_land >= target {
+            if continent_area[c] >= per_continent_targets[c] || total_land >= target {
                 continue;
             }
             let mut best_candidate = u32::MAX;
@@ -159,19 +174,17 @@ fn grow_continents(
                 if plate_continent[pid as usize].is_some() {
                     continue;
                 }
-                let mut touches_self = false;
-                let mut touches_other = false;
+                let mut self_count = 0u32;
+                let mut other_count = 0u32;
                 for &adj in &plate_adj[pid as usize] {
                     match plate_continent[adj as usize] {
-                        Some(ac) if ac == c => touches_self = true,
-                        Some(_) => {
-                            touches_other = true;
-                            break;
-                        }
+                        Some(ac) if ac == c => self_count += 1,
+                        Some(_) => other_count += 1,
                         None => {}
                     }
                 }
-                if touches_self && !touches_other {
+                // Allow claim if touches self and either no other contact or strong self-contact
+                if self_count > 0 && (other_count == 0 || self_count >= 2) {
                     *rng = super::splitmix64(*rng);
                     let score =
                         plate_sizes[pid as usize] as f64 + (*rng as f64 / u64::MAX as f64) * 0.5;
@@ -192,6 +205,60 @@ fn grow_continents(
     }
 
     plate_continent
+}
+
+fn dissolve_tiny_continents(
+    plate_adj: &[HashSet<u32>],
+    plate_sizes: &[usize],
+    plate_continent: &mut [Option<usize>],
+    total_land: &mut usize,
+) {
+    let plate_count = plate_adj.len();
+
+    // Count plates per continent
+    let mut continent_plate_count: std::collections::HashMap<usize, usize> =
+        std::collections::HashMap::new();
+    for c in plate_continent.iter().flatten() {
+        *continent_plate_count.entry(*c).or_insert(0) += 1;
+    }
+
+    for (&cid, &count) in &continent_plate_count {
+        if count >= MIN_CONTINENT_PLATES {
+            continue;
+        }
+
+        // Find nearest neighboring continent to merge into
+        let mut merge_target: Option<usize> = None;
+        for pid in 0..plate_count {
+            if plate_continent[pid] != Some(cid) {
+                continue;
+            }
+            for &adj in &plate_adj[pid] {
+                if let Some(other_c) = plate_continent[adj as usize] {
+                    if other_c != cid {
+                        merge_target = Some(other_c);
+                        break;
+                    }
+                }
+            }
+            if merge_target.is_some() {
+                break;
+            }
+        }
+
+        // Merge into neighbor or dissolve to oceanic
+        for pid in 0..plate_count {
+            if plate_continent[pid] != Some(cid) {
+                continue;
+            }
+            if let Some(target_c) = merge_target {
+                plate_continent[pid] = Some(target_c);
+            } else {
+                plate_continent[pid] = None;
+                *total_land -= plate_sizes[pid];
+            }
+        }
+    }
 }
 
 fn absorb_interior_seas(

@@ -1,5 +1,5 @@
 mod coarse_stage;
-mod cross_layout;
+pub mod cross_layout;
 mod decoder_stage;
 mod latent_stage;
 pub(crate) mod rasterize;
@@ -17,9 +17,15 @@ use log::info;
 use crate::world_generation::coarse_heightmap::CoarseHeightmap;
 use crate::world_generation::sphere_geometry::fibonnaci_spiral::SphericalFibonacci;
 
-/// Amplified terrain: 6 cube-face heightmaps at high resolution.
+/// Amplified terrain: 6 cube-face heightmaps at high resolution,
+/// plus the continuous cross-layout elevation grid for post-processing.
 pub struct AmplifiedTerrain {
     pub faces: [FaceHeightmap; 6],
+    /// Continuous cross-layout elevation (meters), row-major, native resolution.
+    /// Dimensions: cross_height × cross_width (e.g. 1536 × 2048).
+    pub cross_elevation: Vec<f32>,
+    pub cross_width: u32,
+    pub cross_height: u32,
 }
 
 #[derive(Debug)]
@@ -32,6 +38,26 @@ pub struct FaceHeightmap {
     pub precipitation: Vec<f32>,
     /// Pixels per side.
     pub resolution: u32,
+}
+
+impl AmplifiedTerrain {
+    /// Resample face elevation data from the cross-layout grid.
+    /// Call this after modifying `cross_elevation` (e.g. after river networking)
+    /// to propagate changes to the per-face data.
+    pub fn resample_faces_from_cross(&mut self) {
+        let cross = cross_layout::CrossLayout::new(COARSE_FACE_RESOLUTION);
+        let faces = sample_faces_from_cross(
+            &self.cross_elevation,
+            self.cross_width,
+            self.cross_height,
+            &cross,
+            TARGET_FACE_RESOLUTION,
+        );
+        let faces: [FaceHeightmap; 6] = faces.try_into().unwrap();
+        for i in 0..6 {
+            self.faces[i].elevation = faces[i].elevation.clone();
+        }
+    }
 }
 
 /// Target resolution per cube face for the diffusion output.
@@ -180,6 +206,9 @@ pub fn amplify(
     session::log_to_file(&format!("[pipeline] === total: {:.3}s ===", t_total.elapsed().as_secs_f64()));
     Ok(AmplifiedTerrain {
         faces: faces.try_into().unwrap(),
+        cross_elevation: elevation_cross,
+        cross_width: native_w,
+        cross_height: native_h,
     })
 }
 
@@ -797,7 +826,7 @@ mod tests {
         let fib = SphericalFibonacci::new(10_000);
         let points = fib.all_points();
         let del = SphericalDelaunay::from_points(&points);
-        let assignment = assign_plates(&points, &fib, &del, 20, seed);
+        let assignment = assign_plates(&points, &fib, &del, 40, seed);
         let adjacency = Adjacency::from_delaunay(points.len(), &del);
         let coarse = coarse_heightmap::generate(&points, &assignment, &adjacency, seed);
 
@@ -938,7 +967,7 @@ mod tests {
         let fib = SphericalFibonacci::new(10_000);
         let points = fib.all_points();
         let del = SphericalDelaunay::from_points(&points);
-        let assignment = assign_plates(&points, &fib, &del, 20, seed);
+        let assignment = assign_plates(&points, &fib, &del, 40, seed);
         let adjacency = Adjacency::from_delaunay(points.len(), &del);
         let coarse = coarse_heightmap::generate(&points, &assignment, &adjacency, seed);
 

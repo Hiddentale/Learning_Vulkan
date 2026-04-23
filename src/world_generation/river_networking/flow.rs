@@ -1,0 +1,148 @@
+const D8_DR: [i32; 8] = [-1, 1, 0, 0, -1, -1, 1, 1];
+const D8_DC: [i32; 8] = [0, 0, -1, 1, -1, 1, -1, 1];
+const D8_DIST: [f32; 8] = [1.0, 1.0, 1.0, 1.0, 1.4142, 1.4142, 1.4142, 1.4142];
+
+/// Compute D8 flow direction for each pixel.
+/// Returns (flow_dir, is_sink) where flow_dir[i] is 0-7 neighbor index.
+pub(super) fn d8_flow(elevation: &[f32], w: usize, h: usize) -> (Vec<u8>, Vec<bool>) {
+    let n = w * h;
+    let mut flow_dir = vec![u8::MAX; n];
+    let mut is_sink = vec![false; n];
+
+    for r in 0..h {
+        for c in 0..w {
+            let idx = r * w + c;
+            let e = elevation[idx];
+
+            if e.is_nan() || e <= 0.0 {
+                is_sink[idx] = true;
+                continue;
+            }
+
+            let mut best_k = u8::MAX;
+            let mut best_slope = f32::NEG_INFINITY;
+
+            for k in 0..8u8 {
+                let nr = r as i32 + D8_DR[k as usize];
+                let nc = c as i32 + D8_DC[k as usize];
+                if nr < 0 || nr >= h as i32 || nc < 0 || nc >= w as i32 {
+                    continue;
+                }
+                let nidx = nr as usize * w + nc as usize;
+                let ne = elevation[nidx];
+
+                // Prefer routing into ocean
+                if ne.is_nan() || ne <= 0.0 {
+                    best_k = k;
+                    best_slope = f32::INFINITY;
+                    break;
+                }
+
+                let slope = (e - ne) / D8_DIST[k as usize];
+                if slope > best_slope {
+                    best_slope = slope;
+                    best_k = k;
+                }
+            }
+
+            if best_slope <= 0.0 {
+                is_sink[idx] = true;
+            } else {
+                flow_dir[idx] = best_k;
+            }
+        }
+    }
+
+    (flow_dir, is_sink)
+}
+
+/// Compute flow accumulation by processing cells from high to low.
+pub(super) fn accumulate(
+    elevation: &[f32],
+    flow_dir: &[u8],
+    is_sink: &[bool],
+    w: usize,
+    h: usize,
+) -> Vec<f32> {
+    let n = w * h;
+    let mut accum = vec![0.0f32; n];
+
+    // Collect valid (land) cells
+    let mut order: Vec<usize> = (0..n)
+        .filter(|&i| !elevation[i].is_nan() && elevation[i] > 0.0)
+        .collect();
+
+    // Sort descending by elevation
+    order.sort_by(|&a, &b| {
+        elevation[b]
+            .partial_cmp(&elevation[a])
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    // Initialize valid cells with 1.0
+    for &i in &order {
+        accum[i] = 1.0;
+    }
+
+    // Route flow downhill
+    for &i in &order {
+        if is_sink[i] || flow_dir[i] == u8::MAX {
+            continue;
+        }
+
+        let r = i / w;
+        let c = i % w;
+        let k = flow_dir[i] as usize;
+        let nr = (r as i32 + D8_DR[k]) as usize;
+        let nc = (c as i32 + D8_DC[k]) as usize;
+        let ni = nr * w + nc;
+
+        accum[ni] += accum[i];
+    }
+
+    accum
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn simple_slope_flows_downhill() {
+        // 3x3 grid sloping from top-left to bottom-right
+        let elev = vec![
+            9.0, 8.0, 7.0,
+            6.0, 5.0, 4.0,
+            3.0, 2.0, 1.0,
+        ];
+        let (flow_dir, is_sink) = d8_flow(&elev, 3, 3);
+
+        // Bottom-right (1.0) is the lowest land cell
+        // It should be a sink or flow to edge
+        assert!(flow_dir[0] != u8::MAX, "top-left should flow somewhere");
+        assert!(is_sink[8] || flow_dir[8] != u8::MAX); // lowest cell
+    }
+
+    #[test]
+    fn ocean_cells_are_sinks() {
+        let elev = vec![
+            -100.0, 5.0,
+            -100.0, 3.0,
+        ];
+        let (_, is_sink) = d8_flow(&elev, 2, 2);
+        assert!(is_sink[0], "ocean should be sink");
+        assert!(is_sink[2], "ocean should be sink");
+    }
+
+    #[test]
+    fn accumulation_increases_downstream() {
+        // Simple 1D slope
+        let elev = vec![
+            5.0, 4.0, 3.0, 2.0, 1.0,
+        ];
+        let (flow_dir, is_sink) = d8_flow(&elev, 5, 1);
+        let accum = accumulate(&elev, &flow_dir, &is_sink, 5, 1);
+        // Each cell flows right, so accumulation should increase
+        assert!(accum[4] >= accum[0], "downstream should have more accumulation");
+    }
+}

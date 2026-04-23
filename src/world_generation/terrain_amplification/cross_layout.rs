@@ -38,7 +38,7 @@ const CROSS_FACE_MAP: [(u32, u32, i32); 6] = [
     (1, 3, 5),  // -Z at row 1, col 3
 ];
 
-pub(super) struct CrossLayout {
+pub struct CrossLayout {
     pub face_size: u32,
     pub width: u32,  // 4 * face_size
     pub height: u32, // 3 * face_size
