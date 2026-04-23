@@ -505,38 +505,43 @@ fn combine_cross_elevation(
 }
 
 /// Sample 6 face heightmaps from the cross-grid elevation using blend-weighted
-/// projection. Matches Python sphere_export._sample_cubesphere_strip.
+/// projection. Uses _cube_face_directions (sphere_export convention) for sphere
+/// directions, matching the Python pipeline exactly.
 fn sample_faces_from_cross(
     elevation: &[f32], nat_w: u32, nat_h: u32,
     cross: &cross_layout::CrossLayout,
     face_res: u32,
 ) -> Vec<FaceHeightmap> {
-    use crate::voxel::sphere::{self, Face};
-
-    let faces_enum = [Face::PosX, Face::NegX, Face::PosY, Face::NegY, Face::PosZ, Face::NegZ];
     let fs = cross.face_size as f64;
     let s = (cross.face_size - 1).max(1) as f64;
-    let scale = nat_w as f64 / cross.width as f64; // native/coarse ratio
+    let scale = nat_w as f64 / cross.width as f64;
     let blend_power = 20.0f64;
 
     let mut all_faces = Vec::with_capacity(6);
 
-    for (fi, &face) in faces_enum.iter().enumerate() {
-        let (tu, tv, normal) = sphere::face_basis(face);
-        let tu = DVec3::new(tu.x as f64, tu.y as f64, tu.z as f64);
-        let tv = DVec3::new(tv.x as f64, tv.y as f64, tv.z as f64);
-        let n = DVec3::new(normal.x as f64, normal.y as f64, normal.z as f64);
-
+    for fi in 0..6usize {
         let mut elev = vec![0.0f32; (face_res * face_res) as usize];
 
         for r in 0..face_res {
             for c in 0..face_res {
-                let u = (c as f64 + 0.5) / face_res as f64 * 2.0 - 1.0;
-                let v = (r as f64 + 0.5) / face_res as f64 * 2.0 - 1.0;
-                let dir = (tu * u + tv * v + n).normalize();
-                let x = dir.x;
-                let y = dir.y;
-                let z = dir.z;
+                // _cube_face_directions: linspace(0,1,res), same mapping as sphere_export
+                let vr = r as f64 / (face_res - 1).max(1) as f64;
+                let uc = c as f64 / (face_res - 1).max(1) as f64;
+                let (v_param, u_param) = if fi == 0 || fi == 1 || fi == 4 || fi == 5 {
+                    (1.0 - vr, uc)
+                } else {
+                    (vr, uc)
+                };
+                let (x, y, z) = match fi {
+                    0 => (1.0, 2.0 * v_param - 1.0, 1.0 - 2.0 * u_param),
+                    1 => (-1.0, 2.0 * v_param - 1.0, 2.0 * u_param - 1.0),
+                    2 => (2.0 * u_param - 1.0, 1.0, 2.0 * v_param - 1.0),
+                    3 => (2.0 * u_param - 1.0, -1.0, -(2.0 * v_param - 1.0)),
+                    4 => (2.0 * u_param - 1.0, 2.0 * v_param - 1.0, 1.0),
+                    _ => (1.0 - 2.0 * u_param, 2.0 * v_param - 1.0, -1.0),
+                };
+                let len = (x * x + y * y + z * z).sqrt();
+                let (x, y, z) = (x / len, y / len, z / len);
 
                 // Blend-weighted sampling from all 6 projections
                 let components = [x, -x, y, -y, z, -z];
@@ -863,5 +868,282 @@ mod tests {
             let t = ((elev - 3000.0) / 3000.0).min(1.0);
             (0.70 + t * 0.25, 0.47 + t * 0.48, 0.35 + t * 0.60) // peaks → snow
         }
+    }
+
+    /// Run with: cargo test --release -- amplify_obj_export --ignored --nocapture
+    ///
+    /// Exports 6 face elevation TIFFs + JSON sidecar, then calls the Python
+    /// faces_to_obj tool to build the OBJ mesh (matching the reference pipeline).
+    #[test]
+    #[ignore]
+    fn amplify_obj_export() {
+        use std::io::Write;
+
+        let seed = 42u64;
+        let fib = SphericalFibonacci::new(10_000);
+        let points = fib.all_points();
+        let del = SphericalDelaunay::from_points(&points);
+        let assignment = assign_plates(&points, &fib, &del, 20, seed);
+        let adjacency = Adjacency::from_delaunay(points.len(), &del);
+        let coarse = coarse_heightmap::generate(&points, &assignment, &adjacency, seed);
+
+        let model_dir = std::path::Path::new("data/models/terrain-diffusion-30m");
+        let terrain = amplify(&coarse, &points, &fib, seed, model_dir)
+            .expect("amplification failed");
+
+        let res = terrain.faces[0].resolution;
+        let face_names = ["pos_x", "neg_x", "pos_y", "neg_y", "pos_z", "neg_z"];
+        let out_dir = std::path::Path::new("src/world_generation/terrain_amplification");
+
+        // Write raw float32 elevation files per face
+        let mut face_meta = String::from("{\n");
+        for (i, name) in face_names.iter().enumerate() {
+            let fh = &terrain.faces[i];
+            let path = out_dir.join(format!("planet_face_{name}.bin"));
+            let bytes: Vec<u8> = fh.elevation.iter()
+                .flat_map(|v| v.to_le_bytes())
+                .collect();
+            std::fs::write(&path, &bytes).expect("failed to write face bin");
+            let emin = fh.elevation.iter().cloned().fold(f32::INFINITY, f32::min);
+            let emax = fh.elevation.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+            if i > 0 { face_meta.push_str(",\n"); }
+            face_meta.push_str(&format!(
+                "    \"{name}\": {{\"file\": \"planet_face_{name}.bin\", \"format\": \"raw_f32\", \"resolution\": {res}, \"elev_min\": {emin}, \"elev_max\": {emax}}}"
+            ));
+        }
+        face_meta.push_str("\n  }");
+
+        // Write JSON sidecar
+        let json_path = out_dir.join("planet.json");
+        let json = format!(
+            "{{\n  \"seed\": {seed},\n  \"diameter_m\": 2000.0,\n  \"face_resolution\": {res},\n  \"faces\": {face_meta}\n}}\n"
+        );
+        std::fs::write(&json_path, &json).expect("failed to write JSON");
+        println!("\n  Wrote face data: 6 × {}×{} float32 + {}", res, res, json_path.display());
+
+        // Fix border seam elevations using sphere_export edge table
+        // (face data uses _cube_face_directions, NOT face_basis)
+        let mut elev_grids: Vec<Vec<f32>> = terrain.faces.iter()
+            .map(|f| f.elevation.clone())
+            .collect();
+
+        // sphere_export edge table: (face_a, border_a, face_b, border_b, reversed)
+        let se_edges: [(usize, u8, usize, u8, bool); 12] = [
+            (0, 0, 2, 1, true),  (0, 2, 3, 1, false),
+            (0, 3, 4, 1, false), (0, 1, 5, 3, false),
+            (1, 0, 2, 3, false), (1, 2, 3, 3, true),
+            (1, 3, 5, 1, false), (1, 1, 4, 3, false),
+            (2, 0, 5, 0, true),  (2, 2, 4, 0, false),
+            (3, 0, 4, 2, false), (3, 2, 5, 2, true),
+        ];
+
+        // Feathered correction: full at border, fading over `feather` pixels
+        let feather = 8u32;
+        for &(fa, ba, fb, bb, rev) in &se_edges {
+            // Compute mismatch at border
+            let mut mismatch = vec![0.0f32; res as usize];
+            for i in 0..res {
+                let j = if rev { res - 1 - i } else { i };
+                let (ra, ca) = border_pixel(ba, 0, i, res);
+                let (rb, cb) = border_pixel(bb, 0, j, res);
+                let ea = elev_grids[fa][(ra * res + ca) as usize];
+                let eb = elev_grids[fb][(rb * res + cb) as usize];
+                mismatch[i as usize] = ea - eb;
+            }
+
+            // Apply feathered correction to both faces
+            for depth in 0..feather.min(res / 4) {
+                let alpha = 1.0 - depth as f32 / feather as f32;
+                for i in 0..res {
+                    let j = if rev { res - 1 - i } else { i };
+                    let (ra, ca) = border_pixel(ba, depth, i, res);
+                    let (rb, cb) = border_pixel(bb, depth, j, res);
+                    let corr = mismatch[i as usize] * 0.5 * alpha;
+                    elev_grids[fa][(ra * res + ca) as usize] -= corr;
+                    elev_grids[fb][(rb * res + cb) as usize] += corr;
+                }
+            }
+        }
+
+        // Build all vertices (position + color), then merge shared border verts
+        let ply_path = out_dir.join("amplified_planet.ply");
+        let radius = 1.0f64;
+        let elev_exaggeration = 0.00003;
+
+        let faces_enum = [
+            crate::voxel::sphere::Face::PosX, crate::voxel::sphere::Face::NegX,
+            crate::voxel::sphere::Face::PosY, crate::voxel::sphere::Face::NegY,
+            crate::voxel::sphere::Face::PosZ, crate::voxel::sphere::Face::NegZ,
+        ];
+
+        // Generate all vertices
+        let total_verts = (6 * res * res) as usize;
+        let mut positions: Vec<[f32; 3]> = Vec::with_capacity(total_verts);
+        let mut colors: Vec<[u8; 3]> = Vec::with_capacity(total_verts);
+
+        for fi in 0..6usize {
+            for r in 0..res {
+                for c in 0..res {
+                    // _cube_face_directions: same mapping used by sample_faces_from_cross
+                    let vr = r as f64 / (res - 1).max(1) as f64;
+                    let uc = c as f64 / (res - 1).max(1) as f64;
+                    let (v_param, u_param) = if fi == 0 || fi == 1 || fi == 4 || fi == 5 {
+                        (1.0 - vr, uc)
+                    } else {
+                        (vr, uc)
+                    };
+                    let (x, y, z) = match fi {
+                        0 => (1.0, 2.0 * v_param - 1.0, 1.0 - 2.0 * u_param),
+                        1 => (-1.0, 2.0 * v_param - 1.0, 2.0 * u_param - 1.0),
+                        2 => (2.0 * u_param - 1.0, 1.0, 2.0 * v_param - 1.0),
+                        3 => (2.0 * u_param - 1.0, -1.0, -(2.0 * v_param - 1.0)),
+                        4 => (2.0 * u_param - 1.0, 2.0 * v_param - 1.0, 1.0),
+                        _ => (1.0 - 2.0 * u_param, 2.0 * v_param - 1.0, -1.0),
+                    };
+                    let len = (x * x + y * y + z * z).sqrt();
+                    let dir = DVec3::new(x / len, y / len, z / len);
+
+                    let elev = elev_grids[fi][(r * res + c) as usize];
+                    let displaced = radius + elev as f64 * elev_exaggeration;
+
+                    positions.push([
+                        (dir.x * displaced) as f32,
+                        (dir.y * displaced) as f32,
+                        (dir.z * displaced) as f32,
+                    ]);
+                    let (cr, cg, cb) = elevation_color_meters(elev);
+                    colors.push([
+                        (cr * 255.0) as u8,
+                        (cg * 255.0) as u8,
+                        (cb * 255.0) as u8,
+                    ]);
+                }
+            }
+        }
+
+        // Merge border vertices by direction hash
+        let mut remap: Vec<u32> = (0..total_verts as u32).collect();
+        let mut dir_map: std::collections::HashMap<(i64, i64, i64), u32> = std::collections::HashMap::new();
+
+        let n_face = (res * res) as usize;
+        for face_id in 0..6 {
+            let base = face_id * n_face;
+            for i in 0..res as usize {
+                let border_indices = [
+                    base + i,                                     // top row
+                    base + (res as usize - 1) * res as usize + i, // bottom row
+                    base + i * res as usize,                      // left col
+                    base + i * res as usize + (res as usize - 1), // right col
+                ];
+                for &idx in &border_indices {
+                    let p = positions[idx];
+                    let len = (p[0] as f64 * p[0] as f64 + p[1] as f64 * p[1] as f64 + p[2] as f64 * p[2] as f64).sqrt();
+                    let key = (
+                        (p[0] as f64 / len * 1e4).round() as i64,
+                        (p[1] as f64 / len * 1e4).round() as i64,
+                        (p[2] as f64 / len * 1e4).round() as i64,
+                    );
+                    if let Some(&canonical) = dir_map.get(&key) {
+                        // Average positions for smooth seam
+                        let cp = &positions[canonical as usize];
+                        positions[canonical as usize] = [
+                            (cp[0] + p[0]) * 0.5,
+                            (cp[1] + p[1]) * 0.5,
+                            (cp[2] + p[2]) * 0.5,
+                        ];
+                        remap[idx] = canonical;
+                    } else {
+                        dir_map.insert(key, idx as u32);
+                    }
+                }
+            }
+        }
+
+        // Build triangle list with remapped indices
+        let nf_total = 6 * 2 * (res - 1) * (res - 1);
+        let mut tris: Vec<[i32; 3]> = Vec::with_capacity(nf_total as usize);
+        for fi in 0..6u32 {
+            let offset = fi * res * res;
+            for r in 0..(res - 1) {
+                for c in 0..(res - 1) {
+                    let v00 = remap[(offset + r * res + c) as usize] as i32;
+                    let v01 = remap[(offset + r * res + c + 1) as usize] as i32;
+                    let v10 = remap[(offset + (r + 1) * res + c) as usize] as i32;
+                    let v11 = remap[(offset + (r + 1) * res + c + 1) as usize] as i32;
+                    tris.push([v00, v10, v01]);
+                    tris.push([v01, v10, v11]);
+                }
+            }
+        }
+
+        // Write binary PLY
+        let mut file = std::fs::File::create(&ply_path).expect("failed to create PLY");
+        let nv = total_verts;
+        let nf = tris.len();
+        write!(file, "ply\nformat binary_little_endian 1.0\n\
+            element vertex {nv}\nproperty float x\nproperty float y\nproperty float z\n\
+            property uchar red\nproperty uchar green\nproperty uchar blue\n\
+            element face {nf}\nproperty list uchar int vertex_indices\nend_header\n").unwrap();
+
+        for i in 0..nv {
+            file.write_all(&positions[i][0].to_le_bytes()).unwrap();
+            file.write_all(&positions[i][1].to_le_bytes()).unwrap();
+            file.write_all(&positions[i][2].to_le_bytes()).unwrap();
+            file.write_all(&colors[i]).unwrap();
+        }
+        for tri in &tris {
+            file.write_all(&[3u8]).unwrap();
+            file.write_all(&tri[0].to_le_bytes()).unwrap();
+            file.write_all(&tri[1].to_le_bytes()).unwrap();
+            file.write_all(&tri[2].to_le_bytes()).unwrap();
+        }
+
+        drop(file);
+        let merged = remap.iter().enumerate().filter(|(i, &r)| r != *i as u32).count();
+        let size = std::fs::metadata(&ply_path).unwrap().len() as f64 / 1e6;
+        println!("\n  Wrote {} ({:.1} MB)", ply_path.display(), size);
+        println!("  {} vertices ({} merged), {} faces, {}x{} per face\n",
+            nv, merged, nf, res, res);
+
+        // Analyze border continuity using sphere_export edge table
+        let se_edges: [(usize, u8, usize, u8, bool); 12] = [
+            (0, 0, 2, 1, true),  // pos_x top <-> pos_y right
+            (0, 2, 3, 1, false), // pos_x bottom <-> neg_y right
+            (0, 3, 4, 1, false), // pos_x left <-> pos_z right
+            (0, 1, 5, 3, false), // pos_x right <-> neg_z left
+            (1, 0, 2, 3, false), // neg_x top <-> pos_y left
+            (1, 2, 3, 3, true),  // neg_x bottom <-> neg_y left
+            (1, 3, 5, 1, false), // neg_x left <-> neg_z right
+            (1, 1, 4, 3, false), // neg_x right <-> pos_z left
+            (2, 0, 5, 0, true),  // pos_y top <-> neg_z top
+            (2, 2, 4, 0, false), // pos_y bottom <-> pos_z top
+            (3, 0, 4, 2, false), // neg_y top <-> pos_z bottom
+            (3, 2, 5, 2, true),  // neg_y bottom <-> neg_z bottom
+        ];
+        println!("\n  === Border continuity (sphere_export edges) ===");
+        for &(fa, ba, fb, bb, rev) in &se_edges {
+            let mut max_diff = 0.0f32;
+            let mut sum_diff = 0.0f64;
+            for i in 0..res {
+                let j = if rev { res - 1 - i } else { i };
+                let (ra, ca) = border_pixel(ba, 0, i, res);
+                let (rb, cb) = border_pixel(bb, 0, j, res);
+                let ea = elev_grids[fa][(ra * res + ca) as usize];
+                let eb = elev_grids[fb][(rb * res + cb) as usize];
+                let d = (ea - eb).abs();
+                max_diff = max_diff.max(d);
+                sum_diff += d as f64;
+            }
+            let mean_diff = sum_diff / res as f64;
+            let fa_name = face_names[fa];
+            let fb_name = face_names[fb];
+            println!("  {fa_name}:{ba} <-> {fb_name}:{bb} rev={rev}: max={max_diff:.0}m mean={mean_diff:.0}m");
+        }
+
+        // Clean up bin files
+        for name in &face_names {
+            let _ = std::fs::remove_file(out_dir.join(format!("planet_face_{name}.bin")));
+        }
+        let _ = std::fs::remove_file(&json_path);
     }
 }
