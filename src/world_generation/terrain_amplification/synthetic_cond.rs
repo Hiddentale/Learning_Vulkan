@@ -134,21 +134,32 @@ impl SyntheticConditioner {
         Self { noises, noise_quantiles }
     }
 
-    /// Generate 5-channel synthetic conditioning for a face, merged with coarse data.
-    /// Returns (5 * S * S) flat array: [elev_sqrt, temp, temp_std, precip, precip_cv].
+    /// Generate 5-channel synthetic conditioning for a tile within a grid.
+    /// The grid can be a face or a cross layout — uses (tx, ty) as tile origin
+    /// and grid.resolution as row width.
+    /// Returns (5 * tile_h * tile_w) flat array: [elev_sqrt, temp, temp_std, precip, precip_cv].
     ///
     /// Channels 0 (elevation), 1 (temperature), 3 (precipitation) are taken from
     /// the coarse heightmap. Channels 2 (temp_std) and 4 (precip_cv) come from
     /// the synthetic distribution.
-    pub fn generate_conditioning(&self, face: &FaceGrid, tx: u32, ty: u32) -> Vec<f32> {
-        let s = face.resolution as usize;
-        let pixels = s * s;
+    pub fn generate_conditioning(
+        &self,
+        face: &FaceGrid,
+        tx: u32, ty: u32,
+        tile_w: u32, tile_h: u32,
+    ) -> Vec<f32> {
+        let tw = tile_w as usize;
+        let th = tile_h as usize;
+        let grid_w = face.resolution as usize;
+        let grid_h = face.height as usize;
+        let pixels = tw * th;
         let mut raw = vec![[0.0f64; 5]; pixels];
 
-        // Sample synthetic noise for all 5 channels
-        for r in 0..s {
-            for c in 0..s {
-                let px = r * s + c;
+        // Sample synthetic noise for all 5 channels using cross-layout coordinates.
+        // This gives continuous noise across the entire cross.
+        for r in 0..th {
+            for c in 0..tw {
+                let px = r * tw + c;
                 let x = (tx as f64 + c as f64) * 1.0;
                 let y = (ty as f64 + r as f64) * 1.0;
 
@@ -164,18 +175,15 @@ impl SyntheticConditioner {
         }
 
         // Override channels 0, 1, 3 with our coarse heightmap data
-        for r in 0..s {
-            for c in 0..s {
-                let fy = (ty as usize + r).min(face.resolution as usize - 1);
-                let fx = (tx as usize + c).min(face.resolution as usize - 1);
-                let src = fy * face.resolution as usize + fx;
-                let px = r * s + c;
+        for r in 0..th {
+            for c in 0..tw {
+                let gy = (ty as usize + r).min(grid_h - 1);
+                let gx = (tx as usize + c).min(grid_w - 1);
+                let src = gy * grid_w + gx;
+                let px = r * tw + c;
 
-                // Elevation: use our coarse data (in km → convert to m for finalize)
                 raw[px][0] = face.elevation[src] as f64 * 1000.0;
-                // Temperature: use our coarse data
                 raw[px][1] = face.temperature[src] as f64;
-                // Precipitation: use our coarse data
                 raw[px][3] = face.precipitation[src] as f64;
             }
         }
@@ -183,7 +191,7 @@ impl SyntheticConditioner {
         // Finalize: post-processing matching SyntheticMapFactory
         finalize(&mut raw);
 
-        // Pack into flat (5, S, S) output
+        // Pack into flat (5, tile_h, tile_w) output
         let mut out = vec![0.0f32; 5 * pixels];
         for px in 0..pixels {
             for ch in 0..5 {

@@ -1,4 +1,5 @@
 mod coarse_stage;
+mod cross_layout;
 mod decoder_stage;
 mod latent_stage;
 pub(crate) mod rasterize;
@@ -38,9 +39,10 @@ pub struct FaceHeightmap {
 const TARGET_FACE_RESOLUTION: u32 = 556;
 
 /// Coarse conditioning resolution. At 64, fills the model tile exactly (no padding).
-/// 10,000 Fibonacci points give ~1,667 per face → ~41 effective pixels per edge,
-/// so 64×64 is well-sampled by IDW with 6 neighbors.
 const COARSE_FACE_RESOLUTION: u32 = 64;
+
+/// Decoder model upscale ratio: 512 output / 64 latent = 8.
+const LATENT_COMPRESSION: u32 = 8;
 
 /// Run the full terrain-diffusion amplification pipeline.
 ///
@@ -56,60 +58,79 @@ pub fn amplify(
     let t_total = std::time::Instant::now();
     session::log_to_file("[pipeline] === amplify() start ===");
 
+    // Cross layout: 3×4 faces at coarse resolution.
+    // ALL stages run on this single continuous grid so tiles overlap across
+    // face boundaries, matching the Python sphere_export pipeline.
+    let cross = cross_layout::CrossLayout::new(COARSE_FACE_RESOLUTION);
+    let cross_w = cross.width;
+    let cross_h = cross.height;
+    let native_w = cross_w * LATENT_COMPRESSION;
+    let native_h = cross_h * LATENT_COMPRESSION;
+    session::log_to_file(&format!(
+        "[pipeline] cross: coarse {}×{}, native {}×{} (face_size={})",
+        cross_w, cross_h, native_w, native_h, cross.face_size
+    ));
+
     let t0 = std::time::Instant::now();
-    let face_grids = rasterize::rasterize(coarse, points, fibonacci, COARSE_FACE_RESOLUTION);
-    session::log_to_file(&format!("[pipeline] rasterize: {:.3}s", t0.elapsed().as_secs_f64()));
+    let cross_grid = rasterize::rasterize_cross(coarse, points, &cross);
+    session::log_to_file(&format!("[pipeline] rasterize cross: {:.3}s", t0.elapsed().as_secs_f64()));
 
     let t0 = std::time::Instant::now();
     let synth_cond = synthetic_cond::SyntheticConditioner::new(seed);
     session::log_to_file(&format!("[pipeline] synthetic conditioner: {:.3}s", t0.elapsed().as_secs_f64()));
 
-    let mut coarse_outputs = Vec::with_capacity(6);
-    let mut latent_outputs = Vec::with_capacity(6);
-
-    // Stage 1: load coarse model once, run all 6 faces
+    // Stage 1: coarse model on the full cross layout
+    let coarse_cross;
     {
+        let t0 = std::time::Instant::now();
         let mut session = session::load_model(model_dir, "coarse_model")
             .context("loading coarse model")?;
-        for (i, grid) in face_grids.iter().enumerate() {
-            let t0 = std::time::Instant::now();
-            let padded = rasterize::pad_to_size(grid, 64);
-            coarse_outputs.push(coarse_stage::run(&mut session, &padded, &synth_cond, seed)?);
-            session::log_to_file(&format!("[pipeline] coarse face {i}: {:.3}s", t0.elapsed().as_secs_f64()));
-        }
+        coarse_cross = coarse_stage::run(&mut session, &cross_grid, &synth_cond, seed)?;
+        session::log_to_file(&format!("[pipeline] coarse cross: {:.3}s", t0.elapsed().as_secs_f64()));
     }
 
-    // Stage 2: load latent model once, run all 6 faces
+    // Stage 2: latent model on the full cross layout
+    let latent_cross;
     {
+        let t0 = std::time::Instant::now();
         let mut session = session::load_model(model_dir, "base_model")
             .context("loading base model")?;
-        for (i, coarse_out) in coarse_outputs.iter().enumerate() {
-            let t0 = std::time::Instant::now();
-            latent_outputs.push(latent_stage::run(&mut session, coarse_out, 64, 64, seed)?);
-            session::log_to_file(&format!("[pipeline] latent face {i}: {:.3}s", t0.elapsed().as_secs_f64()));
-        }
+        latent_cross = latent_stage::run(&mut session, &coarse_cross, cross_w, cross_h, seed)?;
+        session::log_to_file(&format!("[pipeline] latent cross: {:.3}s", t0.elapsed().as_secs_f64()));
     }
 
-    // Stage 3: load decoder model once, run all 6 faces
-    let mut faces: Vec<FaceHeightmap> = Vec::with_capacity(6);
+    // Stage 3: decoder model on the full cross layout at native resolution
+    let residual_cross;
     {
+        let t0 = std::time::Instant::now();
         let mut session = session::load_model(model_dir, "decoder_model")
             .context("loading decoder model")?;
-        for (i, (coarse_out, latent_out)) in
-            coarse_outputs.iter().zip(&latent_outputs).enumerate()
-        {
-            let t0 = std::time::Instant::now();
-            let residual = decoder_stage::run(
-                &mut session, latent_out, 64, TARGET_FACE_RESOLUTION, seed,
-            )?;
-            faces.push(combine_output(coarse_out, latent_out, &residual, TARGET_FACE_RESOLUTION));
-            session::log_to_file(&format!("[pipeline] decoder face {i}: {:.3}s", t0.elapsed().as_secs_f64()));
-        }
+        residual_cross = decoder_stage::run(
+            &mut session, &latent_cross,
+            cross_w, cross_h,
+            native_w, native_h,
+            seed,
+        )?;
+        session::log_to_file(&format!("[pipeline] decoder cross: {:.3}s", t0.elapsed().as_secs_f64()));
     }
-    // Seam blending: smooth elevation discontinuities at cube face borders
-    blend_face_seams(&mut faces);
-    session::log_to_file(&format!("[pipeline] === total: {:.3}s ===", t_total.elapsed().as_secs_f64()));
 
+    // Combine elevation on the cross grid: laplacian denoise + decode + sqrt reversal
+    let t0 = std::time::Instant::now();
+    let elevation_cross = combine_cross_elevation(
+        &latent_cross, cross_w, cross_h,
+        &residual_cross, native_w, native_h,
+    );
+    session::log_to_file(&format!("[pipeline] combine elevation: {:.3}s", t0.elapsed().as_secs_f64()));
+
+    // Sample per-face output from the cross grid using blend-weighted projection
+    let t0 = std::time::Instant::now();
+    let faces = sample_faces_from_cross(
+        &elevation_cross, native_w, native_h,
+        &cross, TARGET_FACE_RESOLUTION,
+    );
+    session::log_to_file(&format!("[pipeline] face sampling: {:.3}s", t0.elapsed().as_secs_f64()));
+
+    session::log_to_file(&format!("[pipeline] === total: {:.3}s ===", t_total.elapsed().as_secs_f64()));
     Ok(AmplifiedTerrain {
         faces: faces.try_into().unwrap(),
     })
@@ -442,6 +463,202 @@ fn bilinear_upsample(src: &[f32], src_res: u32, dst_res: u32) -> Vec<f32> {
                 + v11 as f64 * fx * fy;
 
             dst[(r * dst_res + c) as usize] = v as f32;
+        }
+    }
+    dst
+}
+
+/// Combine latent + decoder residual into elevation on the cross grid.
+/// Matches Python _compute_elev: laplacian_denoise + laplacian_decode + sqrt reversal.
+fn combine_cross_elevation(
+    latent: &[f32], lat_w: u32, lat_h: u32,
+    residual: &[f32], nat_w: u32, nat_h: u32,
+) -> Vec<f32> {
+    let lat_px = (lat_w * lat_h) as usize;
+    let nat_px = (nat_w * nat_h) as usize;
+
+    // Extract latent channel 4 (low-frequency elevation) and denormalize
+    let lowfreq_raw = &latent[4 * lat_px..5 * lat_px];
+    let mut lowfreq = vec![0.0f32; lat_px];
+    for i in 0..lat_px {
+        lowfreq[i] = lowfreq_raw[i] * LOWFREQ_STD + LOWFREQ_MEAN;
+    }
+
+    // Denormalize residual
+    let residual_denorm: Vec<f32> = residual.iter()
+        .map(|&v| v * RESIDUAL_STD + RESIDUAL_MEAN)
+        .collect();
+
+    // Laplacian denoise + decode on the cross grid
+    let denoised = laplacian_denoise_rect(
+        &residual_denorm, nat_w, nat_h,
+        &lowfreq, lat_w, lat_h,
+        LAPLACIAN_SIGMA,
+    );
+    let elev_sqrt = laplacian_decode_rect(
+        &residual_denorm, nat_w, nat_h,
+        &denoised, lat_w, lat_h,
+    );
+
+    // Reverse sqrt encoding: sign(x) * x²
+    elev_sqrt.iter().map(|&es| es.signum() * es * es).collect()
+}
+
+/// Sample 6 face heightmaps from the cross-grid elevation using blend-weighted
+/// projection. Matches Python sphere_export._sample_cubesphere_strip.
+fn sample_faces_from_cross(
+    elevation: &[f32], nat_w: u32, nat_h: u32,
+    cross: &cross_layout::CrossLayout,
+    face_res: u32,
+) -> Vec<FaceHeightmap> {
+    use crate::voxel::sphere::{self, Face};
+
+    let faces_enum = [Face::PosX, Face::NegX, Face::PosY, Face::NegY, Face::PosZ, Face::NegZ];
+    let fs = cross.face_size as f64;
+    let s = (cross.face_size - 1).max(1) as f64;
+    let scale = nat_w as f64 / cross.width as f64; // native/coarse ratio
+    let blend_power = 20.0f64;
+
+    let mut all_faces = Vec::with_capacity(6);
+
+    for (fi, &face) in faces_enum.iter().enumerate() {
+        let (tu, tv, normal) = sphere::face_basis(face);
+        let tu = DVec3::new(tu.x as f64, tu.y as f64, tu.z as f64);
+        let tv = DVec3::new(tv.x as f64, tv.y as f64, tv.z as f64);
+        let n = DVec3::new(normal.x as f64, normal.y as f64, normal.z as f64);
+
+        let mut elev = vec![0.0f32; (face_res * face_res) as usize];
+
+        for r in 0..face_res {
+            for c in 0..face_res {
+                let u = (c as f64 + 0.5) / face_res as f64 * 2.0 - 1.0;
+                let v = (r as f64 + 0.5) / face_res as f64 * 2.0 - 1.0;
+                let dir = (tu * u + tv * v + n).normalize();
+                let x = dir.x;
+                let y = dir.y;
+                let z = dir.z;
+
+                // Blend-weighted sampling from all 6 projections
+                let components = [x, -x, y, -y, z, -z];
+                let mut weights = [0.0f64; 6];
+                let mut w_sum = 0.0f64;
+                for k in 0..6 {
+                    let w = components[k].max(0.0).powf(blend_power);
+                    weights[k] = w;
+                    w_sum += w;
+                }
+
+                let mut val = 0.0f64;
+                for proj_face in 0..6 {
+                    let w = weights[proj_face] / w_sum.max(1e-12);
+                    if w < 0.005 {
+                        continue;
+                    }
+
+                    let (ci, cj) = cross_layout::sphere_to_cross_atlas(
+                        proj_face, x, y, z, fs, s,
+                    );
+                    // Scale to native resolution
+                    let ni = ci * scale;
+                    let nj = cj * scale;
+
+                    val += w * bilinear_sample_rect(elevation, nat_w, nat_h, ni, nj) as f64;
+                }
+
+                elev[(r * face_res + c) as usize] = val as f32;
+            }
+        }
+
+        let e_min = elev.iter().cloned().fold(f32::INFINITY, f32::min);
+        let e_max = elev.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        session::log_to_file(&format!(
+            "[sample] face {fi}: [{e_min:.0}, {e_max:.0}]m"
+        ));
+
+        all_faces.push(FaceHeightmap {
+            elevation: elev,
+            temperature: vec![0.0; (face_res * face_res) as usize],
+            precipitation: vec![0.0; (face_res * face_res) as usize],
+            resolution: face_res,
+        });
+    }
+
+    all_faces
+}
+
+fn bilinear_sample_rect(data: &[f32], w: u32, h: u32, i: f64, j: f64) -> f32 {
+    let i0 = (i.floor() as u32).min(h - 1);
+    let i1 = (i0 + 1).min(h - 1);
+    let j0 = (j.floor() as u32).min(w - 1);
+    let j1 = (j0 + 1).min(w - 1);
+    let fi = (i - i0 as f64) as f32;
+    let fj = (j - j0 as f64) as f32;
+
+    let v00 = data[(i0 * w + j0) as usize];
+    let v01 = data[(i0 * w + j1) as usize];
+    let v10 = data[(i1 * w + j0) as usize];
+    let v11 = data[(i1 * w + j1) as usize];
+
+    v00 * (1.0 - fi) * (1.0 - fj)
+        + v01 * (1.0 - fi) * fj
+        + v10 * fi * (1.0 - fj)
+        + v11 * fi * fj
+}
+
+/// Laplacian denoise for rectangular grids.
+fn laplacian_denoise_rect(
+    residual: &[f32], res_w: u32, res_h: u32,
+    lowfreq: &[f32], low_w: u32, low_h: u32,
+    sigma: f32,
+) -> Vec<f32> {
+    let low_px = (low_w * low_h) as usize;
+    let hi_px = (res_w * res_h) as usize;
+
+    // Upsample lowfreq (with extrapolation) + residual
+    let lowfreq_up = bilinear_upsample_rect(lowfreq, low_w, low_h, res_w, res_h);
+    let mut decoded = vec![0.0f32; hi_px];
+    for i in 0..hi_px {
+        decoded[i] = residual[i] + lowfreq_up[i];
+    }
+
+    // Downsample back to lowfreq resolution
+    let downsampled = bilinear_upsample_rect(&decoded, res_w, res_h, low_w, low_h);
+
+    // Gaussian blur
+    gaussian_blur_2d(&downsampled, low_h as usize, low_w as usize, sigma)
+}
+
+/// Laplacian decode for rectangular grids.
+fn laplacian_decode_rect(
+    residual: &[f32], res_w: u32, res_h: u32,
+    lowfreq: &[f32], low_w: u32, low_h: u32,
+) -> Vec<f32> {
+    let lowfreq_up = bilinear_upsample_rect(lowfreq, low_w, low_h, res_w, res_h);
+    residual.iter().zip(&lowfreq_up).map(|(&r, &l)| r + l).collect()
+}
+
+fn bilinear_upsample_rect(src: &[f32], sw: u32, sh: u32, dw: u32, dh: u32) -> Vec<f32> {
+    let mut dst = vec![0.0f32; (dw * dh) as usize];
+    let sx = sw as f64 / dw as f64;
+    let sy = sh as f64 / dh as f64;
+
+    for r in 0..dh {
+        for c in 0..dw {
+            let fy = r as f64 * sy;
+            let fx = c as f64 * sx;
+            let y0 = (fy as u32).min(sh - 1);
+            let y1 = (y0 + 1).min(sh - 1);
+            let x0 = (fx as u32).min(sw - 1);
+            let x1 = (x0 + 1).min(sw - 1);
+            let wy = fy - y0 as f64;
+            let wx = fx - x0 as f64;
+
+            let v = src[(y0 * sw + x0) as usize] as f64 * (1.0 - wx) * (1.0 - wy)
+                + src[(y0 * sw + x1) as usize] as f64 * wx * (1.0 - wy)
+                + src[(y1 * sw + x0) as usize] as f64 * (1.0 - wx) * wy
+                + src[(y1 * sw + x1) as usize] as f64 * wx * wy;
+
+            dst[(r * dw + c) as usize] = v as f32;
         }
     }
     dst

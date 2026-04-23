@@ -96,7 +96,28 @@ pub(super) fn linear_weight_window(size: u32) -> Vec<f32> {
     window
 }
 
-/// Iterate tile positions for a given output size, tile size, and stride.
+/// Iterate tile positions for a rectangular output (width × height).
+pub(super) fn tile_positions_rect(width: u32, height: u32, tile_size: u32, stride: u32) -> Vec<(u32, u32)> {
+    let mut positions = Vec::new();
+    let mut y = 0u32;
+    loop {
+        let mut x = 0u32;
+        loop {
+            positions.push((x, y));
+            if x + tile_size >= width {
+                break;
+            }
+            x += stride;
+        }
+        if y + tile_size >= height {
+            break;
+        }
+        y += stride;
+    }
+    positions
+}
+
+/// Iterate tile positions for a square output.
 pub(super) fn tile_positions(output_size: u32, tile_size: u32, stride: u32) -> Vec<(u32, u32)> {
     let mut positions = Vec::new();
     let mut y = 0u32;

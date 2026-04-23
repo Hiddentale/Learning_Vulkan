@@ -21,16 +21,16 @@ const T_INTER: f64 = 0.611;
 pub(super) fn run(
     model: &mut ModelSession,
     coarse_output: &[f32],
-    coarse_res: u32,
-    output_res: u32,
+    coarse_w: u32,
+    coarse_h: u32,
     seed: u64,
 ) -> Result<Vec<f32>> {
-    let positions = tiling::tile_positions(output_res, TILE_SIZE, TILE_STRIDE);
+    let positions = tiling::tile_positions_rect(coarse_w, coarse_h, TILE_SIZE, TILE_STRIDE);
     let window = tiling::linear_weight_window(TILE_SIZE);
-    let mut blend = BlendGrid::new(OUTPUT_CHANNELS, output_res, output_res);
+    let mut blend = BlendGrid::new(OUTPUT_CHANNELS, coarse_w, coarse_h);
 
     for &(tx, ty) in &positions {
-        let cond = build_conditioning(coarse_output, coarse_res, tx, ty);
+        let cond = build_conditioning(coarse_output, coarse_w, coarse_h, tx, ty);
         let tile = run_tile(model, &cond, seed, tx, ty)?;
         blend.blend_tile(&tile, TILE_SIZE, tx, ty, &window);
     }
@@ -103,18 +103,19 @@ fn run_tile(
     Ok(sample)
 }
 
-fn build_conditioning(coarse: &[f32], res: u32, tx: u32, ty: u32) -> Vec<f32> {
+fn build_conditioning(coarse: &[f32], w: u32, h: u32, tx: u32, ty: u32) -> Vec<f32> {
     let s = TILE_SIZE;
     let cx = tx + s / 2 - 2;
     let cy = ty + s / 2 - 2;
+    let plane = (w * h) as usize;
 
     let mut raw = vec![0.0f64; 7 * 16];
     for ch in 0..6u32 {
         for r in 0..4u32 {
             for c in 0..4u32 {
-                let sy = (cy + r).min(res - 1);
-                let sx = (cx + c).min(res - 1);
-                let src = (ch * res * res + sy * res + sx) as usize;
+                let sy = (cy + r).min(h - 1);
+                let sx = (cx + c).min(w - 1);
+                let src = ch as usize * plane + (sy * w + sx) as usize;
                 raw[(ch as usize) * 16 + (r * 4 + c) as usize] = coarse[src] as f64;
             }
         }

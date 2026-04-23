@@ -17,16 +17,18 @@ const OUTPUT_CHANNELS: u32 = 1;
 pub(super) fn run(
     model: &mut ModelSession,
     latent: &[f32],
-    latent_res: u32,
-    output_res: u32,
+    latent_w: u32,
+    latent_h: u32,
+    output_w: u32,
+    output_h: u32,
     seed: u64,
 ) -> Result<Vec<f32>> {
-    let positions = tiling::tile_positions(output_res, TILE_SIZE, TILE_STRIDE);
+    let positions = tiling::tile_positions_rect(output_w, output_h, TILE_SIZE, TILE_STRIDE);
     let window = tiling::linear_weight_window(TILE_SIZE);
-    let mut blend = BlendGrid::new(OUTPUT_CHANNELS, output_res, output_res);
+    let mut blend = BlendGrid::new(OUTPUT_CHANNELS, output_w, output_h);
 
     for &(tx, ty) in &positions {
-        let tile = run_tile(model, latent, latent_res, tx, ty, seed)?;
+        let tile = run_tile(model, latent, latent_w, latent_h, tx, ty, seed)?;
         blend.blend_tile(&tile, TILE_SIZE, tx, ty, &window);
     }
 
@@ -37,7 +39,8 @@ pub(super) fn run(
 fn run_tile(
     model: &mut ModelSession,
     latent: &[f32],
-    latent_res: u32,
+    latent_w: u32,
+    latent_h: u32,
     tx: u32,
     ty: u32,
     seed: u64,
@@ -60,7 +63,7 @@ fn run_tile(
     let init_scale = (t_init.sin() * scheduler::sigma_data()) as f32;
     let init_noise: Vec<f32> = noise.iter().map(|&n| init_scale * n).collect();
 
-    let upsampled = upsample_latent(latent, latent_res, tx, ty);
+    let upsampled = upsample_latent(latent, latent_w, latent_h, tx, ty);
 
     // Stack: [noise/σ_data, upsampled_latent(4ch)] → (1, 5, S, S)
     let mut input = vec![0.0f32; INPUT_CHANNELS * pixel_count];
@@ -82,28 +85,27 @@ fn run_tile(
     Ok(scheduler::flow_matching_step(&init_noise, &model_output, t_init))
 }
 
-/// Nearest-neighbor upsample: tile-local (Java: sr = r * Slc / S)
-fn upsample_latent(latent: &[f32], latent_res: u32, tx: u32, ty: u32) -> Vec<f32> {
+/// Nearest-neighbor upsample latent to decoder tile size.
+fn upsample_latent(latent: &[f32], lat_w: u32, lat_h: u32, tx: u32, ty: u32) -> Vec<f32> {
     let s = TILE_SIZE as usize;
     let lc = LATENT_COMPRESSION as usize;
-    let slc = s / lc; // latent tile size (e.g. 512/8 = 64)
+    let slc = s / lc;
     let pixel_count = s * s;
+    let lat_plane = (lat_w * lat_h) as usize;
     let mut upsampled = vec![0.0f32; 4 * pixel_count];
 
-    // Extract the latent slice for this tile region
     let lx = tx as usize / lc;
     let ly = ty as usize / lc;
 
     for ch in 0..4usize {
-        let lat_ch_offset = ch * (latent_res * latent_res) as usize;
+        let lat_ch_offset = ch * lat_plane;
         for r in 0..s {
-            // Tile-local nearest: sr = r * slc / S (Java nearestUpsample)
             let sr = r * slc / s;
-            let src_r = (ly + sr).min(latent_res as usize - 1);
+            let src_r = (ly + sr).min(lat_h as usize - 1);
             for c in 0..s {
                 let sc = c * slc / s;
-                let src_c = (lx + sc).min(latent_res as usize - 1);
-                let src = lat_ch_offset + src_r * latent_res as usize + src_c;
+                let src_c = (lx + sc).min(lat_w as usize - 1);
+                let src = lat_ch_offset + src_r * lat_w as usize + src_c;
                 upsampled[ch * pixel_count + r * s + c] = latent[src];
             }
         }

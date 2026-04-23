@@ -21,12 +21,13 @@ const ALL_FACES: [Face; 6] = [
 const IDW_NEIGHBORS: usize = 6;
 const IDW_POWER: f64 = 2.0;
 
-/// Per-face rasterized grid of conditioning channels.
+/// Rasterized grid of conditioning channels (face or cross-layout).
 pub(super) struct FaceGrid {
     pub elevation: Vec<f32>,
     pub temperature: Vec<f32>,
     pub precipitation: Vec<f32>,
-    pub resolution: u32,
+    pub resolution: u32, // for square grids: side length; for cross: width
+    pub height: u32,     // for cross layout; equals resolution for square grids
 }
 
 /// Rasterize a coarse heightmap onto 6 cube-face grids at the given resolution.
@@ -85,6 +86,7 @@ fn rasterize_face(
         temperature,
         precipitation,
         resolution,
+        height: resolution,
     }
 }
 
@@ -122,6 +124,47 @@ fn idw_interpolate(coarse: &CoarseHeightmap, neighbors: &[(u32, f64)]) -> (f32, 
     )
 }
 
+/// Rasterize a coarse heightmap onto a cross-layout grid.
+/// Dead-zone pixels are filled with model-mean values (will normalize to ~0).
+pub(super) fn rasterize_cross(
+    coarse: &CoarseHeightmap,
+    points: &[DVec3],
+    cross: &super::cross_layout::CrossLayout,
+) -> FaceGrid {
+    let w = cross.width as usize;
+    let h = cross.height as usize;
+    let n = w * h;
+    let grid = SphereGrid::build(points);
+
+    // Default fill: model mean elevation (-31.4 km sqrt-encoded ≈ -0.032 km raw),
+    // 15°C temperature, 600mm precipitation (rough global means).
+    let mut elevation = vec![-3.5f32; n];
+    let mut temperature = vec![15.0f32; n];
+    let mut precipitation = vec![600.0f32; n];
+
+    for row in 0..cross.height {
+        for col in 0..cross.width {
+            let idx = (row * cross.width + col) as usize;
+
+            if let Some(dir) = cross.pixel_to_sphere(row, col) {
+                let neighbors = grid.find_nearest_k(dir, points, IDW_NEIGHBORS);
+                let (e, t, p) = idw_interpolate(coarse, &neighbors);
+                elevation[idx] = e;
+                temperature[idx] = t;
+                precipitation[idx] = p;
+            }
+        }
+    }
+
+    FaceGrid {
+        elevation,
+        temperature,
+        precipitation,
+        resolution: cross.width,
+        height: cross.height,
+    }
+}
+
 /// Pad a face grid from `resolution` to `target` by edge-extending border pixels.
 pub(super) fn pad_to_size(grid: &FaceGrid, target: u32) -> FaceGrid {
     let src = grid.resolution;
@@ -131,6 +174,7 @@ pub(super) fn pad_to_size(grid: &FaceGrid, target: u32) -> FaceGrid {
             temperature: grid.temperature.clone(),
             precipitation: grid.precipitation.clone(),
             resolution: src,
+            height: grid.height,
         };
     }
 
@@ -153,5 +197,6 @@ pub(super) fn pad_to_size(grid: &FaceGrid, target: u32) -> FaceGrid {
         temperature: pad(&grid.temperature),
         precipitation: pad(&grid.precipitation),
         resolution: target,
+        height: target,
     }
 }

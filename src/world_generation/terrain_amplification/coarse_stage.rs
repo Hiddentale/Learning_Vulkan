@@ -32,9 +32,9 @@ pub(super) fn run(
     seed: u64,
 ) -> Result<Vec<f32>> {
     let s = TILE_SIZE;
-    let positions = tiling::tile_positions(face.resolution, s, TILE_STRIDE);
+    let positions = tiling::tile_positions_rect(face.resolution, face.height, s, TILE_STRIDE);
     let window = tiling::linear_weight_window(s);
-    let mut blend = BlendGrid::new(OUTPUT_CHANNELS, face.resolution, face.resolution);
+    let mut blend = BlendGrid::new(OUTPUT_CHANNELS, face.resolution, face.height);
 
     for &(tx, ty) in &positions {
         let tile_output = run_tile(model, face, cond, tx, ty, seed)?;
@@ -140,7 +140,7 @@ fn extract_conditioning(
 
     // Generate synthetic conditioning merged with coarse heightmap data.
     // Returns [elev_sqrt, temp, temp_std, precip, precip_cv] in physical units.
-    let raw = synth.generate_conditioning(face, tx, ty);
+    let raw = synth.generate_conditioning(face, tx, ty, TILE_SIZE, TILE_SIZE);
 
     // Normalize with MODEL_MEANS/MODEL_STDS at indices [0,2,3,4,5]
     let mut cond = vec![0.0f32; 5 * pixels];
