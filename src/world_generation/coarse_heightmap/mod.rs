@@ -20,6 +20,14 @@ pub struct CoarseHeightmap {
     pub precipitation: Vec<f32>,
     /// Per-point flag: true if this point's plate is continental.
     pub is_continental: Vec<bool>,
+    /// BFS hop distance to nearest coastline.
+    pub dist_coast: Vec<u32>,
+    /// BFS hop distance to nearest subduction zone.
+    pub dist_subduction: Vec<u32>,
+    /// BFS hop distance to nearest mid-ocean ridge.
+    pub dist_ridge: Vec<u32>,
+    /// BFS hop distance to nearest island arc seed.
+    pub dist_arc: Vec<u32>,
 }
 
 pub fn generate(
@@ -78,6 +86,10 @@ pub fn generate(
         temperature,
         precipitation,
         is_continental,
+        dist_coast: dist_fields.coast,
+        dist_subduction: dist_fields.subduction,
+        dist_ridge: dist_fields.ridge,
+        dist_arc: dist_fields.arc,
     }
 }
 
