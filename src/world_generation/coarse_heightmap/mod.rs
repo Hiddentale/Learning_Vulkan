@@ -57,9 +57,11 @@ pub fn generate(
     let fbm_rift: Fbm<Perlin> = Fbm::new(seed.wrapping_add(6) as u32);
     let fbm_fold: Fbm<Perlin> = Fbm::new(seed.wrapping_add(7) as u32);
 
+    let arc_tangents = compute_arc_tangents(points, &dist_fields.arc, adjacency);
+
     let mut elev = compute_base_elevation(
         n, points, &is_continental, &dist_fields, &stress, &terrain_class,
-        &fbm_elevation, &fbm_mountain, &fbm_arc, &fbm_basin,
+        &arc_tangents, &fbm_elevation, &fbm_mountain, &fbm_arc, &fbm_basin,
     );
 
     tectonic_features::apply_fold_ridges(
@@ -211,6 +213,41 @@ fn compute_distance_fields(
     }
 }
 
+/// Gradient of the `dist_arc` BFS field at each point, projected to the sphere tangent plane.
+/// Points away from the arc boundary (across-chain direction).
+/// The along-boundary tangent is `surface_normal × gradient`.
+fn compute_arc_tangents(
+    points: &[DVec3],
+    dist_arc: &[u32],
+    adjacency: &Adjacency,
+) -> Vec<DVec3> {
+    let n = points.len();
+    let mut tangents = vec![DVec3::ZERO; n];
+    for i in 0..n {
+        if dist_arc[i] == u32::MAX {
+            continue;
+        }
+        let p = points[i];
+        let normal = p.normalize();
+        // Accumulate signed gradient from neighbors with valid distances
+        let mut grad = DVec3::ZERO;
+        for &nb in adjacency.neighbors_of(i as u32) {
+            if dist_arc[nb as usize] == u32::MAX {
+                continue;
+            }
+            let diff = dist_arc[nb as usize] as f64 - dist_arc[i] as f64;
+            let dir = (points[nb as usize] - p).normalize_or_zero();
+            grad += dir * diff;
+        }
+        // Project gradient to tangent plane; tangent = normal × grad_tangent
+        let grad_t = (grad - normal * grad.dot(normal)).normalize_or_zero();
+        if grad_t.length_squared() > 0.01 {
+            tangents[i] = normal.cross(grad_t).normalize_or_zero();
+        }
+    }
+    tangents
+}
+
 fn compute_base_elevation(
     n: usize,
     points: &[DVec3],
@@ -218,6 +255,7 @@ fn compute_base_elevation(
     df: &DistanceFields,
     stress: &[f32],
     terrain_class: &[f32],
+    arc_tangents: &[DVec3],
     fbm_elevation: &Fbm<Perlin>,
     fbm_mountain: &Fbm<Perlin>,
     fbm_arc: &Fbm<Perlin>,
@@ -236,7 +274,7 @@ fn compute_base_elevation(
         } else {
             elevation::oceanic(
                 df.coast[i] as f64, df.ridge[i] as f64, df.arc[i] as f64,
-                df.subduction[i] as f64, p, noise_val, fbm_arc,
+                df.subduction[i] as f64, p, noise_val, arc_tangents[i], fbm_arc,
             )
         } as f32;
     }

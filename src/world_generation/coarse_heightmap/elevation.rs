@@ -21,6 +21,9 @@ const ISLAND_ARC_PEAK: f64 = 0.8;
 const ISLAND_ARC_SIGMA: f64 = 1.5;
 const ISLAND_ARC_OFFSET: f64 = 2.0;
 const ISLAND_ARC_THRESHOLD: f64 = 0.3;
+// Anisotropic noise: slow along the chain (large island groups), fast across (narrow chain)
+const ARC_ALONG_FREQ: f64 = 1.0;
+const ARC_CROSS_FREQ: f64 = 12.0;
 const TRENCH_DEPTH: f64 = -9.0;
 const TRENCH_WIDTH: f64 = 2.0;
 
@@ -104,6 +107,7 @@ pub(super) fn oceanic(
     dist_subduction: f64,
     p: DVec3,
     noise_val: f64,
+    arc_tangent: DVec3,
     fbm_arc: &Fbm<Perlin>,
 ) -> f64 {
     // Two-stage profile: flat shelf then steep continental slope to abyss
@@ -122,8 +126,19 @@ pub(super) fn oceanic(
     let ridge_falloff = gaussian(dist_ridge, RIDGE_SIGMA);
     elev = RIDGE_CREST * ridge_falloff + elev * (1.0 - ridge_falloff);
 
-    // Island arcs at oceanic convergent boundaries
-    let arc_noise = fbm_arc.get([p.x * 8.0, p.y * 8.0, p.z * 8.0]);
+    // Island arcs at oceanic convergent boundaries.
+    // Sample anisotropic noise: low frequency along the boundary (chains groups of islands)
+    // and higher frequency across it (keeps the chain narrow).
+    let arc_noise = if arc_tangent.length_squared() > 0.01 {
+        let across = p.normalize().cross(arc_tangent);
+        fbm_arc.get([
+            p.dot(arc_tangent) * ARC_ALONG_FREQ,
+            p.dot(across) * ARC_CROSS_FREQ + 7.3,
+            dist_arc * 0.6,
+        ])
+    } else {
+        fbm_arc.get([p.x * 8.0, p.y * 8.0, p.z * 8.0])
+    };
     if dist_arc < 6.0 && arc_noise > ISLAND_ARC_THRESHOLD {
         let arc_profile = gaussian(dist_arc - ISLAND_ARC_OFFSET, ISLAND_ARC_SIGMA);
         let island_elev =

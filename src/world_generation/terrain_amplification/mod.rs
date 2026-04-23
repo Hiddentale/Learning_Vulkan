@@ -62,7 +62,7 @@ impl AmplifiedTerrain {
 
 /// Target resolution per cube face for the diffusion output.
 /// For a 100km planet at 30m: 100_000 / 6 / 30 ≈ 556.
-const TARGET_FACE_RESOLUTION: u32 = 556;
+const TARGET_FACE_RESOLUTION: u32 = 512;
 
 /// Coarse conditioning resolution. At 64, fills the model tile exactly (no padding).
 const COARSE_FACE_RESOLUTION: u32 = 64;

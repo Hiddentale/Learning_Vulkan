@@ -76,6 +76,37 @@ pub(super) fn bfs_distance(n: usize, adjacency: &Adjacency, seeds: &[u32]) -> Ve
     bfs_distance_capped(n, adjacency, seeds, u32::MAX)
 }
 
+/// BFS returning both distances and nearest-seed index per point.
+/// `source[i] == u32::MAX` when point is unreachable.
+pub(super) fn bfs_with_source(
+    n: usize,
+    adjacency: &Adjacency,
+    seeds: &[u32],
+) -> (Vec<u32>, Vec<u32>) {
+    let mut dist = vec![u32::MAX; n];
+    let mut source = vec![u32::MAX; n];
+    let mut queue = VecDeque::with_capacity(seeds.len());
+    for &s in seeds {
+        if dist[s as usize] == u32::MAX {
+            dist[s as usize] = 0;
+            source[s as usize] = s;
+            queue.push_back(s);
+        }
+    }
+    while let Some(current) = queue.pop_front() {
+        let nd = dist[current as usize] + 1;
+        let src = source[current as usize];
+        for &nb in adjacency.neighbors_of(current) {
+            if dist[nb as usize] == u32::MAX {
+                dist[nb as usize] = nd;
+                source[nb as usize] = src;
+                queue.push_back(nb);
+            }
+        }
+    }
+    (dist, source)
+}
+
 pub(super) fn bfs_distance_capped(
     n: usize,
     adjacency: &Adjacency,

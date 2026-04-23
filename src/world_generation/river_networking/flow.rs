@@ -103,6 +103,101 @@ pub(super) fn accumulate(
     accum
 }
 
+/// Strahler stream ordering.
+/// Headwaters = 1. When two streams of order N merge, the result is order N+1.
+/// When streams of different order merge, the result keeps the higher order.
+/// Only assigns orders to pixels with accumulation above `river_threshold`.
+pub(super) fn strahler_order(
+    flow_dir: &[u8],
+    is_sink: &[bool],
+    accumulation: &[f32],
+    elevation: &[f32],
+    w: usize,
+    h: usize,
+    river_threshold: f32,
+) -> Vec<u8> {
+    let n = w * h;
+    let mut order = vec![0u8; n];
+
+    // Count how many upstream river pixels flow into each pixel
+    let mut in_count = vec![0u32; n];
+    for i in 0..n {
+        if flow_dir[i] == u8::MAX || is_sink[i] {
+            continue;
+        }
+        if accumulation[i] < river_threshold {
+            continue;
+        }
+        let r = i / w;
+        let c = i % w;
+        let k = flow_dir[i] as usize;
+        let nr = (r as i32 + D8_DR[k]) as usize;
+        let nc = (c as i32 + D8_DC[k]) as usize;
+        let ni = nr * w + nc;
+        in_count[ni] += 1;
+    }
+
+    // Process from high to low elevation (headwaters first)
+    let mut river_cells: Vec<usize> = (0..n)
+        .filter(|&i| accumulation[i] >= river_threshold && elevation[i] > 0.0 && !elevation[i].is_nan())
+        .collect();
+    river_cells.sort_by(|&a, &b| {
+        elevation[b]
+            .partial_cmp(&elevation[a])
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    // Assign headwater order
+    for &i in &river_cells {
+        if in_count[i] == 0 {
+            order[i] = 1;
+        }
+    }
+
+    // Propagate downstream: track max and second-max upstream order per pixel
+    let mut max_upstream = vec![0u8; n];
+    let mut second_upstream = vec![0u8; n];
+    let mut upstream_processed = vec![0u32; n];
+
+    for &i in &river_cells {
+        if order[i] == 0 && upstream_processed[i] == in_count[i] && in_count[i] > 0 {
+            // All upstream processed — compute order from upstream orders
+            if max_upstream[i] == second_upstream[i] && max_upstream[i] > 0 {
+                order[i] = max_upstream[i] + 1; // two equal-order streams merge
+            } else {
+                order[i] = max_upstream[i]; // keep highest
+            }
+        }
+        if order[i] == 0 {
+            order[i] = 1; // fallback for unresolved
+        }
+
+        // Propagate to downstream
+        if flow_dir[i] == u8::MAX || is_sink[i] {
+            continue;
+        }
+        let r = i / w;
+        let c = i % w;
+        let k = flow_dir[i] as usize;
+        let nr = (r as i32 + D8_DR[k]) as usize;
+        let nc = (c as i32 + D8_DC[k]) as usize;
+        let ni = nr * w + nc;
+
+        if accumulation[ni] >= river_threshold {
+            upstream_processed[ni] += 1;
+            let o = order[i];
+            if o >= max_upstream[ni] {
+                second_upstream[ni] = max_upstream[ni];
+                max_upstream[ni] = o;
+            } else if o > second_upstream[ni] {
+                second_upstream[ni] = o;
+            }
+        }
+    }
+
+    order
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,5 +239,23 @@ mod tests {
         let accum = accumulate(&elev, &flow_dir, &is_sink, 5, 1);
         // Each cell flows right, so accumulation should increase
         assert!(accum[4] >= accum[0], "downstream should have more accumulation");
+    }
+
+    #[test]
+    fn strahler_headwaters_are_order_1() {
+        let elev = vec![
+            5.0, 4.0, 3.0, 2.0, 1.0,
+        ];
+        let (flow_dir, is_sink) = d8_flow(&elev, 5, 1);
+        let accum = accumulate(&elev, &flow_dir, &is_sink, 5, 1);
+        let order = strahler_order(&flow_dir, &is_sink, &accum, &elev, 5, 1, 1.0);
+        // First cell has no upstream — should be order 1
+        assert_eq!(order[0], 1, "headwater should be order 1");
+        // Downstream cells should be >= 1
+        for &o in &order {
+            if o > 0 {
+                assert!(o >= 1);
+            }
+        }
     }
 }

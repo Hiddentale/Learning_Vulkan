@@ -146,25 +146,21 @@ fn generate_placements(
         }
     }
 
-    // ── Island arcs — stratovolcanoes along subduction zones ──
-    // Place at oceanic points that are ARC_MIN..ARC_MAX hops from a subduction zone
-    // and not continental (the overriding oceanic plate side).
+    // ── Island arcs — stratovolcanoes along oceanic convergent boundaries ──
+    // Place at oceanic points near ocean-ocean convergent boundaries (arc seeds).
+    // These form chains like Japan, Philippines, and the Aleutians.
     for i in 0..points.len() {
         if coarse.is_continental[i] {
             continue;
         }
-        let ds = coarse.dist_subduction[i];
-        if ds == u32::MAX || ds < ARC_MIN_HOPS || ds > ARC_MAX_HOPS {
+        let da = coarse.dist_arc[i];
+        if da == u32::MAX || da < ARC_MIN_HOPS || da > ARC_MAX_HOPS {
             continue;
         }
-        let da = coarse.dist_arc[i];
-        if da == u32::MAX || da > 3 {
-            continue; // Only near existing arc seeds from boundary classification
-        }
 
-        // Sparse: ~1 in 15 qualifying points gets a volcano
+        // Sparse: ~1 in 12 qualifying points gets a volcano
         rng = splitmix64(rng.wrapping_add(i as u64));
-        if rng % 15 != 0 {
+        if rng % 12 != 0 {
             continue;
         }
 
