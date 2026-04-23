@@ -968,7 +968,10 @@ mod tests {
         // Build all vertices (position + color), then merge shared border verts
         let ply_path = out_dir.join("amplified_planet.ply");
         let radius = 1.0f64;
-        let elev_exaggeration = 0.00003;
+        // Model outputs Earth-scale meters. Scale proportionally to Earth radius
+        // so Everest (8849m) displaces 0.14% of radius — same ratio as real Earth.
+        const EARTH_RADIUS_M: f64 = 6_371_000.0;
+        let elev_exaggeration = radius / EARTH_RADIUS_M * 10.0;
 
         let faces_enum = [
             crate::voxel::sphere::Face::PosX, crate::voxel::sphere::Face::NegX,
