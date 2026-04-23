@@ -36,7 +36,24 @@ impl World {
         Self {
             chunks: HashMap::new(),
             render_distance,
-            generator: ChunkGenerator::new(seed, erosion_map),
+            generator: ChunkGenerator::new(seed, erosion_map, None),
+            metric: MetricField::new(),
+        }
+    }
+
+    /// Create a new world with pre-computed detail noise cache.
+    /// This is called during world generation after Steps 0-5 (amplified terrain ready).
+    #[allow(dead_code)]
+    pub fn with_detail_cache(
+        render_distance: i32,
+        seed: u32,
+        erosion_map: Option<Arc<ErosionMap>>,
+        detail_cache: Option<crate::world_generation::detail_noise::DetailCache>,
+    ) -> Self {
+        Self {
+            chunks: HashMap::new(),
+            render_distance,
+            generator: ChunkGenerator::new(seed, erosion_map, detail_cache),
             metric: MetricField::new(),
         }
     }

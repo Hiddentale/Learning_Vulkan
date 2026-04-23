@@ -2,9 +2,10 @@ use super::chunk::Chunk;
 use super::erosion::ErosionMap;
 use super::sphere::Face;
 use super::terrain;
+use crate::world_generation::detail_noise::DetailCache;
 use crossbeam_channel::{Receiver, Sender};
 use std::collections::HashSet;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 const WORKER_COUNT: usize = 4;
@@ -29,22 +30,41 @@ pub struct ChunkGenerator {
     request_tx: Sender<ColumnKey>,
     result_rx: Receiver<GeneratedColumn>,
     pending: HashSet<ColumnKey>,
+    detail_cache: Arc<Mutex<Option<DetailCache>>>,
     _workers: Vec<thread::JoinHandle<()>>,
 }
 
 impl ChunkGenerator {
-    pub fn new(seed: u32, erosion_map: Option<Arc<ErosionMap>>) -> Self {
+    pub fn new(
+        seed: u32,
+        erosion_map: Option<Arc<ErosionMap>>,
+        detail_cache: Option<DetailCache>,
+    ) -> Self {
         let (request_tx, request_rx) = crossbeam_channel::unbounded::<ColumnKey>();
         let (result_tx, result_rx) = crossbeam_channel::unbounded::<GeneratedColumn>();
+        let detail_cache = Arc::new(Mutex::new(detail_cache));
 
         let mut workers = Vec::with_capacity(WORKER_COUNT);
         for _ in 0..WORKER_COUNT {
             let rx = request_rx.clone();
             let tx = result_tx.clone();
             let emap = erosion_map.clone();
+            let dcache = detail_cache.clone();
             workers.push(thread::spawn(move || {
                 while let Ok(ColumnKey { face, cx, cz }) = rx.recv() {
-                    let chunks = terrain::generate_column(face, cx, cz, seed, emap.as_deref());
+                    // Get pre-computed detail column if available
+                    let detail_col = dcache.lock().ok().and_then(|mut cache| {
+                        cache.as_mut().map(|c| c.get_or_compute(face, cx, cz))
+                    });
+
+                    let chunks = terrain::generate_column(
+                        face,
+                        cx,
+                        cz,
+                        seed,
+                        emap.as_deref(),
+                        detail_col.as_deref(),
+                    );
                     if tx.send(GeneratedColumn { face, cx, cz, chunks }).is_err() {
                         break;
                     }
@@ -56,6 +76,7 @@ impl ChunkGenerator {
             request_tx,
             result_rx,
             pending: HashSet::new(),
+            detail_cache,
             _workers: workers,
         }
     }
