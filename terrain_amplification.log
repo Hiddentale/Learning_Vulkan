@@ -1,0 +1,210 @@
+1776886848.865 [pipeline] === amplify() start ===
+1776886848.871 [pipeline] rasterize: 0.005s
+1776886848.871 [session] added \\?\O:\Programming\Rust\manifold\data\onnxruntime to PATH
+1776886849.238 [session] loaded coarse_model.onnx in 0.37s — provider: CUDA (cudnn found)
+1776886849.562 [inference] coarse_model.onnx run #1 in 0.323s
+1776886849.569 [inference] coarse_model.onnx run #2 in 0.007s
+1776886849.578 [inference] coarse_model.onnx run #3 in 0.008s
+1776886849.625 [inference] coarse_model.onnx run #10 in 0.007s
+1776886849.686 [inference] coarse_model.onnx run #20 in 0.006s
+1776886849.686 [pipeline] coarse face 0: 0.448s
+1776886849.747 [inference] coarse_model.onnx run #30 in 0.006s
+1776886849.815 [inference] coarse_model.onnx run #40 in 0.005s
+1776886849.815 [pipeline] coarse face 1: 0.128s
+1776886849.873 [inference] coarse_model.onnx run #50 in 0.006s
+1776886849.937 [inference] coarse_model.onnx run #60 in 0.006s
+1776886849.937 [pipeline] coarse face 2: 0.122s
+1776886850.000 [inference] coarse_model.onnx run #70 in 0.006s
+1776886850.062 [inference] coarse_model.onnx run #80 in 0.006s
+1776886850.062 [pipeline] coarse face 3: 0.125s
+1776886850.127 [inference] coarse_model.onnx run #90 in 0.006s
+1776886850.187 [inference] coarse_model.onnx run #100 in 0.007s
+1776886850.187 [pipeline] coarse face 4: 0.125s
+1776886850.252 [inference] coarse_model.onnx run #110 in 0.005s
+1776886850.305 [inference] coarse_model.onnx run #120 in 0.006s
+1776886850.305 [pipeline] coarse face 5: 0.118s
+1776886850.305 [session] dropping coarse_model.onnx after 120 runs
+1776886853.549 [session] loaded base_model.onnx in 3.24s — provider: CUDA (cudnn found)
+1776886853.759 [inference] base_model.onnx run #1 in 0.209s
+1776886853.792 [inference] base_model.onnx run #2 in 0.033s
+1776886853.793 [pipeline] latent face 0: 0.243s
+1776886853.826 [inference] base_model.onnx run #3 in 0.033s
+1776886853.860 [pipeline] latent face 1: 0.067s
+1776886853.923 [pipeline] latent face 2: 0.063s
+1776886853.995 [pipeline] latent face 3: 0.072s
+1776886854.068 [inference] base_model.onnx run #10 in 0.034s
+1776886854.068 [pipeline] latent face 4: 0.072s
+1776886854.140 [pipeline] latent face 5: 0.072s
+1776886854.140 [session] dropping base_model.onnx after 12 runs
+1776886854.882 [session] loaded decoder_model.onnx in 0.71s — provider: CUDA (cudnn found)
+1776886855.140 [inference] decoder_model.onnx run #1 in 0.251s
+1776886855.412 [inference] decoder_model.onnx run #2 in 0.262s
+1776886855.629 [inference] decoder_model.onnx run #3 in 0.208s
+1776886855.837 [combine] latent ch4 raw: [-1.56, -0.71], residual raw: [-7.28, 13.64]
+1776886855.840 [combine] lowfreq denorm: [-91.48, -58.98], residual denorm: [-8.50, 15.93]
+1776886855.841 [combine] final elevation: [-9333.0, -2274.3] m
+1776886855.843 [pipeline] decoder face 0: 0.961s
+1776886856.714 [combine] latent ch4 raw: [-1.60, 0.72], residual raw: [-26.04, 48.60]
+1776886856.717 [combine] lowfreq denorm: [-93.26, -3.80], residual denorm: [-30.40, 56.75]
+1776886856.717 [combine] final elevation: [-9617.3, 1334.7] m
+1776886856.720 [pipeline] decoder face 1: 0.876s
+1776886857.139 [inference] decoder_model.onnx run #10 in 0.202s
+1776886857.565 [combine] latent ch4 raw: [-1.07, 0.68], residual raw: [-26.58, 52.17]
+1776886857.568 [combine] lowfreq denorm: [-72.62, -5.19], residual denorm: [-31.04, 60.92]
+1776886857.569 [combine] final elevation: [-6374.4, 954.5] m
+1776886857.571 [pipeline] decoder face 2: 0.851s
+1776886858.446 [combine] latent ch4 raw: [-1.30, 0.55], residual raw: [-25.74, 59.06]
+1776886858.449 [combine] lowfreq denorm: [-81.48, -10.22], residual denorm: [-30.06, 68.97]
+1776886858.450 [combine] final elevation: [-8202.4, 1125.6] m
+1776886858.452 [pipeline] decoder face 3: 0.881s
+1776886859.323 [inference] decoder_model.onnx run #20 in 0.213s
+1776886859.325 [combine] latent ch4 raw: [-1.67, -0.25], residual raw: [-13.36, 19.75]
+1776886859.327 [combine] lowfreq denorm: [-95.97, -41.24], residual denorm: [-15.61, 23.07]
+1776886859.328 [combine] final elevation: [-9578.7, -561.4] m
+1776886859.331 [pipeline] decoder face 4: 0.878s
+1776886860.198 [combine] latent ch4 raw: [-1.35, 0.12], residual raw: [-15.61, 36.68]
+1776886860.201 [combine] lowfreq denorm: [-83.41, -26.70], residual denorm: [-18.23, 42.84]
+1776886860.202 [combine] final elevation: [-9487.2, 54.0] m
+1776886860.206 [pipeline] decoder face 5: 0.874s
+1776886860.206 [session] dropping decoder_model.onnx after 24 runs
+1776886860.250 [pipeline] === total: 11.385s ===
+1776886909.103 [pipeline] === amplify() start ===
+1776886909.106 [pipeline] rasterize: 0.003s
+1776886909.106 [session] added \\?\O:\Programming\Rust\manifold\data\onnxruntime to PATH
+1776886909.431 [session] loaded coarse_model.onnx in 0.32s — provider: CUDA (cudnn found)
+1776886909.678 [inference] coarse_model.onnx run #1 in 0.247s
+1776886909.684 [inference] coarse_model.onnx run #2 in 0.006s
+1776886909.690 [inference] coarse_model.onnx run #3 in 0.005s
+1776886909.723 [inference] coarse_model.onnx run #10 in 0.005s
+1776886909.770 [inference] coarse_model.onnx run #20 in 0.005s
+1776886909.771 [pipeline] coarse face 0: 0.340s
+1776886909.817 [inference] coarse_model.onnx run #30 in 0.004s
+1776886909.861 [inference] coarse_model.onnx run #40 in 0.004s
+1776886909.861 [pipeline] coarse face 1: 0.090s
+1776886909.909 [inference] coarse_model.onnx run #50 in 0.005s
+1776886909.953 [inference] coarse_model.onnx run #60 in 0.004s
+1776886909.953 [pipeline] coarse face 2: 0.092s
+1776886909.996 [inference] coarse_model.onnx run #70 in 0.004s
+1776886910.038 [inference] coarse_model.onnx run #80 in 0.004s
+1776886910.038 [pipeline] coarse face 3: 0.084s
+1776886910.083 [inference] coarse_model.onnx run #90 in 0.004s
+1776886910.126 [inference] coarse_model.onnx run #100 in 0.004s
+1776886910.127 [pipeline] coarse face 4: 0.088s
+1776886910.170 [inference] coarse_model.onnx run #110 in 0.004s
+1776886910.216 [inference] coarse_model.onnx run #120 in 0.004s
+1776886910.216 [pipeline] coarse face 5: 0.089s
+1776886910.216 [session] dropping coarse_model.onnx after 120 runs
+1776886913.233 [session] loaded base_model.onnx in 3.01s — provider: CUDA (cudnn found)
+1776886913.418 [inference] base_model.onnx run #1 in 0.184s
+1776886913.456 [inference] base_model.onnx run #2 in 0.033s
+1776886913.456 [pipeline] latent face 0: 0.223s
+1776886913.490 [inference] base_model.onnx run #3 in 0.033s
+1776886913.523 [pipeline] latent face 1: 0.066s
+1776886913.584 [pipeline] latent face 2: 0.061s
+1776886913.643 [pipeline] latent face 3: 0.059s
+1776886913.703 [inference] base_model.onnx run #10 in 0.030s
+1776886913.703 [pipeline] latent face 4: 0.060s
+1776886913.765 [pipeline] latent face 5: 0.061s
+1776886913.765 [session] dropping base_model.onnx after 12 runs
+1776886914.445 [session] loaded decoder_model.onnx in 0.65s — provider: CUDA (cudnn found)
+1776886914.719 [inference] decoder_model.onnx run #1 in 0.267s
+1776886914.974 [inference] decoder_model.onnx run #2 in 0.246s
+1776886915.174 [inference] decoder_model.onnx run #3 in 0.192s
+1776886915.376 [combine] latent ch4 raw: [-1.56, -0.71], residual raw: [-7.28, 13.64]
+1776886915.378 [combine] lowfreq denorm: [-91.48, -58.98], residual denorm: [-8.50, 15.93]
+1776886915.379 [combine] final elevation: [-9333.0, -2274.3] m
+1776886915.383 [pipeline] decoder face 0: 0.937s
+1776886916.167 [combine] latent ch4 raw: [-1.60, 0.72], residual raw: [-26.04, 48.60]
+1776886916.169 [combine] lowfreq denorm: [-93.26, -3.80], residual denorm: [-30.40, 56.75]
+1776886916.170 [combine] final elevation: [-9617.3, 1334.7] m
+1776886916.173 [pipeline] decoder face 1: 0.790s
+1776886916.569 [inference] decoder_model.onnx run #10 in 0.198s
+1776886916.981 [combine] latent ch4 raw: [-1.07, 0.68], residual raw: [-26.58, 52.17]
+1776886916.985 [combine] lowfreq denorm: [-72.62, -5.19], residual denorm: [-31.04, 60.92]
+1776886916.986 [combine] final elevation: [-6374.4, 954.5] m
+1776886916.990 [pipeline] decoder face 2: 0.817s
+1776886917.804 [combine] latent ch4 raw: [-1.30, 0.55], residual raw: [-25.74, 59.06]
+1776886917.807 [combine] lowfreq denorm: [-81.48, -10.22], residual denorm: [-30.06, 68.97]
+1776886917.808 [combine] final elevation: [-8202.4, 1125.6] m
+1776886917.812 [pipeline] decoder face 3: 0.822s
+1776886918.618 [inference] decoder_model.onnx run #20 in 0.193s
+1776886918.620 [combine] latent ch4 raw: [-1.67, -0.25], residual raw: [-13.36, 19.75]
+1776886918.623 [combine] lowfreq denorm: [-95.97, -41.24], residual denorm: [-15.61, 23.07]
+1776886918.624 [combine] final elevation: [-9578.7, -561.4] m
+1776886918.626 [pipeline] decoder face 4: 0.813s
+1776886919.419 [combine] latent ch4 raw: [-1.35, 0.12], residual raw: [-15.61, 36.68]
+1776886919.422 [combine] lowfreq denorm: [-83.41, -26.70], residual denorm: [-18.23, 42.84]
+1776886919.423 [combine] final elevation: [-9487.2, 54.0] m
+1776886919.426 [pipeline] decoder face 5: 0.799s
+1776886919.426 [session] dropping decoder_model.onnx after 24 runs
+1776886919.465 [pipeline] === total: 10.362s ===
+1776887067.121 [pipeline] === amplify() start ===
+1776887067.125 [pipeline] rasterize: 0.003s
+1776887067.125 [session] added \\?\O:\Programming\Rust\manifold\data\onnxruntime to PATH
+1776887067.444 [session] loaded coarse_model.onnx in 0.32s — provider: CUDA (cudnn found)
+1776887067.680 [inference] coarse_model.onnx run #1 in 0.235s
+1776887067.686 [inference] coarse_model.onnx run #2 in 0.005s
+1776887067.691 [inference] coarse_model.onnx run #3 in 0.005s
+1776887067.723 [inference] coarse_model.onnx run #10 in 0.004s
+1776887067.768 [inference] coarse_model.onnx run #20 in 0.004s
+1776887067.769 [pipeline] coarse face 0: 0.324s
+1776887067.828 [inference] coarse_model.onnx run #30 in 0.004s
+1776887067.873 [inference] coarse_model.onnx run #40 in 0.004s
+1776887067.873 [pipeline] coarse face 1: 0.104s
+1776887067.930 [inference] coarse_model.onnx run #50 in 0.004s
+1776887067.972 [inference] coarse_model.onnx run #60 in 0.004s
+1776887067.973 [pipeline] coarse face 2: 0.100s
+1776887068.015 [inference] coarse_model.onnx run #70 in 0.004s
+1776887068.057 [inference] coarse_model.onnx run #80 in 0.004s
+1776887068.058 [pipeline] coarse face 3: 0.085s
+1776887068.100 [inference] coarse_model.onnx run #90 in 0.004s
+1776887068.142 [inference] coarse_model.onnx run #100 in 0.004s
+1776887068.143 [pipeline] coarse face 4: 0.085s
+1776887068.185 [inference] coarse_model.onnx run #110 in 0.004s
+1776887068.227 [inference] coarse_model.onnx run #120 in 0.004s
+1776887068.227 [pipeline] coarse face 5: 0.085s
+1776887068.227 [session] dropping coarse_model.onnx after 120 runs
+1776887071.925 [session] loaded base_model.onnx in 3.69s — provider: CUDA (cudnn found)
+1776887072.116 [inference] base_model.onnx run #1 in 0.190s
+1776887072.149 [inference] base_model.onnx run #2 in 0.032s
+1776887072.150 [pipeline] latent face 0: 0.224s
+1776887072.182 [inference] base_model.onnx run #3 in 0.032s
+1776887072.214 [pipeline] latent face 1: 0.064s
+1776887072.278 [pipeline] latent face 2: 0.064s
+1776887072.339 [pipeline] latent face 3: 0.061s
+1776887072.402 [inference] base_model.onnx run #10 in 0.030s
+1776887072.402 [pipeline] latent face 4: 0.061s
+1776887072.473 [pipeline] latent face 5: 0.070s
+1776887072.473 [session] dropping base_model.onnx after 12 runs
+1776887073.132 [session] loaded decoder_model.onnx in 0.63s — provider: CUDA (cudnn found)
+1776887073.367 [inference] decoder_model.onnx run #1 in 0.227s
+1776887073.646 [inference] decoder_model.onnx run #2 in 0.271s
+1776887073.839 [inference] decoder_model.onnx run #3 in 0.184s
+1776887074.027 [combine] latent ch4 raw: [-1.56, -0.71], residual raw: [-7.28, 13.64]
+1776887074.030 [combine] lowfreq denorm: [-91.48, -58.98], residual denorm: [-8.50, 15.93]
+1776887074.031 [combine] final elevation: [-9333.0, -2274.3] m
+1776887074.033 [pipeline] decoder face 0: 0.901s
+1776887074.822 [combine] latent ch4 raw: [-1.60, 0.72], residual raw: [-26.04, 48.60]
+1776887074.824 [combine] lowfreq denorm: [-93.26, -3.80], residual denorm: [-30.40, 56.75]
+1776887074.825 [combine] final elevation: [-9617.3, 1334.7] m
+1776887074.828 [pipeline] decoder face 1: 0.794s
+1776887075.224 [inference] decoder_model.onnx run #10 in 0.196s
+1776887075.623 [combine] latent ch4 raw: [-1.07, 0.68], residual raw: [-26.58, 52.17]
+1776887075.625 [combine] lowfreq denorm: [-72.62, -5.19], residual denorm: [-31.04, 60.92]
+1776887075.626 [combine] final elevation: [-6374.4, 954.5] m
+1776887075.629 [pipeline] decoder face 2: 0.801s
+1776887076.410 [combine] latent ch4 raw: [-1.30, 0.55], residual raw: [-25.74, 59.06]
+1776887076.412 [combine] lowfreq denorm: [-81.48, -10.22], residual denorm: [-30.06, 68.97]
+1776887076.413 [combine] final elevation: [-8202.4, 1125.6] m
+1776887076.416 [pipeline] decoder face 3: 0.787s
+1776887077.228 [inference] decoder_model.onnx run #20 in 0.199s
+1776887077.231 [combine] latent ch4 raw: [-1.67, -0.25], residual raw: [-13.36, 19.75]
+1776887077.233 [combine] lowfreq denorm: [-95.97, -41.24], residual denorm: [-15.61, 23.07]
+1776887077.234 [combine] final elevation: [-9578.7, -561.4] m
+1776887077.237 [pipeline] decoder face 4: 0.821s
+1776887078.060 [combine] latent ch4 raw: [-1.35, 0.12], residual raw: [-15.61, 36.68]
+1776887078.063 [combine] lowfreq denorm: [-83.41, -26.70], residual denorm: [-18.23, 42.84]
+1776887078.064 [combine] final elevation: [-9487.2, 54.0] m
+1776887078.067 [pipeline] decoder face 5: 0.829s
+1776887078.067 [session] dropping decoder_model.onnx after 24 runs
+1776887078.110 [pipeline] === total: 10.989s ===
