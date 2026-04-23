@@ -9,6 +9,10 @@ const FEATHER_FRAC: f64 = 0.2;
 /// Minimum feature height above base level (meters) to stamp.
 const MIN_FEATURE_HEIGHT: f32 = 200.0;
 
+/// Maximum island summit elevation (meters) after stamping.
+/// Keeps volcanic islands proportional to diffusion-generated terrain.
+const MAX_ISLAND_SUMMIT: f32 = 1500.0;
+
 /// Build a zero-initialized overlay grid for each face, stamp all volcanic
 /// features into it, then add the overlay onto the terrain.
 /// The original terrain is never read during stamping — only at the final
@@ -52,8 +56,17 @@ fn stamp_into_overlay(
 
     let pixels = atlas.patch_pixels(placement.category, placement.patch_idx);
     let base = meta.base_level as f32;
+    let peak = meta.peak_height as f32;
     let ang_r = placement.angular_radius;
     let feather_start = ang_r * (1.0 - FEATHER_FRAC);
+
+    // Scale factor so the tallest point in the patch reaches MAX_ISLAND_SUMMIT
+    // above the local ocean floor, not raw Earth-scale meters.
+    let height_normalize = if peak > 1.0 {
+        (MAX_ISLAND_SUMMIT - base.min(0.0)) / peak
+    } else {
+        1.0
+    };
 
     let center = placement.center;
     let (tangent_u, tangent_v) = tangent_frame(center);
@@ -96,7 +109,7 @@ fn stamp_into_overlay(
                     1.0 - t as f32 * t as f32 * (3.0 - 2.0 * t as f32)
                 };
 
-                let value = feature_height * placement.height_scale * weight;
+                let value = feature_height * height_normalize * placement.height_scale * weight;
                 let idx = (r * res + c) as usize;
 
                 // Max with existing overlay (multiple placements can overlap)
