@@ -7,6 +7,7 @@ use anyhow::Result;
 use super::rasterize::FaceGrid;
 use super::scheduler::{self, DpmSolverState};
 use super::session::ModelSession;
+use super::synthetic_cond::SyntheticConditioner;
 use super::tiling::{self, BlendGrid};
 
 const TILE_SIZE: u32 = 64;
@@ -27,6 +28,7 @@ const MODEL_STDS: [f32; 6] = [39.685, 3.098, 8.940, 322.252, 856.343, 30.983];
 pub(super) fn run(
     model: &mut ModelSession,
     face: &FaceGrid,
+    cond: &SyntheticConditioner,
     seed: u64,
 ) -> Result<Vec<f32>> {
     let s = TILE_SIZE;
@@ -35,7 +37,7 @@ pub(super) fn run(
     let mut blend = BlendGrid::new(OUTPUT_CHANNELS, face.resolution, face.resolution);
 
     for &(tx, ty) in &positions {
-        let tile_output = run_tile(model, face, tx, ty, seed)?;
+        let tile_output = run_tile(model, face, cond, tx, ty, seed)?;
         blend.blend_tile(&tile_output, s, tx, ty, &window);
     }
 
@@ -46,12 +48,13 @@ pub(super) fn run(
 fn run_tile(
     model: &mut ModelSession,
     face: &FaceGrid,
+    cond: &SyntheticConditioner,
     tx: u32,
     ty: u32,
     seed: u64,
 ) -> Result<Vec<f32>> {
     let s = TILE_SIZE as usize;
-    let conditioning = extract_conditioning(face, tx, ty, seed);
+    let conditioning = extract_conditioning(face, cond, tx, ty, seed);
 
     let noise_channels = 6;
     let sample_size = noise_channels * s * s;
@@ -125,41 +128,26 @@ fn run_tile(
     Ok(sample)
 }
 
-fn extract_conditioning(face: &FaceGrid, tx: u32, ty: u32, seed: u64) -> Vec<f32> {
+fn extract_conditioning(
+    face: &FaceGrid,
+    synth: &SyntheticConditioner,
+    tx: u32,
+    ty: u32,
+    seed: u64,
+) -> Vec<f32> {
     let s = TILE_SIZE as usize;
     let pixels = s * s;
+
+    // Generate synthetic conditioning merged with coarse heightmap data.
+    // Returns [elev_sqrt, temp, temp_std, precip, precip_cv] in physical units.
+    let raw = synth.generate_conditioning(face, tx, ty);
+
+    // Normalize with MODEL_MEANS/MODEL_STDS at indices [0,2,3,4,5]
     let mut cond = vec![0.0f32; 5 * pixels];
-
-    // Stretch sub-20°C temperatures (matches Java/Python SyntheticMapFactory)
-    let stretch_temp = |t: f64| -> f64 {
-        if t > 20.0 { t } else { (t - 20.0) * 1.25 + 20.0 }
-    };
-
-    for r in 0..s {
-        for c in 0..s {
-            let fy = (ty as usize + r).min(face.resolution as usize - 1);
-            let fx = (tx as usize + c).min(face.resolution as usize - 1);
-            let src = fy * face.resolution as usize + fx;
-            let dst = r * s + c;
-
-            // Channel 0: elevation → sqrt encoding → normalize with MODEL_MEANS[0]
-            let elev = face.elevation[src] as f64;
-            let encoded = elev.signum() * elev.abs().sqrt();
-            cond[dst] = ((encoded - COND_NORM_MEANS[0]) / COND_NORM_STDS[0]) as f32;
-
-            // Channel 1: temperature (stretched) → normalize with MODEL_MEANS[2]
-            let temp = stretch_temp(face.temperature[src] as f64);
-            cond[pixels + dst] = ((temp - COND_NORM_MEANS[1]) / COND_NORM_STDS[1]) as f32;
-
-            // Channel 2: temp_std — use model mean (normalized to 0.0 = "average")
-            cond[2 * pixels + dst] = 0.0;
-
-            // Channel 3: precipitation → normalize with MODEL_MEANS[4]
-            let precip = face.precipitation[src] as f64;
-            cond[3 * pixels + dst] = ((precip - COND_NORM_MEANS[3]) / COND_NORM_STDS[3]) as f32;
-
-            // Channel 4: precip_cv — use model mean (normalized to 0.0 = "average")
-            cond[4 * pixels + dst] = 0.0;
+    for px in 0..pixels {
+        for ch in 0..5 {
+            cond[ch * pixels + px] =
+                ((raw[ch * pixels + px] as f64 - COND_NORM_MEANS[ch]) / COND_NORM_STDS[ch]) as f32;
         }
     }
 
@@ -174,7 +162,6 @@ fn extract_conditioning(face: &FaceGrid, tx: u32, ty: u32, seed: u64) -> Vec<f32
     }
 
     // Mix conditioning noise: cond_mixed = cos(atan(SNR)) * cond + sin(atan(SNR)) * noise
-    // (Java WorldPipeline.coarseTile() lines 159-169)
     let mut noise_rng = super::splitmix64(seed ^ ((tx as u64) << 16 | ty as u64 | 0xCAFE_0000));
     for ch in 0..5usize {
         let cos_t = (COND_SNR[ch].atan()).cos() as f32;

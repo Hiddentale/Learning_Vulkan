@@ -4,6 +4,7 @@ mod latent_stage;
 pub(crate) mod rasterize;
 mod scheduler;
 mod session;
+mod synthetic_cond;
 mod tiling;
 
 use std::path::Path;
@@ -59,6 +60,10 @@ pub fn amplify(
     let face_grids = rasterize::rasterize(coarse, points, fibonacci, COARSE_FACE_RESOLUTION);
     session::log_to_file(&format!("[pipeline] rasterize: {:.3}s", t0.elapsed().as_secs_f64()));
 
+    let t0 = std::time::Instant::now();
+    let synth_cond = synthetic_cond::SyntheticConditioner::new(seed);
+    session::log_to_file(&format!("[pipeline] synthetic conditioner: {:.3}s", t0.elapsed().as_secs_f64()));
+
     let mut coarse_outputs = Vec::with_capacity(6);
     let mut latent_outputs = Vec::with_capacity(6);
 
@@ -69,7 +74,7 @@ pub fn amplify(
         for (i, grid) in face_grids.iter().enumerate() {
             let t0 = std::time::Instant::now();
             let padded = rasterize::pad_to_size(grid, 64);
-            coarse_outputs.push(coarse_stage::run(&mut session, &padded, seed)?);
+            coarse_outputs.push(coarse_stage::run(&mut session, &padded, &synth_cond, seed)?);
             session::log_to_file(&format!("[pipeline] coarse face {i}: {:.3}s", t0.elapsed().as_secs_f64()));
         }
     }
