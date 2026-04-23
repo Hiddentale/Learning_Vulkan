@@ -14,7 +14,7 @@ const FOLD_AMP_MOD_BASE: f64 = 0.6;
 const FOLD_AMP_MOD_SCALE: f64 = 0.4;
 const FOLD_SECONDARY_AMP: f64 = 0.18;
 const FOLD_ELEV_THRESHOLD: f64 = 0.5;
-const FOLD_MAX_AMPLITUDE: f64 = 0.8;
+const FOLD_MAX_AMPLITUDE: f64 = 0.4;
 
 // Rift valleys
 const RIFT_AXIS_DEPTH: f64 = -0.18;
@@ -30,7 +30,7 @@ const BACK_ARC_DEPTH: f64 = 0.25;
 
 // Plateau
 const PLATEAU_START: f64 = 4.0;
-const PLATEAU_BOOST: f64 = 0.6;
+const PLATEAU_BOOST: f64 = 0.2;
 const PLATEAU_NOISE_SUPPRESS: f64 = 0.3;
 
 // Coastal roughening

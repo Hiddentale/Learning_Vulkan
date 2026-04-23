@@ -1,28 +1,28 @@
 use glam::DVec3;
 use noise::{Fbm, NoiseFn, Perlin};
 
-const CONTINENTAL_SHELF: f64 = 0.05;
-const MOUNTAIN_BASE_PEAK: f64 = 3.5;
-const MOUNTAIN_NOISE_RANGE: f64 = 3.5;
-const MOUNTAIN_SIGMA: f64 = 5.0;
+const CONTINENTAL_SHELF: f64 = 0.02;
+const MOUNTAIN_BASE_PEAK: f64 = 1.8;
+const MOUNTAIN_NOISE_RANGE: f64 = 1.7;
+const MOUNTAIN_SIGMA: f64 = 2.0;
 const FORELAND_DEPTH: f64 = 0.3;
-const FORELAND_WIDTH: f64 = 10.0;
+const FORELAND_WIDTH: f64 = 8.0;
 const COAST_RAMP_HOPS: f64 = 15.0;
 const BASIN_THRESHOLD: f64 = -0.6;
 const BASIN_DEPTH: f64 = 0.4;
-const SHIELD_BASE: f64 = 0.5;
-const BASIN_INTERIOR_BASE: f64 = 0.15;
+const SHIELD_BASE: f64 = 0.25;
+const BASIN_INTERIOR_BASE: f64 = 0.08;
 
-const OCEAN_SHELF_DEPTH: f64 = -0.2;
-const OCEAN_ABYSS_DEPTH: f64 = -4.2;
-const RIDGE_CREST: f64 = -1.0;
+const OCEAN_SHELF_DEPTH: f64 = -0.15;
+const OCEAN_ABYSS_DEPTH: f64 = -4.8;
+const RIDGE_CREST: f64 = -2.0;
 const RIDGE_SIGMA: f64 = 4.0;
 const ISLAND_ARC_PEAK: f64 = 0.8;
 const ISLAND_ARC_SIGMA: f64 = 1.5;
 const ISLAND_ARC_OFFSET: f64 = 2.0;
 const ISLAND_ARC_THRESHOLD: f64 = 0.3;
-const TRENCH_DEPTH: f64 = -6.0;
-const TRENCH_WIDTH: f64 = 3.0;
+const TRENCH_DEPTH: f64 = -9.0;
+const TRENCH_WIDTH: f64 = 2.0;
 
 pub(super) fn smoothstep(edge0: f64, edge1: f64, x: f64) -> f64 {
     let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
@@ -51,7 +51,7 @@ pub(super) fn continental(
     let coast_profile = smoothstep(0.0, COAST_RAMP_HOPS, dist_coast);
     let noise_scale = 1.0 - tc * 0.5;
     let base =
-        CONTINENTAL_SHELF + interior_base * coast_profile + noise_val * 0.3 * noise_scale;
+        CONTINENTAL_SHELF + interior_base * coast_profile + noise_val * 0.15 * noise_scale;
 
     // Himalaya-style mountains driven by stress field
     let mountain_noise = fbm_mountain.get([p.x * 6.0, p.y * 6.0, p.z * 6.0]);
@@ -63,8 +63,8 @@ pub(super) fn continental(
     // Andes-style subduction mountains — narrower, stress-modulated
     let sub_noise =
         fbm_mountain.get([p.x * 8.0 + 10.0, p.y * 8.0 + 10.0, p.z * 8.0 + 10.0]);
-    let sub_peak = 2.0 + 2.0 * sub_noise.abs();
-    let sub_falloff = gaussian(dist_subduction, 3.0) * (0.3 + 0.7 * stress_val);
+    let sub_peak = 1.2 + 1.0 * sub_noise.abs();
+    let sub_falloff = gaussian(dist_subduction, 1.5) * (0.3 + 0.7 * stress_val);
     let sub_elev = sub_peak * sub_falloff;
 
     let mut elev = base.max(mountain_elev).max(sub_elev);
@@ -106,7 +106,7 @@ pub(super) fn oceanic(
     noise_val: f64,
     fbm_arc: &Fbm<Perlin>,
 ) -> f64 {
-    let depth_profile = smoothstep(0.0, 20.0, dist_coast);
+    let depth_profile = smoothstep(0.0, 5.0, dist_coast);
     let mut elev = OCEAN_SHELF_DEPTH
         + (OCEAN_ABYSS_DEPTH - OCEAN_SHELF_DEPTH) * depth_profile
         + noise_val * 0.2;

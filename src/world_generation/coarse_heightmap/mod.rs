@@ -288,7 +288,7 @@ mod tests {
     fn elevation_range_reasonable() {
         let (_, hm) = make_heightmap(5000, 20, 42);
         for (i, &e) in hm.elevation.iter().enumerate() {
-            assert!(e > -7.0 && e < 10.0, "point {i} has elevation {e}");
+            assert!(e > -10.0 && e < 10.0, "point {i} has elevation {e}");
         }
     }
 

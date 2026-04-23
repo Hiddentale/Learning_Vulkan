@@ -10,3 +10,9 @@ tools
 data
 js
 .manifold-intel.db
+*.html
+*.log
+*.md
+*.obj
+*.json
+*.bin
